@@ -7,7 +7,10 @@
 **Language:** Python 3.11+
 **Target Users:** Parents/caregivers of children ages 5-8 with ADHD; teachers supporting ADHD learners
 **Primary Goal:** Build a deterministic pipeline that transforms physical paper literacy worksheets into ADHD-optimized, themed, print-ready activities with progressive avatar engagement
-**Constraint:** No proprietary curriculum content (UFLI etc.) until rights are clarified; MVP uses original/open-licensed worksheets only
+**Primary input family:** UFLI Foundations Home Practice worksheets — two known page templates:
+  - **Word Work page** (left side): New Concept & Sample Words, Word Work Chains, Word Chain Script, New Irregular Words, Sentences
+  - **Decodable Story page** (right side): illustration box + decodable passage with target-pattern words
+**Constraint:** No proprietary curriculum content redistributed in outputs; system reads UFLI as input signal but produces original, skill-preserving adapted activities. UFLI pages may be used as private, user-supplied inputs for local transformation, but must not be committed as repo fixtures or redistributed in example outputs unless rights are explicitly cleared.
 
 > **Design Principle:** This is a skill-preserving worksheet adaptation engine, NOT a page-faithful restyling tool. Source worksheets are curriculum signals. The system preserves literacy skill and pedagogical intent, not original wording or layout.
 
@@ -19,7 +22,7 @@
 - **Companion handles:** Avatar customization, progress tracking, caregiver/teacher visibility
 - **Target cohort:** Children ages 5-8, Kindergarten through Grade 3, Ontario and British Columbia school systems
 - **Adaptation range:** High — output may significantly differ from source in wording, ordering, item count, response format, and layout, as long as the targeted literacy skill is preserved and the output is developmentally appropriate
-- **Curriculum alignment:** Ontario Language Curriculum 2023 (Strand B/C) and BC English Language Arts K-3, aligned with Science of Reading / Right to Read
+- **Curriculum alignment:** Ontario Language Curriculum 2023 (Strand B/C); supports foundational literacy skills aligned at a high level with BC English Language Arts K-3 expectations; informed by structured literacy and Science of Reading principles
 
 ---
 
@@ -96,13 +99,18 @@ Print-Ready Worksheet + Companion Progress Update
 
 ## Data Contracts
 
+> **Implementation note:** All data contracts are implemented as **Pydantic `BaseModel`** classes (not `@dataclass`). Pydantic is the single contract layer for schema validation, serialization, and type enforcement across all pipeline stages. The examples below use `@dataclass` notation for readability but the actual implementation uses `class Foo(BaseModel)`.
+
 ### SourceWorksheetModel (Stage 3 output)
 
 ```python
 @dataclass
 class SourceRegion:
-    type: str           # "title", "instruction", "question", "answer_blank",
-                        # "word_list", "illustration", "table", "divider"
+    type: str           # Generic: "title", "instruction", "question", "answer_blank",
+                        #          "word_list", "illustration", "table", "divider"
+                        # UFLI Word Work: "concept_label", "sample_words", "word_chain",
+                        #                 "chain_script", "sight_word_list", "practice_sentences"
+                        # UFLI Decodable: "story_title", "illustration_box", "decodable_passage"
     content: str        # extracted text
     bbox: Tuple[float, float, float, float]  # x0, y0, x1, y1
     confidence: float   # OCR confidence 0-1
@@ -112,6 +120,7 @@ class SourceRegion:
 class SourceWorksheetModel:
     source_image_hash: str
     pipeline_version: str
+    template_type: str  # "ufli_word_work" | "ufli_decodable_story" | "unknown"
     regions: List[SourceRegion]
     raw_text: str
     ocr_engine: str     # "paddleocr" | "tesseract"
@@ -145,7 +154,7 @@ class ActivityChunk:
     items: List[ActivityItem]           # the actual practice items
     response_format: str                # "circle", "write", "match", "verbal"
     time_estimate: str                  # "About 3 minutes"
-    reward_event: RewardEvent           # tokens/unlock on completion
+    reward_event: Optional[RewardEvent] # tokens/unlock on completion (None for MVP)
 
 @dataclass
 class AdaptedActivityModel:
@@ -154,39 +163,43 @@ class AdaptedActivityModel:
     learner_profile_hash: str           # links back to profile used
     chunks: List[ActivityChunk]
     scaffolding: ScaffoldConfig         # fade supports across chunks
-    avatar_prompts: List[str]           # coach phrases for this activity
     theme_id: str
     decoration_zones: List[BBox]        # safe areas for theme illustrations
+    avatar_prompts: Optional[List[str]] # coach phrases (None for MVP, populated by companion)
+    self_assessment: Optional[List[str]] # "I can..." checklist items for end of worksheet
 ```
 
 ### LearnerProfile
 
 ```yaml
 LearnerProfile:
+  # --- Required for MVP (core engine) ---
   name: string
   grade_level: K | 1 | 2 | 3
-  avatar:
-    base_character: string              # "robot", "unicorn", "astronaut"
-    base_colors: { primary, secondary, accent }
-    equipped_items: [item_id]
-    unlocked_items: [item_id]
-  preferences:
-    favorite_themes: [string]
-    color_preferences: [string]
-    visual_style: string                # "cute_cartoon", "comic_book", "pixel_art"
   accommodations:
     chunking_level: small | medium | large
     response_format_prefs: [string]     # "circle", "write", "match", "verbal"
     font_size_override: int | null
     show_time_estimates: bool
     show_self_check_boxes: bool
-  progress:
+
+  # --- Optional: added by companion layer (post-core) ---
+  avatar:                               # default: null (no avatar on worksheet)
+    base_character: string              # "robot", "unicorn", "astronaut"
+    base_colors: { primary, secondary, accent }
+    equipped_items: [item_id]
+    unlocked_items: [item_id]
+  preferences:                          # default: empty (uses theme defaults)
+    favorite_themes: [string]
+    color_preferences: [string]
+    visual_style: string                # "cute_cartoon", "comic_book", "pixel_art"
+  progress:                             # default: zeros
     worksheets_completed: int
     current_lesson: int
     tokens_available: int
     milestones_reached: [int]
     completion_history: [CompletionRecord]
-  operational_signals:
+  operational_signals:                  # default: zeros
     avg_session_duration: float
     avg_chunks_per_session: float
     hint_usage_rate: float
@@ -214,57 +227,109 @@ Same inputs → same outputs, always. All intermediate artifacts are persisted f
 
 ## ADHD-Optimized Worksheet Design
 
+> **Evidence context:** Recommendations below are aligned with ADHD accommodation guidance drawn from UDL research, classroom-design studies, clinical self-management programs (Longwood Pediatrics, Boston Children's), token-economy literature, and cognitive-load theory. Direct research on printed worksheet aesthetics for 5-8 ADHD learners is sparse. Most design rules below are evidence-consistent inferences, not directly proven claims. See PMC10453933, PMC5280087, and Longwood/BCH Guided Self-Management Tools for ADHD (ages 6-12) for key sources.
+
 ### Visual Design Rules (enforced in rendering)
-- **One main task per page** (or clearly separated sections with visible borders)
-- **Generous white space** — avoid dense text blocks
-- **Sans-serif font**, 12-14pt minimum (e.g., Arial, Verdana, OpenDyslexic)
-- **Color used sparingly and consistently** — blue = directions, green = examples, yellow = key words. No patterned backgrounds.
-- **High contrast** — dark text on light background only
-- **Decorative elements limited to 1-2 per page** — every illustration must support the task
-- **Consistent layout** — instructions always top-left, examples in shaded box below, answer spaces in same position
+
+**Principle: Game-themed structure with visually calm execution.** Use game framing (levels, XP, challenges) to motivate, but keep the visual field clean so the activity content — not the decoration — commands attention.
+
+- **One main task per page** (or clearly separated sections with visible borders/boxes)
+- **Generous white space** — especially around activity items and answer areas
+- **Sans-serif font**, 12-14pt minimum (e.g., Arial, Verdana, Nunito)
+- **High contrast** — dark text on light/white background only; no gradients, patterns, or images behind text or answer areas
+- **Consistent layout** — instructions always top-left, examples in shaded box below, answer spaces in same position across all worksheets
+
+**Decoration budget per page:**
+- **0-2 purely decorative elements** (theme-flavor only: a small rocket, a border accent)
+- **Unlimited functional visuals** that directly support the task (worked-example annotations, arrows showing word chains, icons marking step numbers) — these are instructional, not decorative
+- Place decorative elements in **consistent, low-competition zones** (page header/footer, fixed corner) — never between activity items or behind text
+- Theme art should be **consistent across a workbook** (same style, same character) to reduce novelty load
+
+**Color system (2-4 functional colors + black, consistent across all pages):**
+- **Blue** — directions and section headings
+- **Green** — worked examples and model answers
+- **Gold/amber** — rewards, progress indicators, XP/stars
+- **Black/dark gray** — student activity items, answer lines, body text
+- **White/near-white** — background (always)
+- Richer palettes may vary **across themed units** (space theme vs. underwater theme) but each individual page maintains the functional color code above
 
 ### Content Restructuring (applied during adaptation)
-- **Chunk content** into small sections (3-6 items for early elementary)
-- **Label each chunk** with a micro-goal: "Part A — Find the nouns (5 questions)"
-- **Numbered step instructions** with bold action verbs: "1) **Read** the sentence. 2) **Circle** the verb."
-- **Worked example** immediately after instructions, before independent items
-- **Time estimate** per section: "This part takes about 5 minutes"
-- **Self-check boxes** next to each item
-- **Mini progress indicator** per page (circles to color as chunks complete)
+
+**Chunking (evidence-consistent: ADHD accommodation guidelines, cognitive-load theory):**
+- **Chunk content** into small, visually boxed sections — each designed for **~3-7 minutes** of focused work
+- **Label each chunk** as a game level with a micro-goal: "Level 1: Sound Warm-Up (10 XP)" instead of "Exercise A"
+- Each chunk has its own **mini-instruction, worked example, activity items, and completion marker**
+
+**Instructions and modeling (evidence-consistent: ADHD teaching strategies emphasize explicit instruction and guided practice):**
+- **Numbered step instructions** with bold action verbs: "1) **Read** the word. 2) **Circle** the silent e."
+- **Worked example first** — large, uncluttered, visually guided (arrows, highlighted parts). This is **especially critical for ADHD learners** who have working-memory and executive-function weaknesses (more so than neurotypical peers)
+- Consider **partially worked examples** as a bridge: "cube → c u b _ (fill in the missing letter)"
+
+**Time estimates (evidence-consistent: ADHD time-management interventions support time awareness; rigid deadlines may increase anxiety):**
+- Use **soft, supportive time cues**: "About 3 minutes" with a small clock icon
+- Frame as information, not performance criteria — never "beat the clock"
+- Omit or de-emphasize for children with comorbid anxiety (configurable in learner profile)
+
+**Progress and completion:**
+- **Self-check boxes** next to each item (child marks completion)
+- **Mini progress indicator** per page (stars or circles to color as chunks complete)
 - **Alternate response formats** when helpful: circling, matching, short writing, guided verbal
 
 ### Engagement Elements (ADHD-safe)
-- **Short missions/levels** framing: "Level 1 — Find the capitals" instead of "Exercise A"
-- **Predictable reward cadence** with low-stimulation feedback
-- **Non-punitive bonus challenges**: "Boss level: Try the challenge question if you have time"
-- **Choice-based items** where possible: "Choose any 3 of these 5 sentences to fix"
-- **Avatar companion** once per page in consistent location as coach figure
+
+**Game framing (evidence-consistent: token economies and visible completion cues are supported for ADHD; gamification labels are motivational scaffolding, not proven independently):**
+- **Level labels**: each chunk may use a simple label like "Level 1" or "Part 1" — but the label must be **visually subordinate** to the activity content (smaller font, muted color). The child should focus on the literacy task, not on game mechanics
+- **Boss challenge**: an optional harder section — "Challenge: Try this if you have time!" Keep the framing brief; do not introduce extra rules or mechanics the child must learn beyond the literacy skill
+- **Effort-based XP/points**: earned for completing chunks, **not for accuracy or speed**. A simple star or checkmark per section is sufficient. Avoid accumulating complex point totals that become a parallel tracking task
+- **Completion acknowledgment**: brief, calm — "You did it!" with a small badge or star. Not a high-stimulation victory screen. The reward should take less visual space than any single activity chunk
+
+**Choice (evidence-consistent: bounded choice supports intrinsic motivation; excessive choice can overwhelm ADHD learners):**
+- **2-3 options** for younger/more dysregulated children; up to 5 for Grade 3
+- All options must address the **same learning target**
+- Example: "Choose any 3 of these 5 words to use in a sentence"
+
+**Avatar companion (evidence-consistent: consistent, predictable visual cues support ADHD learners; multiple characters or scattered appearances become competing stimuli):**
+- **1-2 instances per page**, always in the **same zones** (e.g., top-left instruction area + bottom-right encouragement)
+- **One consistent character** across the entire workbook (same look, same name) — reduces novelty load
+- Avatar delivers **short, concrete guidance** ("Remember to underline the key word!") or brief encouragement — not jokes or unrelated speech
+- Speech bubbles are **visually subordinate** to main instructions (smaller font, lighter color)
+- Never embed avatar between individual activity items
+
+**Self-assessment (evidence-consistent: self-monitoring checklists appear in ADHD self-management programs and support emerging metacognition):**
+- End each worksheet with a **short self-assessment checklist**: "I can build words with silent-u ☐ / I'm still learning ☐"
+- Use **simple, concrete language** and optionally **pictorial scales** (thumbs up/sideways) for K-1
+- Include one open prompt: "One thing that helped me was ___"
+- Adults briefly review and tie to **effort-based praise** (not accuracy)
 
 ### Explicit Anti-Patterns (NEVER do these)
 - Dense text blocks or crowded pages
-- Excessive color clutter, noisy/patterned backgrounds
-- Flashing or highly animated stimuli (in companion app)
-- Leaderboards or competitive elements
+- Patterned/gradient/image backgrounds behind text or answer areas
+- Multiple different characters on the same page
+- Avatar or decorative elements scattered between individual activity items
+- Accuracy-based or speed-based scoring ("7/10", "beat the clock")
+- Leaderboards or competitive/comparative elements
 - Streak punishment ("you lost your streak!")
 - Randomized/variable-ratio reward mechanics (loot boxes, rarity systems)
 - Monetized cosmetics
 - Complex menus or inventories that invite long diversion from learning
+- Flashing or highly animated stimuli (in companion app)
+- Many simultaneous mini-goals or frequent theme shifts within one worksheet
 
 ### Grade-Level Adaptations (K-3)
 
-| Grade | Ages | Font | Items/Chunk | Literacy Focus | Key Design |
-|-------|------|------|-------------|----------------|------------|
-| K | 5-6 | 16-18pt | 2-3 | Phonemic awareness, letter-sound, CVC, concepts of print | Pictorial instruction cues, maximum white space |
-| 1 | 6-7 | 14-16pt | 3-5 | Phonics (digraphs, blends), high-frequency words, fluency | Worked examples, numbered steps |
-| 2 | 7-8 | 12-14pt | 4-6 | Vowel teams, r-controlled, prefixes/suffixes, comprehension | Self-check boxes, time estimates |
-| 3 | 8 | 12-14pt | 5-8 | Multi-syllable, morphology, comprehension strategies | Structured response frames, choice items |
+| Grade | Ages | Font | Items/Chunk | Target Chunk Time | Literacy Focus | Key Design |
+|-------|------|------|-------------|-------------------|----------------|------------|
+| K | 5-6 | 16-18pt | 2-3 | ~3 min | Phonemic awareness, letter-sound, CVC, concepts of print | Pictorial instruction cues, maximum white space, pictorial self-assessment |
+| 1 | 6-7 | 14-16pt | 3-5 | ~5 min | Phonics (digraphs, blends), high-frequency words, fluency | Worked examples with arrows/highlights, numbered steps |
+| 2 | 7-8 | 12-14pt | 4-6 | ~5-7 min | Vowel teams, r-controlled, prefixes/suffixes, comprehension | Self-check boxes, soft time estimates, partially worked examples |
+| 3 | 8-9 | 12-14pt | 5-8 | ~7 min | Multi-syllable, morphology, comprehension strategies | Structured response frames, choice items (choose 3 of 5), text self-assessment |
 
 ---
 
 ## Companion Layer & Progressive Avatar System
 
 ### Product Shape
-Print-first worksheets + lightweight digital companion. The worksheets are the primary learning experience (printed paper). The companion is the engagement and tracking layer (CLI for MVP, simple web/mobile app post-MVP).
+Print-first worksheets + lightweight digital companion. The worksheets are the primary learning experience (printed paper). The companion is the engagement and tracking layer (CLI initially, simple web/mobile app later).
 
 ### Progressive Avatar Customization
 1. **Starting avatar:** child picks a base character and basic colors during profile setup
@@ -275,12 +340,15 @@ Print-first worksheets + lightweight digital companion. The worksheets are the p
 6. **Grows with child:** swap items freely from earned collection as interests change
 
 ### ADHD-Specific Rules for Rewards
-- Rewards are **predictable, skill-linked, cosmetic only**
+> Evidence basis: Token economies with frequent, immediate, predictable, effort-based reinforcement are strongly supported for ADHD (PMC5280087). Variable-ratio and accuracy-based scoring are contraindicated.
+
+- Rewards are **predictable, effort-linked, cosmetic only** — earned for completing chunks and using strategies, not for accuracy or speed
+- XP/tokens are framed as **"points for trying and finishing"**, never as grades or comparative scores
 - Customization **gated to break points** — before/after sessions only, never during
 - Keep customization **quick** — target <2 minutes per session
 - **No** loot boxes, rarity systems, monetized cosmetics, variable-ratio rewards, streak punishment
-- Avatar renders as **clean, flat-color illustration** matching ADHD-friendly design
-- Celebration is **brief** (2-3 seconds), then routes back
+- Avatar renders as **clean, flat-color illustration** on white/light background
+- Celebration is **brief** (2-3 seconds), calm, then routes back — not high-stimulation
 
 ### Caregiver/Teacher Controls
 - **Pacing:** worksheets per session, breaks
@@ -294,6 +362,25 @@ Print-first worksheets + lightweight digital companion. The worksheets are the p
 - Time-on-task (session duration, not surveillance)
 - Hint usage, skip rate
 - These inform accommodation adjustments, not scores or grades
+
+---
+
+## Reference Samples
+
+`samples/` contains real-world input and output examples for design reference:
+
+**Inputs** (`samples/input/`) — 6 phone photos of UFLI Foundations Home Practice worksheets:
+- Lessons 43, 58, 59 (word work pages): -all/-oll/-ull, u_e, a_e patterns
+- Decodable story pages: Ross/mall (-all words), Beth/pets (ch/ck digraphs), June's Flute (u_e)
+- One already-adapted output (Mission OLL) photographed from screen
+- Photos exhibit typical challenges: skew, perspective distortion, spiral binding, bleed-through, uneven lighting
+
+**Outputs** (`samples/output/`) — 3 examples of adapted worksheets (created manually, pre-engine):
+- Mission OLL Word Power: clean numbered sections, Roblox character + owl companion
+- Roblox Phonics Quest (u_e): multi-level game format with XP, coins, boss level, victory screen
+- Roblox Phonics Quest (Silent-U): time estimates per level, self-assessment checklist, final score
+
+> **Design note:** The output samples demonstrate excellent structural ideas (levels, chunking, XP, boss challenges, self-assessment) but are more visually dense than ADHD evidence supports. The engine should adopt their game-themed *structure* while using visually *calmer execution* per the evidence-based design rules above: clean backgrounds, limited decoration, functional color coding, avatar in fixed zones only.
 
 ---
 
@@ -393,7 +480,7 @@ worksheet-builder/                     # https://github.com/howardjong/worksheet
 | Python | Runtime | 3.11+ |
 | OpenCV (opencv-python-headless) | Image preprocessing: deskew, dewarp, denoise | 4.x |
 | PaddleOCR | Primary OCR engine | Latest |
-| pytesseract | Fallback OCR engine | Latest |
+| pytesseract | Fallback OCR engine (Python wrapper; requires native `tesseract-ocr` binary installed separately) | Latest |
 | ReportLab | Vector PDF generation | Latest |
 | PyMuPDF (fitz) | PDF utility layer (read/manipulate when needed) | Latest |
 | Pillow | Image manipulation, avatar compositing | Latest |
@@ -408,10 +495,11 @@ worksheet-builder/                     # https://github.com/howardjong/worksheet
 
 ## Success Criteria
 
-### Must Have (Required for MVP)
+### Must Have — Core Engine (MVP)
+
+The MVP proves the core transform: photo of a worksheet in → ADHD-adapted, print-ready PDF out. Avatar, tokens, and caregiver controls are valuable but depend on the engine working first.
 
 - [ ] `python transform.py --input photo.jpg --profile ian.yaml --theme space` produces print-ready PDF
-- [ ] `python complete.py --profile ian.yaml --lesson 5` awards tokens and shows unlocks
 - [ ] Pipeline runs deterministically without any API calls (no AI in critical path)
 - [ ] Same inputs → same outputs (idempotent, keyed by image hash + profile + theme + version)
 - [ ] Source OCR extracts text with >95% accuracy on clean scans of target worksheet family
@@ -419,12 +507,18 @@ worksheet-builder/                     # https://github.com/howardjong/worksheet
 - [ ] AdaptedActivityModel produces chunked, scaffolded activities compliant with all ADHD design rules
 - [ ] Output PDF: vector text, embedded fonts, 300 DPI raster assets, letter size, margin-safe
 - [ ] Skill-parity validation blocks drift outside the learning target or age band
-- [ ] Avatar companion renders correctly with equipped items on each worksheet
-- [ ] Token economy awards predictable, skill-linked cosmetic rewards
-- [ ] Caregiver can view progress and adjust accommodation settings
 - [ ] All ADHD anti-patterns are absent from output (no clutter, no dense text, no noisy backgrounds)
 - [ ] Golden test set (3-5 worksheets) passes without network access
 - [ ] All tests pass: `make test`
+
+### Must Have — Companion Layer (post-core, pre-launch)
+
+These features ship before public release but are built only after the core engine is proven on real worksheets.
+
+- [ ] `python complete.py --profile ian.yaml --lesson 5` awards tokens and shows unlocks
+- [ ] Avatar companion renders correctly with equipped items on each worksheet
+- [ ] Token economy awards predictable, skill-linked cosmetic rewards
+- [ ] Caregiver can view progress and adjust accommodation settings
 
 ### Nice to Have
 
@@ -485,25 +579,25 @@ clean:          rm -rf artifacts/ __pycache__ .mypy_cache
 
 ## Milestones
 
-### Milestone 1: Foundation + Source Extraction (Checkpoints 1.1-1.4)
+### Milestone 1: Foundation + Source Extraction (Checkpoints 1.1-1.4) — MVP
 **Goal:** Repository scaffold, image preprocessing, OCR pipeline, and SourceWorksheetModel.
 **Days:** 1-5
 
-### Milestone 2: Skill Extraction + ADHD Adaptation (Checkpoints 2.1-2.4)
+### Milestone 2: Skill Extraction + ADHD Adaptation (Checkpoints 2.1-2.4) — MVP
 **Goal:** LiteracySkillModel extraction, ADHD activity adapter, and AdaptedActivityModel.
 **Days:** 6-12
 
-### Milestone 3: Theme + Render + Validate (Checkpoints 3.1-3.3)
-**Goal:** Calm themed rendering, vector PDF output, and validation suite.
-**Days:** 13-17
+### Milestone 3: Theme + Render + Validate + E2E (Checkpoints 3.1-3.3, 4.4) — MVP
+**Goal:** Calm themed rendering, vector PDF output, validation suite, and end-to-end golden tests. This milestone proves the core engine: photo in → adapted PDF out.
+**Days:** 13-19
 
-### Milestone 4: Companion + Avatar + E2E (Checkpoints 4.1-4.4)
-**Goal:** Learner profiles, avatar system, token economy, caregiver controls, and end-to-end pipeline.
-**Days:** 18-22
+### Milestone 4: Companion + Avatar (Checkpoints 4.1-4.3) — Post-Core, Pre-Launch
+**Goal:** Learner profiles, avatar system, token economy, caregiver controls. Built after the core engine is proven on real worksheets.
+**Days:** 20-24
 
-### Milestone 5: AI Assist + Generative Assets (Checkpoints 5.1-5.3)
+### Milestone 5: AI Assist + Generative Assets (Checkpoints 5.1-5.3) — Post-Launch
 **Goal:** Model adapter interface, bounded AI assist, preference-driven asset generation.
-**Days:** 23+
+**Days:** 25+
 
 ---
 
@@ -539,6 +633,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: '3.11' }
+      - run: sudo apt-get update && sudo apt-get install -y tesseract-ocr
       - run: pip install -r requirements.txt
       - run: make lint
       - run: make typecheck
@@ -590,8 +685,11 @@ def preprocess_page(image_path: str, output_path: str) -> PreprocessResult:
 def store_master(image_path: str, masters_dir: str) -> MasterRecord:
     """Store original image with hash-based filename for permanence."""
 
-def derive_searchable_pdf(master_path: str, output_path: str) -> str:
-    """Generate searchable PDF/A from master image (archival format)."""
+def derive_archival_pdf(master_path: str, output_path: str) -> str:
+    """Generate a PDF wrapping the master image for archival storage.
+    Note: this is NOT a searchable/OCR PDF — OCR happens later in
+    the extract stage. True PDF/A compliance requires ocrmypdf or
+    similar post-OCR tooling and is a post-MVP concern."""
 ```
 
 **Files:**
@@ -604,7 +702,7 @@ def derive_searchable_pdf(master_path: str, output_path: str) -> str:
 - [ ] Flatbed scan → normalized page image
 - [ ] Same input → same output (deterministic)
 - [ ] Master image stored with hash-based filename
-- [ ] Searchable PDF/A generated from master
+- [ ] Archival PDF generated from master (image-wrapped; searchable PDF/A is post-MVP)
 - [ ] Preprocessing handles: skew up to 15°, perspective distortion, uneven lighting
 
 ---
@@ -625,10 +723,34 @@ def extract_text(image_path: str, engine: str = "paddleocr") -> OCRResult:
     """
 
 # extract/heuristics.py
-def map_to_source_model(ocr_result: OCRResult, layout_family: str = "default") -> SourceWorksheetModel:
+def detect_ufli_template(ocr_result: OCRResult) -> str:
+    """
+    Classify a UFLI page as one of two known templates:
+    - "word_work": keyword match on "New Concept", "Word Work Chains",
+      "Sample Words", "Irregular Words", "Sentences"
+    - "decodable_story": large text block with illustration box region,
+      no structured sections
+    Returns: "word_work" | "decodable_story" | "unknown"
+    """
+
+def map_to_source_model(ocr_result: OCRResult, layout_family: str = "ufli") -> SourceWorksheetModel:
     """
     Rule-based mapping from OCR output to source worksheet structure.
-    Heuristics for known layout: position-based region classification.
+
+    UFLI Word Work template heuristics:
+    - Top region with "Home Practice / Lesson N" → title/header
+    - "New Concept and Sample Words" box → word_list + concept label
+    - "Word Work Chains" box → word_chain items
+    - "Sample Word Work Chain Script" → scripted activity steps
+    - "New Irregular Words" box → sight_word_list
+    - "Sentences" box → practice_sentences
+
+    UFLI Decodable Story template heuristics:
+    - Top bordered rectangle (no text) → illustration_box
+    - Large continuous text block below → decodable_passage
+    - Title line above passage → story_title
+
+    Generic fallback:
     - Top 15% of page → title/header
     - Numbered items → questions
     - Underscored areas → answer blanks
@@ -640,6 +762,7 @@ class SourceWorksheetModel(BaseModel):
     """Pydantic model with strict validation."""
     source_image_hash: str
     pipeline_version: str
+    template_type: str              # "ufli_word_work" | "ufli_decodable_story" | "unknown"
     regions: List[SourceRegion]
     raw_text: str
     ocr_engine: str
@@ -664,9 +787,12 @@ def flag_low_confidence(regions: List[SourceRegion]) -> List[int]:
 - [ ] PaddleOCR extracts text with >95% character accuracy on clean scans
 - [ ] Tesseract fallback works when PaddleOCR unavailable
 - [ ] Bounding boxes correctly localize text regions
-- [ ] Heuristics classify title, instructions, questions, answer blanks for target worksheet family
+- [ ] `detect_ufli_template()` correctly classifies word work vs decodable story pages
+- [ ] UFLI Word Work heuristics identify: concept_label, sample_words, word_chain, chain_script, sight_word_list, practice_sentences
+- [ ] UFLI Decodable Story heuristics identify: story_title, illustration_box, decodable_passage
+- [ ] Unknown layouts produce `template_type: "unknown"` (not silent garbage)
 - [ ] Low-confidence regions (< 0.7) flagged for human review
-- [ ] SourceWorksheetModel validates against Pydantic schema
+- [ ] SourceWorksheetModel validates against Pydantic schema (including `template_type`)
 - [ ] Same image → same SourceWorksheetModel (deterministic)
 
 ---
@@ -713,6 +839,22 @@ LITERACY_DOMAINS = {
 def extract_skill(source: SourceWorksheetModel) -> LiteracySkillModel:
     """
     Rule-based skill extraction from known worksheet layouts.
+    Dispatches based on source.template_type:
+
+    UFLI Word Work → rich skill signals:
+    1. concept_label region gives explicit pattern (e.g., "-all, -oll, -ull")
+    2. sample_words region gives target word list
+    3. word_chain region gives manipulation sequence
+    4. Domain is almost always "phonics"; specific_skill from concept label
+    5. Grade level inferred from lesson number and word complexity
+
+    UFLI Decodable Story → fluency + embedded pattern:
+    1. Primary domain is "fluency" (decodable_text)
+    2. Target pattern extracted from story_title or passage word frequency
+    3. Target words = high-frequency pattern words in passage
+    4. Response types = ["read_aloud", "comprehension_questions"]
+
+    Generic fallback:
     1. Identify keywords in title/instructions that map to domains
     2. Analyze item structure to determine response types
     3. Extract target words from word lists and questions
@@ -728,7 +870,8 @@ def extract_skill(source: SourceWorksheetModel) -> LiteracySkillModel:
 
 **Acceptance Criteria:**
 - [ ] Taxonomy covers all 6 domains with grade-appropriate specific skills
-- [ ] Skill extraction correctly identifies domain, grade, and target words for known layouts
+- [ ] UFLI Word Work → extracts phonics domain, specific pattern from concept label, target words from sample words
+- [ ] UFLI Decodable Story → extracts fluency domain, target pattern from title/passage, target words from passage
 - [ ] `extraction_confidence` reflects quality of match
 - [ ] Low-confidence extractions flagged for human review
 - [ ] Schema validates against Pydantic model
@@ -747,7 +890,7 @@ def adapt_activity(
     skill: LiteracySkillModel,
     profile: LearnerProfile,
     rules: AccommodationRules,
-    reward_state: RewardState
+    reward_state: Optional[RewardState] = None  # None for MVP (companion not yet built)
 ) -> AdaptedActivityModel:
     """
     1. Determine chunk size from profile.accommodations.chunking_level + grade
@@ -840,12 +983,20 @@ def validate_skill_parity(
     adapted: AdaptedActivityModel
 ) -> ValidationResult:
     """
+    Validates that the adapted activity preserves the instructional intent
+    of the source, NOT that it reproduces the original word list verbatim.
+    Valid adaptations may use different words, orderings, or item counts
+    as long as they exercise the same literacy skill.
+
     Checks:
     1. Domain preserved (same literacy domain)
-    2. Target words preserved (all source target words appear in adapted items)
-    3. Skill objective preserved (learning objectives covered)
-    4. Grade level appropriate (adapted items within age band)
-    5. Response types compatible (adapted formats still test the skill)
+    2. Instructional intent preserved (learning objectives covered;
+       adapted items exercise the same skill pattern — e.g., CVC blending,
+       digraph identification — even if specific words differ)
+    3. Grade level appropriate (adapted items within age band)
+    4. Response types compatible (adapted formats still test the skill)
+    5. No skill drift (adapted activity does not inadvertently test
+       a different skill, e.g., phonics → comprehension)
     """
 
 def validate_age_band(
@@ -856,9 +1007,10 @@ def validate_age_band(
 ```
 
 **Acceptance Criteria:**
-- [ ] Catches missing target words
 - [ ] Catches domain drift (e.g., phonics worksheet adapted into comprehension)
+- [ ] Catches skill-pattern drift (e.g., CVC blending adapted into sight-word memorization)
 - [ ] Catches age-band violations (Grade 3 content in Kindergarten format)
+- [ ] Passes valid adaptations that use different words but exercise the same skill
 - [ ] Passes valid adaptations that significantly restructured content
 
 ---
@@ -949,8 +1101,8 @@ decorative_elements:
 def render_worksheet(
     adapted: AdaptedActivityModel,
     theme: ThemeConfig,
-    avatar_image: Image,
-    output_path: str
+    output_path: str,
+    avatar_image: Optional[Image] = None  # None for MVP (companion not yet built)
 ) -> RenderResult:
     """
     ReportLab rendering:
@@ -976,7 +1128,7 @@ def render_worksheet(
 - Fonts: embedded, fallback stack
 - Raster assets: 300 DPI
 - Text: vector (searchable, sharp at any zoom)
-- Also produce PDF/A for archival
+- PDF/A archival format is a post-MVP goal (requires ocrmypdf or equivalent tooling)
 
 **Files:**
 - `render/pdf.py` — ReportLab rendering
@@ -1157,6 +1309,8 @@ python complete.py --profile ian.yaml --review lesson-5    # Review transformati
 
 ### Checkpoint 4.4: End-to-End Pipeline + Golden Tests
 
+> **Note:** This checkpoint is part of **Milestone 3 (MVP)**, not Milestone 4. It is numbered 4.4 for historical reasons but must be completed before the companion layer.
+
 **Goal:** Wire complete pipeline and create golden regression tests.
 
 **Implementation:**
@@ -1187,8 +1341,8 @@ def transform(input, profile, theme, output, preview):
 ```
 tests/golden/
 ├── phonics-cvc/
-│   ├── source.png                    # Input image
-│   ├── test_profile.yaml             # Test learner profile
+│   ├── source.png                    # Synthetic test image (NOT UFLI — original content)
+│   ├── test_profile.yaml             # Test learner profile (MVP fields only)
 │   ├── expected_source_model.json    # Expected OCR output
 │   ├── expected_skill_model.json     # Expected skill extraction
 │   ├── expected_adapted_model.json   # Expected ADHD adaptation
@@ -1196,6 +1350,8 @@ tests/golden/
 └── sight-words-gr1/
     └── ...
 ```
+
+> **Test fixture note:** Golden test images must be original/synthetic worksheets that mimic UFLI layout structure (same region arrangement) but use original word lists and content. UFLI copyrighted pages must not be committed to the repository. Create test fixtures by generating simple worksheets that match the UFLI word-work and decodable-story templates.
 
 **Golden test implementation:**
 ```python
@@ -1255,7 +1411,9 @@ def validated_tag_regions(adapter: ModelAdapter, image: str) -> List[RegionTag]:
 **Acceptance Criteria:**
 - [ ] Swap providers by changing config, not code
 - [ ] All model outputs validated against strict schemas
-- [ ] Pipeline works identically with or without AI assist
+- [ ] Pipeline is fully functional and deterministic without AI (no degraded mode, no missing features)
+- [ ] When AI is enabled, its contributions are bounded, schema-validated, and auditable (logged with before/after)
+- [ ] Output may differ with AI on vs off (AI genuinely helps), but both paths produce valid, complete results
 - [ ] Tiered strategy: deterministic OCR → specialized VLM → frontier model
 
 ---
@@ -1269,7 +1427,8 @@ def validated_tag_regions(adapter: ModelAdapter, image: str) -> List[RegionTag]:
 - [ ] AI skill inference helps with unfamiliar worksheet families
 - [ ] AI OCR review catches errors missed by confidence gating
 - [ ] All AI outputs go through schema validation before affecting pipeline
-- [ ] Pipeline produces identical output when AI is disabled
+- [ ] All AI contributions are logged with before/after state for auditability
+- [ ] Pipeline remains fully functional and produces valid output when AI is disabled (deterministic baseline)
 
 ---
 
@@ -1343,3 +1502,7 @@ def validated_tag_regions(adapter: ModelAdapter, image: str) -> List[RegionTag]:
 | 0.6.0 | 2026-03-07 | Reframed as skill-preserving adaptation engine; added LiteracySkillModel and ADHD Activity Adapter stages |
 | 0.7.0 | 2026-03-07 | Added companion layer, caregiver controls, operational signals, explicit anti-patterns |
 | 1.0.0 | 2026-03-07 | Full implementation plan with detailed checkpoints, acceptance criteria, risk assessment, and git repo integration |
+| 1.1.0 | 2026-03-07 | Review feedback: narrowed MVP to core engine (companion post-core); fixed skill-parity validator to preserve instructional intent not word lists; resolved AI-assist contradiction (deterministic baseline, bounded auditable AI); fixed CI Tesseract dependency and PDF/A stage misalignment; softened BC curriculum claims; corrected ADHD evidence (removed OpenDyslexic, fixed reward language); clarified Pydantic as single contract layer |
+| 1.2.0 | 2026-03-07 | Evidence-consistent ADHD design overhaul: rewrote Visual Design Rules, Content Restructuring, and Engagement Elements sections citing PMC10453933, PMC5280087, Longwood/BCH ADHD tools; established "game-themed structure, visually calm execution" principle; added decoration budget, chunking targets, effort-based rewards, self-assessment, bounded choice, avatar placement rules; identified UFLI Foundations as primary input family |
+| 1.3.0 | 2026-03-07 | Split UFLI into two known templates (word work + decodable story) with distinct heuristics; added UFLI rights boundary (private input only, not repo fixtures); restrained game framing (labels visually subordinate, no extra mechanics to learn); softened research language throughout to "evidence-consistent" where claims are inferred |
+| 1.4.0 | 2026-03-07 | Accuracy pass for clean build: added template_type to SourceWorksheetModel and Pydantic schema; added UFLI-specific region types to SourceRegion enum; split skill extractor logic by template type; made companion-dependent fields Optional (reward_event, avatar_prompts, avatar_image, reward_state) so MVP builds without companion; separated LearnerProfile into MVP-required vs companion-optional fields; noted golden test fixtures must be synthetic (not UFLI); added self_assessment field to AdaptedActivityModel; updated acceptance criteria for both UFLI templates; noted Checkpoint 4.4 is in Milestone 3 |

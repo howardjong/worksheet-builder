@@ -4,6 +4,9 @@ masters/
 artifacts/
 asset_cache/
 
+# Sample inputs (UFLI copyrighted — private, local only)
+samples/input/
+
 # Python
 __pycache__/
 *.py[cod]
