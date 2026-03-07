@@ -8,7 +8,7 @@
 
 ## Current State
 
-**Status:** Checkpoint 1.1 complete. Scaffold, dependencies, CI, and smoke test in place. Ready for Checkpoint 1.2.
+**Status:** Checkpoint 1.2 complete. Image capture, preprocessing, and master storage working. Ready for Checkpoint 1.3.
 **Branch:** `main`
 **Plan version:** 1.4.0
 **Last Updated:** 2026-03-07
@@ -17,7 +17,7 @@
 
 | Milestone | Status | Checkpoints | Notes |
 |-----------|--------|-------------|-------|
-| M1: Foundation + Source Extraction | **In progress** | ~~1.1~~, 1.2, 1.3, 1.4 | MVP — 1.1 done |
+| M1: Foundation + Source Extraction | **In progress** | ~~1.1~~, ~~1.2~~, 1.3, 1.4 | MVP — 1.1, 1.2 done |
 | M2: Skill Extraction + ADHD Adaptation | Not started | 2.1, 2.2, 2.3, 2.4 | MVP |
 | M3: Theme + Render + Validate + E2E | Not started | 3.1, 3.2, 3.3, **4.4** | MVP (4.4 moved here) |
 | M4: Companion + Avatar | Not started | 4.1, 4.2, 4.3 | Post-core, pre-launch |
@@ -39,11 +39,12 @@
 - Empty test files for each module + empty CLI entry points
 
 ### What's Next
-**Checkpoint 1.2: Image Capture + Preprocessing**
-- Implement `capture/preprocess.py` — OpenCV pipeline (deskew, dewarp, denoise, contrast normalize)
-- Implement `capture/store.py` — master image storage with hash-based filenames + archival PDF
-- Write `tests/test_capture.py` with sample images
-- Acceptance: phone photo with skew → clean page; flatbed scan → normalized; deterministic; master stored
+**Checkpoint 1.3: OCR + Source Extraction**
+- Implement `extract/ocr.py` — PaddleOCR primary, Tesseract fallback
+- Implement `extract/heuristics.py` — UFLI template detection + region classification
+- Implement `extract/schema.py` — SourceWorksheetModel with template_type
+- Write `tests/test_extract.py`
+- Acceptance: >95% OCR on clean scans; both UFLI templates detected; regions classified; deterministic
 
 ---
 
@@ -194,4 +195,17 @@ extract/adapter.py → Checkpoint 5.1 (post-launch)
 - All acceptance criteria pass: `make lint`, `make typecheck`, `make test`
 - Hit G5: GitHub PAT missing `workflow` scope, blocking push of ci.yml
 
-**What's next:** Resolve PAT/workflow push, then Checkpoint 1.2 — Image Capture + Preprocessing
+**What's next:** Checkpoint 1.2 — Image Capture + Preprocessing
+
+### Session 4 — 2026-03-07 (Checkpoint 1.2 Implementation)
+**Participants:** User + Claude Opus 4.6
+**What happened:**
+- Built Checkpoint 1.2: image capture, preprocessing, master storage
+- `capture/schema.py` — PreprocessResult and MasterRecord Pydantic models
+- `capture/preprocess.py` — full OpenCV pipeline: page detection, perspective warp, deskew (Hough), denoise, CLAHE contrast normalization, border trimming
+- `capture/store.py` — hash-based master storage (idempotent) + archival PDF via ReportLab
+- `tests/test_capture.py` — 11 tests with synthetic worksheet image generator (skew, perspective, noise, desk background variants)
+- Tested against real UFLI sample: perspective correction detected and applied correctly
+- Resolved numpy/OpenCV typing issues with mypy strict mode (used `np.ndarray[Any, Any]` alias)
+
+**What's next:** Checkpoint 1.3 — OCR + Source Extraction

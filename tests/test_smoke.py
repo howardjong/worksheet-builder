@@ -1,12 +1,12 @@
 def test_packages_importable() -> None:
     """Verify all pipeline packages are importable."""
-    import capture
-    import extract
-    import skill
     import adapt
-    import theme
+    import capture
     import companion
+    import extract
     import render
+    import skill
+    import theme
     import validate
 
     assert capture is not None
