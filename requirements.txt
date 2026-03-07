@@ -1,0 +1,17 @@
+# Core pipeline
+opencv-python-headless>=4.8,<5
+paddleocr>=2.7
+pytesseract>=0.3
+reportlab>=4.0
+PyMuPDF>=1.23
+Pillow>=10.0
+pydantic>=2.0,<3
+click>=8.0,<9
+PyYAML>=6.0
+
+# Dev / CI
+pytest>=7.0
+mypy>=1.5
+ruff>=0.4
+types-PyYAML>=6.0
+types-Pillow>=10.0

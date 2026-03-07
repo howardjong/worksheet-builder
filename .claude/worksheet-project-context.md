@@ -8,7 +8,7 @@
 
 ## Current State
 
-**Status:** Pre-implementation — plan finalized (v1.4.0) after 4 review passes, repo initialized, no code written yet.
+**Status:** Checkpoint 1.1 complete. Scaffold, dependencies, CI, and smoke test in place. Ready for Checkpoint 1.2.
 **Branch:** `main`
 **Plan version:** 1.4.0
 **Last Updated:** 2026-03-07
@@ -17,7 +17,7 @@
 
 | Milestone | Status | Checkpoints | Notes |
 |-----------|--------|-------------|-------|
-| M1: Foundation + Source Extraction | **Not started** | 1.1, 1.2, 1.3, 1.4 | MVP |
+| M1: Foundation + Source Extraction | **In progress** | ~~1.1~~, 1.2, 1.3, 1.4 | MVP — 1.1 done |
 | M2: Skill Extraction + ADHD Adaptation | Not started | 2.1, 2.2, 2.3, 2.4 | MVP |
 | M3: Theme + Render + Validate + E2E | Not started | 3.1, 3.2, 3.3, **4.4** | MVP (4.4 moved here) |
 | M4: Companion + Avatar | Not started | 4.1, 4.2, 4.3 | Post-core, pre-launch |
@@ -26,20 +26,24 @@
 ### What Exists Now
 - `worksheet-builder-consolidated-plan.md` — full implementation plan (v1.4.0, 15 checkpoints)
 - `CLAUDE.md` — project guidance for Claude Code
-- `.gitignore` — excludes data dirs, python artifacts, IDE files
+- `.gitignore` — excludes data dirs, python artifacts, IDE files, samples/input/
 - `.claude/` — context doc, commands, skills
-- `samples/input/` — 6 UFLI phone photos (word work + decodable story pages)
-- `samples/output/` — 3 manually-created adapted worksheet examples
+- `samples/input/` — 6 UFLI phone photos (gitignored, local only)
+- `samples/output/` — 3 manually-created adapted worksheet examples (committed)
+- `pyproject.toml` — ruff, mypy (strict), pytest config
+- `requirements.txt` — all pipeline dependencies pinned
+- `Makefile` — lint, typecheck, test, test-golden, test-all, format, clean
+- `.github/workflows/ci.yml` — CI with Python 3.11, Tesseract, lint+typecheck+test
+- 8 pipeline packages with `__init__.py`: capture, extract, skill, adapt, theme, companion, render, validate
+- `tests/test_smoke.py` — verifies all packages importable
+- Empty test files for each module + empty CLI entry points
 
 ### What's Next
-**Start with Checkpoint 1.1: Repository Scaffold + CI**
-- Create `pyproject.toml` with project metadata, ruff/mypy config
-- Create `requirements.txt` with pinned dependencies
-- Create `Makefile` with lint/typecheck/test targets
-- Create `.github/workflows/ci.yml` (including `apt-get install tesseract-ocr`)
-- Create all package directories with `__init__.py` files
-- Create empty test files
-- Verify: `make lint && make typecheck && make test` all pass
+**Checkpoint 1.2: Image Capture + Preprocessing**
+- Implement `capture/preprocess.py` — OpenCV pipeline (deskew, dewarp, denoise, contrast normalize)
+- Implement `capture/store.py` — master image storage with hash-based filenames + archival PDF
+- Write `tests/test_capture.py` with sample images
+- Acceptance: phone photo with skew → clean page; flatbed scan → normalized; deterministic; master stored
 
 ---
 
@@ -152,6 +156,7 @@ extract/adapter.py → Checkpoint 5.1 (post-launch)
 | G2 | PDF/A is not a simple ReportLab toggle | Requires ocrmypdf or equivalent | Deferred to post-MVP |
 | G3 | OpenDyslexic not evidence-backed for ADHD | Was listed as font option | Removed, replaced with Nunito |
 | G4 | "All source target words must appear" is too strict | Blocks valid adaptations for phonics, morphology, fluency | Changed to instructional-intent preservation |
+| G5 | GitHub PAT needs `workflow` scope to push CI files | `.github/workflows/ci.yml` push rejected without it | User needs to update PAT or push CI file via web UI |
 
 ---
 
@@ -175,3 +180,18 @@ extract/adapter.py → Checkpoint 5.1 (post-launch)
 - Identified key tension: output samples are more visually dense than ADHD evidence supports → resolved with "game structure, calm execution" principle
 
 **What's next:** Checkpoint 1.1 — Repository scaffold + CI
+
+### Session 3 — 2026-03-07 (Checkpoint 1.1 Implementation)
+**Participants:** User + Claude Opus 4.6
+**What happened:**
+- Built Checkpoint 1.1: repo scaffold, dependencies, CI, Makefile, package structure
+- Created pyproject.toml (ruff, mypy strict, pytest config)
+- Created requirements.txt with all pinned deps (PaddleOCR, OpenCV, ReportLab, Pydantic, etc.)
+- Created Makefile with 7 targets
+- Created CI workflow with Tesseract install
+- Created 8 pipeline packages with __init__.py
+- Created smoke test verifying all packages importable
+- All acceptance criteria pass: `make lint`, `make typecheck`, `make test`
+- Hit G5: GitHub PAT missing `workflow` scope, blocking push of ci.yml
+
+**What's next:** Resolve PAT/workflow push, then Checkpoint 1.2 — Image Capture + Preprocessing
