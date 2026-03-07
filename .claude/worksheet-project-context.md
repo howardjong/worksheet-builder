@@ -8,7 +8,7 @@
 
 ## Current State
 
-**Status:** Milestone 1 complete. All foundation + source extraction stages working. Ready for Milestone 2 (Checkpoint 2.1).
+**Status:** Checkpoint 2.1 complete. ADHD activity adapter, accommodation rules, and learner profile working. Ready for Checkpoint 2.2.
 **Branch:** `main`
 **Plan version:** 1.4.0
 **Last Updated:** 2026-03-07
@@ -18,7 +18,7 @@
 | Milestone | Status | Checkpoints | Notes |
 |-----------|--------|-------------|-------|
 | M1: Foundation + Source Extraction | **Complete** | ~~1.1~~, ~~1.2~~, ~~1.3~~, ~~1.4~~ | All done |
-| M2: Skill Extraction + ADHD Adaptation | Not started | 2.1, 2.2, 2.3, 2.4 | MVP |
+| M2: Skill Extraction + ADHD Adaptation | **In progress** | ~~2.1~~, 2.2, 2.3, 2.4 | MVP — 2.1 done |
 | M3: Theme + Render + Validate + E2E | Not started | 3.1, 3.2, 3.3, **4.4** | MVP (4.4 moved here) |
 | M4: Companion + Avatar | Not started | 4.1, 4.2, 4.3 | Post-core, pre-launch |
 | M5: AI Assist + Generative | Not started | 5.1, 5.2, 5.3 | Post-launch |
@@ -47,15 +47,21 @@
 - `tests/test_capture.py` — 11 tests (preprocessing, storage, archival PDF)
 - `tests/test_extract.py` — 13 tests (template detection, region classification, confidence)
 - `tests/test_skill.py` — 31 tests (taxonomy, word work/story/generic extraction, schema)
+- `companion/schema.py` — LearnerProfile + Accommodations (MVP fields, companion Optional)
+- `adapt/schema.py` — AdaptedActivityModel, ActivityChunk, ScaffoldConfig, Step, Example, ActivityItem
+- `adapt/rules.py` — AccommodationRules, chunking tables, response format substitutions, color system
+- `adapt/engine.py` — ADHD activity adaptation (chunking, instructions, worked examples, self-assessment)
+- `tests/test_adapt.py` — 28 tests (profile, rules, adaptation engine, schema)
 - `tests/test_smoke.py` — verifies all packages importable
 
 ### What's Next
-**Checkpoint 2.1: LearnerProfile + Accommodation Rules**
-- Implement `companion/profile.py` — LearnerProfile schema (MVP fields only)
-- Implement `adapt/rules.py` — ADHD accommodation rules (chunking tables, response formats)
-- Implement `adapt/schema.py` — AdaptedActivityModel with Pydantic validation
+**Checkpoint 2.2: Accommodation Rules Engine**
+- Rules engine is largely done (built into 2.1) — remaining: ensure all ADHD design rules are encoded as testable constraints
+- May merge with 2.3 (Skill-Parity Validation) since rules engine is complete
+**Checkpoint 2.3: Skill-Parity Validation**
+- Implement `validate/skill_parity.py` — validate adapted output preserves instructional intent
+- Implement `validate/adhd_compliance.py` — validate ADHD design rules
 - Write tests
-- Acceptance: profile loads from YAML; chunking rules scale by grade; accommodation settings applied
 
 ---
 
@@ -248,3 +254,16 @@ extract/adapter.py → Checkpoint 5.1 (post-launch)
 - All 56 tests pass, lint clean, types clean
 
 **What's next:** Checkpoint 2.1 — LearnerProfile + Accommodation Rules
+
+### Session 7 — 2026-03-07 (Checkpoint 2.1 Implementation)
+**Participants:** User + Claude Opus 4.6
+**What happened:**
+- Built Checkpoint 2.1: ADHD Activity Adapter + Accommodation Rules + LearnerProfile
+- `companion/schema.py` — LearnerProfile with MVP fields (name, grade_level, accommodations) and Optional companion fields (avatar, preferences, progress); YAML load/save
+- `adapt/schema.py` — AdaptedActivityModel, ActivityChunk, ScaffoldConfig, Step, Example, ActivityItem Pydantic models
+- `adapt/rules.py` — AccommodationRules derived from grade+profile; chunking tables (K:2-3, G1:3-5, G2:4-6, G3:5-8); response format substitutions; instruction limits by grade; font size minimums; color system; time estimates
+- `adapt/engine.py` — Full adaptation pipeline: source items → chunked activity items with worked examples (fading scaffolding), numbered instructions, time estimates, self-assessment checklist, decoration zones; handles phonics, fluency, and generic domains
+- `tests/test_adapt.py` — 28 tests: profile (4), rules (7), adaptation engine (17)
+- All 84 tests pass, lint clean, types clean
+
+**What's next:** Checkpoint 2.2/2.3 — Accommodation Rules Engine + Skill-Parity Validation
