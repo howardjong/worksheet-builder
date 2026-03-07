@@ -8,7 +8,7 @@
 
 ## Current State
 
-**Status:** Checkpoint 1.2 complete. Image capture, preprocessing, and master storage working. Ready for Checkpoint 1.3.
+**Status:** Checkpoint 1.3 complete. OCR extraction, UFLI template detection, and region classification working. Ready for Checkpoint 1.4.
 **Branch:** `main`
 **Plan version:** 1.4.0
 **Last Updated:** 2026-03-07
@@ -17,7 +17,7 @@
 
 | Milestone | Status | Checkpoints | Notes |
 |-----------|--------|-------------|-------|
-| M1: Foundation + Source Extraction | **In progress** | ~~1.1~~, ~~1.2~~, 1.3, 1.4 | MVP — 1.1, 1.2 done |
+| M1: Foundation + Source Extraction | **In progress** | ~~1.1~~, ~~1.2~~, ~~1.3~~, 1.4 | MVP — 1.1-1.3 done |
 | M2: Skill Extraction + ADHD Adaptation | Not started | 2.1, 2.2, 2.3, 2.4 | MVP |
 | M3: Theme + Render + Validate + E2E | Not started | 3.1, 3.2, 3.3, **4.4** | MVP (4.4 moved here) |
 | M4: Companion + Avatar | Not started | 4.1, 4.2, 4.3 | Post-core, pre-launch |
@@ -39,12 +39,12 @@
 - Empty test files for each module + empty CLI entry points
 
 ### What's Next
-**Checkpoint 1.3: OCR + Source Extraction**
-- Implement `extract/ocr.py` — PaddleOCR primary, Tesseract fallback
-- Implement `extract/heuristics.py` — UFLI template detection + region classification
-- Implement `extract/schema.py` — SourceWorksheetModel with template_type
-- Write `tests/test_extract.py`
-- Acceptance: >95% OCR on clean scans; both UFLI templates detected; regions classified; deterministic
+**Checkpoint 1.4: Skill Taxonomy + Extraction**
+- Implement `skill/taxonomy.py` — K-3 literacy skill taxonomy (6 domains)
+- Implement `skill/extractor.py` — rule-based skill extraction dispatched by template_type
+- Implement `skill/schema.py` — LiteracySkillModel with Pydantic validation
+- Write `tests/test_skill.py`
+- Acceptance: taxonomy covers 6 domains; word work → phonics extraction; decodable story → fluency; confidence scoring
 
 ---
 
@@ -209,3 +209,18 @@ extract/adapter.py → Checkpoint 5.1 (post-launch)
 - Resolved numpy/OpenCV typing issues with mypy strict mode (used `np.ndarray[Any, Any]` alias)
 
 **What's next:** Checkpoint 1.3 — OCR + Source Extraction
+
+### Session 5 — 2026-03-07 (Checkpoint 1.3 Implementation)
+**Participants:** User + Claude Opus 4.6
+**What happened:**
+- Built Checkpoint 1.3: OCR extraction, UFLI template detection, region classification
+- `extract/schema.py` — SourceWorksheetModel, SourceRegion, OCRBlock, OCRResult Pydantic models with template_type and UFLI-specific region types
+- `extract/ocr.py` — PaddleOCR v3 (dict output format) + v2 (list format) + Tesseract fallback; polygon-to-bbox conversion; sorted output
+- `extract/heuristics.py` — detect_ufli_template (keyword matching + story structure detection); map_to_source_model with template-specific classifiers for word work, decodable story, and generic fallback
+- `tests/test_extract.py` — 13 tests: template detection (4), source model mapping (6), confidence gating (3)
+- Discovered PaddleOCR v3 requires paddlepaddle and has new API (dict output with rec_texts/rec_scores/rec_polys instead of list-of-lists)
+- PaddleOCR v3 is slow on CPU (~2-3 min per image); added PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK env var
+- Added pytesseract to mypy ignore list in pyproject.toml
+- G5 resolved: PAT updated with workflow scope, CI file pushed
+
+**What's next:** Checkpoint 1.4 — Skill Taxonomy + Extraction
