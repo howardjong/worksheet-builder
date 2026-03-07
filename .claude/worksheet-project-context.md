@@ -8,7 +8,7 @@
 
 ## Current State
 
-**Status:** Checkpoint 1.3 complete. OCR extraction, UFLI template detection, and region classification working. Ready for Checkpoint 1.4.
+**Status:** Milestone 1 complete. All foundation + source extraction stages working. Ready for Milestone 2 (Checkpoint 2.1).
 **Branch:** `main`
 **Plan version:** 1.4.0
 **Last Updated:** 2026-03-07
@@ -17,7 +17,7 @@
 
 | Milestone | Status | Checkpoints | Notes |
 |-----------|--------|-------------|-------|
-| M1: Foundation + Source Extraction | **In progress** | ~~1.1~~, ~~1.2~~, ~~1.3~~, 1.4 | MVP — 1.1-1.3 done |
+| M1: Foundation + Source Extraction | **Complete** | ~~1.1~~, ~~1.2~~, ~~1.3~~, ~~1.4~~ | All done |
 | M2: Skill Extraction + ADHD Adaptation | Not started | 2.1, 2.2, 2.3, 2.4 | MVP |
 | M3: Theme + Render + Validate + E2E | Not started | 3.1, 3.2, 3.3, **4.4** | MVP (4.4 moved here) |
 | M4: Companion + Avatar | Not started | 4.1, 4.2, 4.3 | Post-core, pre-launch |
@@ -35,16 +35,27 @@
 - `Makefile` — lint, typecheck, test, test-golden, test-all, format, clean
 - `.github/workflows/ci.yml` — CI with Python 3.11, Tesseract, lint+typecheck+test
 - 8 pipeline packages with `__init__.py`: capture, extract, skill, adapt, theme, companion, render, validate
+- `capture/preprocess.py` — OpenCV preprocessing (deskew, dewarp, denoise, CLAHE)
+- `capture/store.py` — hash-based master storage + archival PDF
+- `capture/schema.py` — PreprocessResult, MasterRecord models
+- `extract/ocr.py` — PaddleOCR v3/v2 + Tesseract fallback
+- `extract/heuristics.py` — UFLI template detection + region classification
+- `extract/schema.py` — SourceWorksheetModel, SourceRegion, OCRBlock, OCRResult
+- `skill/taxonomy.py` — K-3 literacy taxonomy (6 domains), phonics pattern matcher
+- `skill/extractor.py` — rule-based skill extraction dispatched by template_type
+- `skill/schema.py` — LiteracySkillModel, SourceItem models
+- `tests/test_capture.py` — 11 tests (preprocessing, storage, archival PDF)
+- `tests/test_extract.py` — 13 tests (template detection, region classification, confidence)
+- `tests/test_skill.py` — 31 tests (taxonomy, word work/story/generic extraction, schema)
 - `tests/test_smoke.py` — verifies all packages importable
-- Empty test files for each module + empty CLI entry points
 
 ### What's Next
-**Checkpoint 1.4: Skill Taxonomy + Extraction**
-- Implement `skill/taxonomy.py` — K-3 literacy skill taxonomy (6 domains)
-- Implement `skill/extractor.py` — rule-based skill extraction dispatched by template_type
-- Implement `skill/schema.py` — LiteracySkillModel with Pydantic validation
-- Write `tests/test_skill.py`
-- Acceptance: taxonomy covers 6 domains; word work → phonics extraction; decodable story → fluency; confidence scoring
+**Checkpoint 2.1: LearnerProfile + Accommodation Rules**
+- Implement `companion/profile.py` — LearnerProfile schema (MVP fields only)
+- Implement `adapt/rules.py` — ADHD accommodation rules (chunking tables, response formats)
+- Implement `adapt/schema.py` — AdaptedActivityModel with Pydantic validation
+- Write tests
+- Acceptance: profile loads from YAML; chunking rules scale by grade; accommodation settings applied
 
 ---
 
@@ -224,3 +235,16 @@ extract/adapter.py → Checkpoint 5.1 (post-launch)
 - G5 resolved: PAT updated with workflow scope, CI file pushed
 
 **What's next:** Checkpoint 1.4 — Skill Taxonomy + Extraction
+
+### Session 6 — 2026-03-07 (Checkpoint 1.4 Implementation)
+**Participants:** User + Claude Opus 4.6
+**What happened:**
+- Built Checkpoint 1.4: Skill Taxonomy + Extraction — completes Milestone 1
+- `skill/schema.py` — LiteracySkillModel and SourceItem Pydantic models
+- `skill/taxonomy.py` — K-3 literacy taxonomy with 6 domains, phonics pattern matcher with word-boundary-aware matching for short patterns
+- `skill/extractor.py` — rule-based extraction dispatched by template_type: word work → phonics domain with concept label pattern matching, chain/sight word extraction; decodable story → fluency domain with CVCe passage analysis; generic fallback with reduced confidence
+- `tests/test_skill.py` — 31 tests: taxonomy (8), word work extraction (10), decodable story extraction (7), generic extraction (3), schema validation (3)
+- Fixed false positive in phonics pattern matcher: 2-char patterns (sh, ch, st, etc.) were matching inside words like "just" → added word boundary requirement for short patterns
+- All 56 tests pass, lint clean, types clean
+
+**What's next:** Checkpoint 2.1 — LearnerProfile + Accommodation Rules
