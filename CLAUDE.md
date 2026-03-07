@@ -97,10 +97,43 @@ validate/    — skill-parity, print quality, ADHD compliance
 - **Profiles** stored as YAML in `profiles/`
 - **Curated theme assets** committed to repo; generated assets cached in `asset_cache/` (gitignored)
 
+## Operating Conventions
+
+### Commands and Skills
+- **Commands** (`.claude/commands/`) define **what to do** — user invokes them via `/slash-command`
+- **Skills** (`.claude/skills/`) define **how to do it well** — auto-loaded when task context matches
+- **Before executing any command or implementation task:** identify which skills apply and load them. The skills encode domain rules (ADHD design, data contracts, skill preservation, print quality, avatar rewards, pipeline stages) that must influence the work.
+
+### Parallelization Rules
+Use sub-agents for parallel work **when safe:**
+- Tasks modify different files/modules
+- Tasks don't share mutable state
+- Tasks are logically independent (e.g., `capture/` and `skill/taxonomy.py`)
+
+Do NOT parallelize when:
+- Tasks modify the same module
+- Tasks require sequential reasoning (e.g., schema design before implementation)
+- Architecture changes need coordination across modules
+
+### Implementation Protocol
+For each checkpoint or non-trivial task:
+1. Read the plan and context doc for current state
+2. Identify which skills apply (check `.claude/skills/`)
+3. Decompose into independent sub-tasks if possible
+4. Implement (parallelize independent sub-tasks via sub-agents)
+5. Validate after implementation: run tests, check contracts, verify ADHD compliance
+6. Update context doc with results
+
+### Continuous Improvement
+When repeated patterns emerge during implementation, propose:
+- New commands for repeatable workflows
+- New skills for domain knowledge that should auto-activate
+- Updates to existing skills when rules prove incomplete
+
 ## Session Handoff Protocol
 
 When ending a session or handing off to another agent:
-1. Update `.claude/worksheet-project-context.md` with:
+1. Run `/handoff` or manually update `.claude/worksheet-project-context.md` with:
    - Current milestone/checkpoint status
    - What was completed this session
    - What's next (with specific files/functions)
