@@ -145,79 +145,30 @@ class ClaudeAdapter:
         self, image_path: str, source: SourceWorksheetModel
     ) -> list[RegionTag]:
         try:
-            prompt = (
-                "You are analyzing a K-3 literacy worksheet. "
-                f"Template type: {source.template_type}. "
-                f"There are {len(source.regions)} text regions extracted by OCR.\n\n"
-                "For each region, suggest a semantic type from: "
-                "title, concept_label, sample_words, word_chain, chain_script, "
-                "sight_word_list, practice_sentences, story_title, decodable_passage, "
-                "instruction, question, word_list.\n\n"
-                "Regions:\n"
-            )
-            for i, r in enumerate(source.regions):
-                prompt += f"{i}. [{r.type}] \"{r.content[:80]}\"\n"
-
-            prompt += (
-                "\nRespond with JSON array of objects: "
-                '[{"region_index": 0, "suggested_type": "...", '
-                '"confidence": 0.9, "rationale": "..."}]'
-            )
-
-            text = self._call(prompt, max_tokens=1024)
+            text = self._call(_build_tag_prompt(source), max_tokens=1024)
             data = json.loads(text)
             return [RegionTag.model_validate(item) for item in data]
-
         except Exception as e:
             logger.warning(f"Claude tag_regions failed: {e}")
             return []
 
     def infer_skill(self, source: SourceWorksheetModel) -> SkillInference | None:
         try:
-            prompt = (
-                "You are analyzing a K-3 literacy worksheet.\n"
-                f"Template: {source.template_type}\n"
-                f"Text content:\n{source.raw_text[:500]}\n\n"
-                "Infer the primary literacy skill being taught. "
-                "Respond with JSON: "
-                '{"domain": "phonics|fluency|...", "specific_skill": "...", '
-                '"grade_level": "K|1|2|3", "confidence": 0.9, '
-                '"rationale": "..."}'
-            )
-
-            text = self._call(prompt, max_tokens=256)
+            text = self._call(_build_skill_prompt(source), max_tokens=256)
             data = json.loads(text)
             return SkillInference.model_validate(data)
-
         except Exception as e:
             logger.warning(f"Claude infer_skill failed: {e}")
             return None
 
     def review_ocr(self, regions: list[SourceRegion]) -> list[OCRCorrection]:
         try:
-            low_conf = [
-                (i, r) for i, r in enumerate(regions) if r.confidence < 0.7
-            ]
-            if not low_conf:
+            prompt = _build_ocr_prompt(regions)
+            if prompt is None:
                 return []
-
-            prompt = (
-                "Review these low-confidence OCR extractions from a K-3 worksheet. "
-                "Suggest corrections where the text looks wrong.\n\n"
-            )
-            for i, r in low_conf:
-                prompt += f"{i}. \"{r.content}\" (conf: {r.confidence:.2f})\n"
-
-            prompt += (
-                "\nRespond with JSON array: "
-                '[{"region_index": 0, "original_text": "...", '
-                '"corrected_text": "...", "confidence": 0.9}]'
-            )
-
             text = self._call(prompt)
             data = json.loads(text)
             return [OCRCorrection.model_validate(item) for item in data]
-
         except Exception as e:
             logger.warning(f"Claude review_ocr failed: {e}")
             return []
@@ -226,23 +177,246 @@ class ClaudeAdapter:
         self, source: SourceWorksheetModel
     ) -> list[AdaptationSuggestion]:
         try:
-            prompt = (
-                "You are an ADHD learning specialist reviewing a K-3 worksheet.\n"
-                f"Template: {source.template_type}\n"
-                f"Content preview:\n{source.raw_text[:300]}\n\n"
-                "Suggest ADHD-friendly adaptations. Keep suggestions specific "
-                "and actionable. Respond with JSON array: "
-                '[{"suggestion_type": "response_format|chunking|scaffold", '
-                '"description": "...", "confidence": 0.9}]'
-            )
-
-            text = self._call(prompt)
+            text = self._call(_build_adaptation_prompt(source))
             data = json.loads(text)
             return [AdaptationSuggestion.model_validate(item) for item in data]
-
         except Exception as e:
             logger.warning(f"Claude suggest_adaptations failed: {e}")
             return []
+
+
+# --- OpenAI adapter ---
+
+
+class OpenAIAdapter:
+    """AI assist via OpenAI API (GPT-4o, etc.)."""
+
+    def __init__(
+        self, api_key: str | None = None, model: str = "gpt-4o"
+    ) -> None:
+        self.api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
+        self.model = model
+        self._client: Any = None
+
+    def _get_client(self) -> Any:
+        if self._client is None:
+            import openai
+
+            self._client = openai.OpenAI(api_key=self.api_key)
+        return self._client
+
+    def _call(self, prompt: str, max_tokens: int = 512) -> str:
+        client = self._get_client()
+        response = client.chat.completions.create(
+            model=self.model,
+            max_tokens=max_tokens,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        return str(response.choices[0].message.content or "")
+
+    def tag_regions(
+        self, image_path: str, source: SourceWorksheetModel
+    ) -> list[RegionTag]:
+        try:
+            prompt = _build_tag_prompt(source)
+            text = self._call(prompt, max_tokens=1024)
+            data = json.loads(text)
+            return [RegionTag.model_validate(item) for item in data]
+        except Exception as e:
+            logger.warning(f"OpenAI tag_regions failed: {e}")
+            return []
+
+    def infer_skill(self, source: SourceWorksheetModel) -> SkillInference | None:
+        try:
+            prompt = _build_skill_prompt(source)
+            text = self._call(prompt, max_tokens=256)
+            data = json.loads(text)
+            return SkillInference.model_validate(data)
+        except Exception as e:
+            logger.warning(f"OpenAI infer_skill failed: {e}")
+            return None
+
+    def review_ocr(self, regions: list[SourceRegion]) -> list[OCRCorrection]:
+        try:
+            prompt = _build_ocr_prompt(regions)
+            if prompt is None:
+                return []
+            text = self._call(prompt)
+            data = json.loads(text)
+            return [OCRCorrection.model_validate(item) for item in data]
+        except Exception as e:
+            logger.warning(f"OpenAI review_ocr failed: {e}")
+            return []
+
+    def suggest_adaptations(
+        self, source: SourceWorksheetModel
+    ) -> list[AdaptationSuggestion]:
+        try:
+            prompt = _build_adaptation_prompt(source)
+            text = self._call(prompt)
+            data = json.loads(text)
+            return [AdaptationSuggestion.model_validate(item) for item in data]
+        except Exception as e:
+            logger.warning(f"OpenAI suggest_adaptations failed: {e}")
+            return []
+
+
+# --- Gemini adapter ---
+
+
+class GeminiAdapter:
+    """AI assist via Google Gemini API."""
+
+    def __init__(
+        self, api_key: str | None = None, model: str = "gemini-2.0-flash"
+    ) -> None:
+        self.api_key = api_key or os.environ.get("GEMINI_API_KEY", "")
+        self.model = model
+        self._client: Any = None
+
+    def _get_client(self) -> Any:
+        if self._client is None:
+            import google.generativeai as genai
+
+            genai.configure(api_key=self.api_key)
+            self._client = genai.GenerativeModel(self.model)
+        return self._client
+
+    def _call(self, prompt: str) -> str:
+        client = self._get_client()
+        response = client.generate_content(prompt)
+        return str(response.text)
+
+    def tag_regions(
+        self, image_path: str, source: SourceWorksheetModel
+    ) -> list[RegionTag]:
+        try:
+            prompt = _build_tag_prompt(source)
+            text = self._call(prompt)
+            data = json.loads(_extract_json(text))
+            return [RegionTag.model_validate(item) for item in data]
+        except Exception as e:
+            logger.warning(f"Gemini tag_regions failed: {e}")
+            return []
+
+    def infer_skill(self, source: SourceWorksheetModel) -> SkillInference | None:
+        try:
+            prompt = _build_skill_prompt(source)
+            text = self._call(prompt)
+            data = json.loads(_extract_json(text))
+            return SkillInference.model_validate(data)
+        except Exception as e:
+            logger.warning(f"Gemini infer_skill failed: {e}")
+            return None
+
+    def review_ocr(self, regions: list[SourceRegion]) -> list[OCRCorrection]:
+        try:
+            prompt = _build_ocr_prompt(regions)
+            if prompt is None:
+                return []
+            text = self._call(prompt)
+            data = json.loads(_extract_json(text))
+            return [OCRCorrection.model_validate(item) for item in data]
+        except Exception as e:
+            logger.warning(f"Gemini review_ocr failed: {e}")
+            return []
+
+    def suggest_adaptations(
+        self, source: SourceWorksheetModel
+    ) -> list[AdaptationSuggestion]:
+        try:
+            prompt = _build_adaptation_prompt(source)
+            text = self._call(prompt)
+            data = json.loads(_extract_json(text))
+            return [AdaptationSuggestion.model_validate(item) for item in data]
+        except Exception as e:
+            logger.warning(f"Gemini suggest_adaptations failed: {e}")
+            return []
+
+
+# --- Shared prompt builders ---
+
+
+def _build_tag_prompt(source: SourceWorksheetModel) -> str:
+    prompt = (
+        "You are analyzing a K-3 literacy worksheet. "
+        f"Template type: {source.template_type}. "
+        f"There are {len(source.regions)} text regions extracted by OCR.\n\n"
+        "For each region, suggest a semantic type from: "
+        "title, concept_label, sample_words, word_chain, chain_script, "
+        "sight_word_list, practice_sentences, story_title, decodable_passage, "
+        "instruction, question, word_list.\n\nRegions:\n"
+    )
+    for i, r in enumerate(source.regions):
+        prompt += f"{i}. [{r.type}] \"{r.content[:80]}\"\n"
+    prompt += (
+        "\nRespond with ONLY a JSON array: "
+        '[{"region_index": 0, "suggested_type": "...", '
+        '"confidence": 0.9, "rationale": "..."}]'
+    )
+    return prompt
+
+
+def _build_skill_prompt(source: SourceWorksheetModel) -> str:
+    return (
+        "You are analyzing a K-3 literacy worksheet.\n"
+        f"Template: {source.template_type}\n"
+        f"Text content:\n{source.raw_text[:500]}\n\n"
+        "Infer the primary literacy skill being taught. "
+        "Respond with ONLY JSON: "
+        '{"domain": "phonics|fluency|...", "specific_skill": "...", '
+        '"grade_level": "K|1|2|3", "confidence": 0.9, "rationale": "..."}'
+    )
+
+
+def _build_ocr_prompt(regions: list[SourceRegion]) -> str | None:
+    low_conf = [(i, r) for i, r in enumerate(regions) if r.confidence < 0.7]
+    if not low_conf:
+        return None
+    prompt = (
+        "Review these low-confidence OCR extractions from a K-3 worksheet. "
+        "Suggest corrections where the text looks wrong.\n\n"
+    )
+    for i, r in low_conf:
+        prompt += f"{i}. \"{r.content}\" (conf: {r.confidence:.2f})\n"
+    prompt += (
+        "\nRespond with ONLY a JSON array: "
+        '[{"region_index": 0, "original_text": "...", '
+        '"corrected_text": "...", "confidence": 0.9}]'
+    )
+    return prompt
+
+
+def _build_adaptation_prompt(source: SourceWorksheetModel) -> str:
+    return (
+        "You are an ADHD learning specialist reviewing a K-3 worksheet.\n"
+        f"Template: {source.template_type}\n"
+        f"Content preview:\n{source.raw_text[:300]}\n\n"
+        "Suggest ADHD-friendly adaptations. Keep suggestions specific "
+        "and actionable. Respond with ONLY a JSON array: "
+        '[{"suggestion_type": "response_format|chunking|scaffold", '
+        '"description": "...", "confidence": 0.9}]'
+    )
+
+
+def _extract_json(text: str) -> str:
+    """Extract JSON from a response that may contain markdown fences."""
+    text = text.strip()
+    if text.startswith("```"):
+        lines = text.split("\n")
+        # Remove first line (```json) and last line (```)
+        json_lines = []
+        in_block = False
+        for line in lines:
+            if line.strip().startswith("```") and not in_block:
+                in_block = True
+                continue
+            if line.strip() == "```" and in_block:
+                break
+            if in_block:
+                json_lines.append(line)
+        return "\n".join(json_lines)
+    return text
 
 
 # --- Adapter factory ---
@@ -250,6 +424,8 @@ class ClaudeAdapter:
 
 _PROVIDERS: dict[str, type] = {
     "claude": ClaudeAdapter,
+    "openai": OpenAIAdapter,
+    "gemini": GeminiAdapter,
     "none": NoOpAdapter,
 }
 
@@ -257,13 +433,19 @@ _PROVIDERS: dict[str, type] = {
 def get_adapter(provider: str = "auto", **kwargs: str) -> ModelAdapter:
     """Get an AI adapter by provider name.
 
-    "auto" — uses Claude if ANTHROPIC_API_KEY is set, otherwise NoOp.
+    "auto" — tries providers in order: Claude, Gemini, OpenAI, NoOp.
     "claude" — requires ANTHROPIC_API_KEY.
+    "openai" — requires OPENAI_API_KEY.
+    "gemini" — requires GEMINI_API_KEY.
     "none" — deterministic baseline, no AI.
     """
     if provider == "auto":
         if os.environ.get("ANTHROPIC_API_KEY"):
             provider = "claude"
+        elif os.environ.get("GEMINI_API_KEY"):
+            provider = "gemini"
+        elif os.environ.get("OPENAI_API_KEY"):
+            provider = "openai"
         else:
             provider = "none"
 

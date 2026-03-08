@@ -6,8 +6,10 @@ from extract.adapter import (
     AdaptationSuggestion,
     AIResult,
     ClaudeAdapter,
+    GeminiAdapter,
     NoOpAdapter,
     OCRCorrection,
+    OpenAIAdapter,
     RegionTag,
     SkillInference,
     get_adapter,
@@ -152,11 +154,60 @@ class TestGetAdapter:
         adapter = get_adapter("claude", api_key="test-key")
         assert isinstance(adapter, ClaudeAdapter)
 
+    def test_openai_adapter_created(self) -> None:
+        adapter = get_adapter("openai", api_key="test-key")
+        assert isinstance(adapter, OpenAIAdapter)
+
+    def test_gemini_adapter_created(self) -> None:
+        adapter = get_adapter("gemini", api_key="test-key")
+        assert isinstance(adapter, GeminiAdapter)
+
     def test_claude_implements_protocol(self) -> None:
         from extract.adapter import ModelAdapter
 
         adapter = ClaudeAdapter(api_key="test")
         assert isinstance(adapter, ModelAdapter)
+
+    def test_openai_implements_protocol(self) -> None:
+        from extract.adapter import ModelAdapter
+
+        adapter = OpenAIAdapter(api_key="test")
+        assert isinstance(adapter, ModelAdapter)
+
+    def test_gemini_implements_protocol(self) -> None:
+        from extract.adapter import ModelAdapter
+
+        adapter = GeminiAdapter(api_key="test")
+        assert isinstance(adapter, ModelAdapter)
+
+    def test_auto_with_gemini_key(self) -> None:
+        import os
+
+        old_a = os.environ.pop("ANTHROPIC_API_KEY", None)
+        os.environ["GEMINI_API_KEY"] = "test-key"
+        try:
+            adapter = get_adapter("auto")
+            assert isinstance(adapter, GeminiAdapter)
+        finally:
+            del os.environ["GEMINI_API_KEY"]
+            if old_a:
+                os.environ["ANTHROPIC_API_KEY"] = old_a
+
+    def test_auto_with_openai_key(self) -> None:
+        import os
+
+        old_a = os.environ.pop("ANTHROPIC_API_KEY", None)
+        old_g = os.environ.pop("GEMINI_API_KEY", None)
+        os.environ["OPENAI_API_KEY"] = "test-key"
+        try:
+            adapter = get_adapter("auto")
+            assert isinstance(adapter, OpenAIAdapter)
+        finally:
+            del os.environ["OPENAI_API_KEY"]
+            if old_a:
+                os.environ["ANTHROPIC_API_KEY"] = old_a
+            if old_g:
+                os.environ["GEMINI_API_KEY"] = old_g
 
 
 # --- AI Assist Runner Tests ---

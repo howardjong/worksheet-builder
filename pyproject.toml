@@ -26,6 +26,8 @@ module = [
     "fitz.*",
     "pytesseract.*",
     "anthropic.*",
+    "openai.*",
+    "google.*",
 ]
 ignore_missing_imports = true
 
