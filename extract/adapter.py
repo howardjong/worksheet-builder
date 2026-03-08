@@ -260,6 +260,48 @@ class OpenAIAdapter:
             logger.warning(f"OpenAI suggest_adaptations failed: {e}")
             return []
 
+    IMAGE_MODEL = "gpt-image-1.5"
+
+    def generate_image(
+        self,
+        prompt: str,
+        output_path: str,
+        size: str = "1024x1024",
+    ) -> str | None:
+        """Generate an image using OpenAI gpt-image-1.5.
+
+        Fallback image generator when Gemini is unavailable.
+        Returns the output path on success, None on failure.
+        """
+        try:
+            import base64
+            from pathlib import Path
+
+            client = self._get_client()
+            response = client.images.generate(
+                model=self.IMAGE_MODEL,
+                prompt=prompt,
+                n=1,
+                size=size,
+                response_format="b64_json",
+            )
+
+            b64_data = response.data[0].b64_json
+            if not b64_data:
+                logger.warning("OpenAI image generation returned no data")
+                return None
+
+            image_bytes = base64.b64decode(b64_data)
+            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+            with open(output_path, "wb") as f:
+                f.write(image_bytes)
+            logger.info(f"Generated image (OpenAI): {output_path}")
+            return output_path
+
+        except Exception as e:
+            logger.warning(f"OpenAI image generation failed: {e}")
+            return None
+
 
 # --- Gemini adapter ---
 
@@ -550,3 +592,27 @@ def run_ai_assist(
     )
 
     return result
+
+
+def generate_image(prompt: str, output_path: str) -> str | None:
+    """Generate an image, trying Gemini first, falling back to OpenAI.
+
+    Returns the output path on success, None if both fail or no keys available.
+    """
+    # Try Gemini first
+    if os.environ.get("GEMINI_API_KEY"):
+        gemini = GeminiAdapter()
+        result = gemini.generate_image(prompt, output_path)
+        if result:
+            return result
+        logger.info("Gemini image generation failed, trying OpenAI fallback")
+
+    # Fall back to OpenAI
+    if os.environ.get("OPENAI_API_KEY"):
+        openai_adapter = OpenAIAdapter()
+        result = openai_adapter.generate_image(prompt, output_path)
+        if result:
+            return result
+
+    logger.warning("No image generation provider available")
+    return None

@@ -12,6 +12,7 @@ from extract.adapter import (
     OpenAIAdapter,
     RegionTag,
     SkillInference,
+    generate_image,
     get_adapter,
     run_ai_assist,
 )
@@ -237,6 +238,25 @@ class TestGeminiImageGen:
     def test_openai_model_is_gpt54(self) -> None:
         adapter = OpenAIAdapter(api_key="test")
         assert adapter.model == "gpt-5.4"
+
+    def test_openai_has_image_generation(self) -> None:
+        adapter = OpenAIAdapter(api_key="test")
+        assert hasattr(adapter, "generate_image")
+        assert adapter.IMAGE_MODEL == "gpt-image-1.5"
+
+    def test_generate_image_no_keys_returns_none(self) -> None:
+        import os
+
+        old_g = os.environ.pop("GEMINI_API_KEY", None)
+        old_o = os.environ.pop("OPENAI_API_KEY", None)
+        try:
+            result = generate_image("a robot", "/tmp/test.png")
+            assert result is None
+        finally:
+            if old_g:
+                os.environ["GEMINI_API_KEY"] = old_g
+            if old_o:
+                os.environ["OPENAI_API_KEY"] = old_o
 
 
 class TestRunAiAssist:
