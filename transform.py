@@ -15,6 +15,7 @@ from capture.store import store_master
 from companion.schema import load_profile
 from extract.heuristics import map_to_source_model
 from extract.ocr import extract_text_with_fallback
+from extract.vision import extract_with_vision, ocr_quality_is_poor
 from render.pdf import render_worksheet
 from skill.extractor import extract_skill
 from theme.engine import apply_theme, load_theme
@@ -92,6 +93,16 @@ def run_pipeline(
     logger.info("Stage 3: Running OCR and source extraction...")
     ocr_result = extract_text_with_fallback(preprocessed_path)
     source_model = map_to_source_model(ocr_result, master.image_hash)
+
+    # Check OCR quality — fall back to Gemini vision if poor
+    if ocr_quality_is_poor(ocr_result, source_model):
+        logger.info("  OCR quality poor — trying Gemini vision fallback...")
+        vision_model = extract_with_vision(preprocessed_path, master.image_hash)
+        if vision_model is not None:
+            source_model = vision_model
+            logger.info("  Using Gemini vision extraction")
+        else:
+            logger.warning("  Gemini vision unavailable — using OCR results as-is")
 
     # Persist source model
     source_json = artifacts / "source_model.json"
