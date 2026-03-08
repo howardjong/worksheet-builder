@@ -77,12 +77,13 @@
 
 - `extract/adapter.py` — ModelAdapter protocol; OpenAI (GPT-5.4), Gemini (3.1 Flash Lite), Claude adapters; NoOpAdapter baseline; image generation (Gemini 3.1 Flash Image Preview primary, OpenAI gpt-image-1.5 fallback); auto-detection: OpenAI > Gemini > Claude > NoOp
 - `tests/test_adapter.py` — 27 tests (schema contracts, adapters, factory, image gen, AI assist runner)
+- `extract/vision.py` — Gemini vision fallback: sends image to Gemini when OCR quality is poor (>80 fragments or <0.5 avg confidence)
 - `.env` — API keys (gitignored): OPENAI_API_KEY, GEMINI_API_KEY
 - `README.md` — project documentation
 
 ### What's Next
-**All milestones complete.** The engine is fully built. Remaining work:
-- Real-world testing with UFLI phone photos
+**All milestones complete. Real-world tested on UFLI Lesson 59.** Remaining work:
+- Test on more UFLI worksheets (other lessons, different photo conditions)
 - Custom font embedding (Nunito TTF files)
 - Avatar image composition (layered PNG/SVG rendering)
 - Web/mobile companion app (beyond CLI)
@@ -114,6 +115,7 @@
 | D19 | GPT-5.4 primary for text, Gemini for images | OpenAI best for structured JSON text tasks; Gemini 3.1 Flash Image Preview for asset generation with OpenAI gpt-image-1.5 fallback | 2026-03-07 |
 | D20 | google.genai SDK, not google.generativeai | Old SDK deprecated; new google.genai has different API (Client-based) | 2026-03-07 |
 | D21 | Auto-detection: OpenAI > Gemini > Claude | Priority based on available API keys; NoOp baseline when no keys | 2026-03-07 |
+| D22 | Gemini vision as OCR fallback, not replacement | OCR runs first; if >80 fragments or <0.5 avg confidence, send image to Gemini for structured extraction. Keeps deterministic path working without API keys | 2026-03-07 |
 
 ---
 
@@ -123,7 +125,7 @@
 ```
 [1] Capture    → master page image (PNG)
 [2] Normalize  → preprocessed image (OpenCV)
-[3] Extract    → SourceWorksheetModel (Pydantic) — includes template_type
+[3] Extract    → SourceWorksheetModel (Pydantic) — OCR + heuristics, Gemini vision fallback
 [4] Skill      → LiteracySkillModel (Pydantic) — dispatches by template_type
 [5] Adapt      → AdaptedActivityModel (Pydantic) — companion fields Optional
 [6] Theme      → themed model with decoration zones (avatar Optional for MVP)
@@ -368,4 +370,17 @@ extract/adapter.py → Checkpoint 5.1 (post-launch)
 - Added generate_image() top-level function with Gemini-first, OpenAI-fallback chain
 - Added README.md with full project documentation
 - Updated requirements.txt with openai, google-genai, python-dotenv
+- All 189 tests pass, lint clean, types clean
+
+### Session 13 — 2026-03-07 (Gemini Vision Fallback + E2E Real-World Test)
+**Participants:** User + Claude Opus 4.6
+**What happened:**
+- Added `extract/vision.py` — Gemini vision fallback for poor OCR results
+- Quality gate: if OCR produces >80 fragments or avg confidence <0.5, send image to Gemini
+- Gemini receives the actual worksheet image and returns structured JSON (template_type + regions)
+- E2E tested on real UFLI Lesson 59 phone photo (two-page spread: word work + decodable story):
+  - OCR-only: 113 fragments, wrong template (decodable_story), wrong domain (fluency), 8-page PDF
+  - With Gemini fallback: 8 clean regions, correct template (word_work), correct skill (CVCe phonics), 2-page PDF
+- Wired into transform.py pipeline automatically — no user intervention needed
+- Gemini correctly identified both pages, prioritized word work page as planned
 - All 189 tests pass, lint clean, types clean

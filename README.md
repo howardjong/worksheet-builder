@@ -106,7 +106,7 @@ Paper → [1] Capture → [2] Normalize → [3] Extract → [4] Skill → [5] Ad
 |-------|--------|-------|--------|
 | Capture | `capture/preprocess.py` | Phone photo | Cleaned image |
 | Store | `capture/store.py` | Cleaned image | Hash-named master |
-| Extract | `extract/ocr.py` + `heuristics.py` | Image | `SourceWorksheetModel` |
+| Extract | `extract/ocr.py` + `heuristics.py` + `vision.py` | Image | `SourceWorksheetModel` |
 | Skill | `skill/extractor.py` | Source model | `LiteracySkillModel` |
 | Adapt | `adapt/engine.py` | Skill + Profile | `AdaptedActivityModel` |
 | Theme | `theme/engine.py` | Adapted model | `ThemedModel` |
@@ -125,6 +125,19 @@ All AI calls go through `extract/adapter.py` behind a `ModelAdapter` protocol. T
 - **NoOpAdapter** — deterministic baseline (default when no keys set)
 
 AI outputs are schema-validated before entering the pipeline. The pipeline produces valid, complete results with or without AI.
+
+### Gemini vision fallback
+
+When OCR produces poor results (>80 fragmented text blocks or low confidence), the pipeline automatically sends the worksheet image to Gemini for vision-based extraction. Gemini analyzes the photo directly and returns structured regions — dramatically improving accuracy on real phone photos.
+
+```
+OCR (PaddleOCR/Tesseract) → quality check → if poor → Gemini vision → SourceWorksheetModel
+                                           → if good → heuristics    → SourceWorksheetModel
+```
+
+Tested on a real UFLI Lesson 59 phone photo (two-page spread):
+- OCR alone: 113 fragments, wrong template, wrong skill, 8-page PDF
+- With Gemini fallback: 8 clean regions, correct template, correct skill, 2-page PDF
 
 ## Companion layer
 
@@ -173,7 +186,7 @@ make clean       # rm -rf artifacts/ __pycache__ .mypy_cache
 
 ```
 capture/        Image preprocessing + master storage
-extract/        OCR + heuristics + AI adapter interface
+extract/        OCR + heuristics + Gemini vision fallback + AI adapter
 skill/          K-3 literacy skill taxonomy + extraction
 adapt/          ADHD activity adaptation + accommodation rules
 theme/          Calm theme engine + 3 built-in themes
