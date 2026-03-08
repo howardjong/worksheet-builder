@@ -8,7 +8,7 @@
 
 ## Current State
 
-**Status:** Checkpoint 2.1 complete. ADHD activity adapter, accommodation rules, and learner profile working. Ready for Checkpoint 2.2.
+**Status:** Milestone 2 complete. ADHD adaptation + validation pipeline working. Ready for Milestone 3 (Checkpoint 3.1).
 **Branch:** `main`
 **Plan version:** 1.4.0
 **Last Updated:** 2026-03-07
@@ -18,7 +18,7 @@
 | Milestone | Status | Checkpoints | Notes |
 |-----------|--------|-------------|-------|
 | M1: Foundation + Source Extraction | **Complete** | ~~1.1~~, ~~1.2~~, ~~1.3~~, ~~1.4~~ | All done |
-| M2: Skill Extraction + ADHD Adaptation | **In progress** | ~~2.1~~, 2.2, 2.3, 2.4 | MVP — 2.1 done |
+| M2: Skill Extraction + ADHD Adaptation | **Complete** | ~~2.1~~, ~~2.2~~, ~~2.3~~, ~~2.4~~ | All done (2.2 merged into 2.1) |
 | M3: Theme + Render + Validate + E2E | Not started | 3.1, 3.2, 3.3, **4.4** | MVP (4.4 moved here) |
 | M4: Companion + Avatar | Not started | 4.1, 4.2, 4.3 | Post-core, pre-launch |
 | M5: AI Assist + Generative | Not started | 5.1, 5.2, 5.3 | Post-launch |
@@ -52,16 +52,22 @@
 - `adapt/rules.py` — AccommodationRules, chunking tables, response format substitutions, color system
 - `adapt/engine.py` — ADHD activity adaptation (chunking, instructions, worked examples, self-assessment)
 - `tests/test_adapt.py` — 28 tests (profile, rules, adaptation engine, schema)
+- `validate/schema.py` — ValidationResult, ValidationViolation models
+- `validate/skill_parity.py` — skill-parity + age-band validation (domain, skill, grade, format checks)
+- `validate/adhd_compliance.py` — 10 ADHD design rule checks (chunk size, instructions, decoration, scoring, etc.)
+- `tests/test_validate.py` — 25 tests (skill parity, age band, ADHD compliance, schema)
 - `tests/test_smoke.py` — verifies all packages importable
 
 ### What's Next
-**Checkpoint 2.2: Accommodation Rules Engine**
-- Rules engine is largely done (built into 2.1) — remaining: ensure all ADHD design rules are encoded as testable constraints
-- May merge with 2.3 (Skill-Parity Validation) since rules engine is complete
-**Checkpoint 2.3: Skill-Parity Validation**
-- Implement `validate/skill_parity.py` — validate adapted output preserves instructional intent
-- Implement `validate/adhd_compliance.py` — validate ADHD design rules
-- Write tests
+**Checkpoint 3.1: Theme Engine**
+- Implement `theme/engine.py` — calm theme application
+- Create `theme/themes/space/config.yaml` — space theme config
+- Implement `theme/assets.py` — asset resolution (curated lookup)
+**Checkpoint 3.2: PDF Rendering**
+- Implement `render/pdf.py` — ReportLab vector PDF generation
+**Checkpoint 3.3: E2E Integration**
+- Implement `transform.py` — CLI entry point wiring full pipeline
+- Write `tests/test_e2e.py` — golden E2E tests
 
 ---
 
@@ -267,3 +273,15 @@ extract/adapter.py → Checkpoint 5.1 (post-launch)
 - All 84 tests pass, lint clean, types clean
 
 **What's next:** Checkpoint 2.2/2.3 — Accommodation Rules Engine + Skill-Parity Validation
+
+### Session 8 — 2026-03-07 (Checkpoints 2.3 + 2.4 Implementation)
+**Participants:** User + Claude Opus 4.6
+**What happened:**
+- Built Checkpoints 2.3 + 2.4: Skill-Parity Validation + ADHD Compliance — completes Milestone 2
+- `validate/schema.py` — ValidationResult and ValidationViolation Pydantic models with add_violation helper (errors set passed=False, warnings don't)
+- `validate/skill_parity.py` — 5 checks: domain preserved, specific skill preserved (warning), grade band (±1 grade allowed), response types compatible, non-empty adaptation; plus age_band validator
+- `validate/adhd_compliance.py` — 10 checks: chunk size limits, numbered instructions, instruction word/step limits, decoration budget (≤2), no dense text, worked example in first chunk, self-assessment present, no accuracy-based scoring, decoration zone coords valid, time estimates reasonable
+- `tests/test_validate.py` — 25 tests: skill parity (8), age band (3), ADHD compliance (11), schema (3)
+- All 109 tests pass, lint clean, types clean
+
+**What's next:** Checkpoint 3.1 — Theme Engine
