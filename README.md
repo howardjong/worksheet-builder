@@ -48,15 +48,15 @@ profile = create_profile(name="Ian", grade_level="1", base_character="robot")
 
 ### Optional: AI assist
 
-Set an API key in your environment to enable AI-enhanced extraction:
+Set an API key in your environment (or `.env` file) to enable AI-enhanced extraction:
 
 ```bash
-export GEMINI_API_KEY="your-key"     # or
-export OPENAI_API_KEY="your-key"     # or
-export ANTHROPIC_API_KEY="your-key"
+export OPENAI_API_KEY="your-key"      # Primary — GPT-5.4 for text tasks
+export GEMINI_API_KEY="your-key"      # Gemini 3.1 Flash Lite for text + image generation
+export ANTHROPIC_API_KEY="your-key"   # Claude as fallback
 ```
 
-The adapter auto-detects available keys. No keys = deterministic-only mode (works fine).
+Auto-detection priority: **OpenAI > Gemini > Claude > NoOp**. No keys = deterministic-only mode (works fine).
 
 ## ADHD design principles
 
@@ -100,9 +100,9 @@ All pipeline stages communicate through strict Pydantic contracts. The pipeline 
 
 All AI calls go through `extract/adapter.py` behind a `ModelAdapter` protocol. Three providers included:
 
+- **OpenAIAdapter** — GPT-5.4 for text tasks (primary)
+- **GeminiAdapter** — Gemini 3.1 Flash Lite for text tasks + Gemini 3.1 Flash Image Preview for asset generation
 - **ClaudeAdapter** — Anthropic Claude API
-- **GeminiAdapter** — Google Gemini API
-- **OpenAIAdapter** — OpenAI GPT-4o API
 - **NoOpAdapter** — deterministic baseline (default when no keys set)
 
 AI outputs are schema-validated before entering the pipeline. The pipeline produces valid, complete results with or without AI.

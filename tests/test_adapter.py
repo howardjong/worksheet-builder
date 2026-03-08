@@ -142,13 +142,20 @@ class TestGetAdapter:
 
     def test_auto_without_key_returns_noop(self) -> None:
         import os
-        old = os.environ.pop("ANTHROPIC_API_KEY", None)
+
+        old_o = os.environ.pop("OPENAI_API_KEY", None)
+        old_g = os.environ.pop("GEMINI_API_KEY", None)
+        old_a = os.environ.pop("ANTHROPIC_API_KEY", None)
         try:
             adapter = get_adapter("auto")
             assert isinstance(adapter, NoOpAdapter)
         finally:
-            if old:
-                os.environ["ANTHROPIC_API_KEY"] = old
+            if old_o:
+                os.environ["OPENAI_API_KEY"] = old_o
+            if old_g:
+                os.environ["GEMINI_API_KEY"] = old_g
+            if old_a:
+                os.environ["ANTHROPIC_API_KEY"] = old_a
 
     def test_claude_adapter_created(self) -> None:
         adapter = get_adapter("claude", api_key="test-key")
@@ -180,9 +187,23 @@ class TestGetAdapter:
         adapter = GeminiAdapter(api_key="test")
         assert isinstance(adapter, ModelAdapter)
 
-    def test_auto_with_gemini_key(self) -> None:
+    def test_auto_prefers_openai(self) -> None:
+        """OpenAI (GPT-5.4) is the top-priority auto-detected provider."""
         import os
 
+        os.environ["OPENAI_API_KEY"] = "test-key"
+        os.environ["GEMINI_API_KEY"] = "test-key"
+        try:
+            adapter = get_adapter("auto")
+            assert isinstance(adapter, OpenAIAdapter)
+        finally:
+            del os.environ["OPENAI_API_KEY"]
+            del os.environ["GEMINI_API_KEY"]
+
+    def test_auto_falls_back_to_gemini(self) -> None:
+        import os
+
+        old_o = os.environ.pop("OPENAI_API_KEY", None)
         old_a = os.environ.pop("ANTHROPIC_API_KEY", None)
         os.environ["GEMINI_API_KEY"] = "test-key"
         try:
@@ -190,27 +211,32 @@ class TestGetAdapter:
             assert isinstance(adapter, GeminiAdapter)
         finally:
             del os.environ["GEMINI_API_KEY"]
+            if old_o:
+                os.environ["OPENAI_API_KEY"] = old_o
             if old_a:
                 os.environ["ANTHROPIC_API_KEY"] = old_a
-
-    def test_auto_with_openai_key(self) -> None:
-        import os
-
-        old_a = os.environ.pop("ANTHROPIC_API_KEY", None)
-        old_g = os.environ.pop("GEMINI_API_KEY", None)
-        os.environ["OPENAI_API_KEY"] = "test-key"
-        try:
-            adapter = get_adapter("auto")
-            assert isinstance(adapter, OpenAIAdapter)
-        finally:
-            del os.environ["OPENAI_API_KEY"]
-            if old_a:
-                os.environ["ANTHROPIC_API_KEY"] = old_a
-            if old_g:
-                os.environ["GEMINI_API_KEY"] = old_g
 
 
 # --- AI Assist Runner Tests ---
+
+
+class TestGeminiImageGen:
+    def test_gemini_has_image_model(self) -> None:
+        adapter = GeminiAdapter(api_key="test")
+        assert adapter.IMAGE_MODEL == "gemini-3.1-flash-image-preview"
+
+    def test_gemini_has_generate_image_method(self) -> None:
+        adapter = GeminiAdapter(api_key="test")
+        assert hasattr(adapter, "generate_image")
+        assert callable(adapter.generate_image)
+
+    def test_gemini_text_model_is_lite(self) -> None:
+        adapter = GeminiAdapter(api_key="test")
+        assert adapter.model == "gemini-3.1-flash-lite-preview"
+
+    def test_openai_model_is_gpt54(self) -> None:
+        adapter = OpenAIAdapter(api_key="test")
+        assert adapter.model == "gpt-5.4"
 
 
 class TestRunAiAssist:

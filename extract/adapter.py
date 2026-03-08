@@ -189,10 +189,10 @@ class ClaudeAdapter:
 
 
 class OpenAIAdapter:
-    """AI assist via OpenAI API (GPT-4o, etc.)."""
+    """AI assist via OpenAI API (GPT-5.4 primary)."""
 
     def __init__(
-        self, api_key: str | None = None, model: str = "gpt-4o"
+        self, api_key: str | None = None, model: str = "gpt-5.4"
     ) -> None:
         self.api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
         self.model = model
@@ -265,14 +265,23 @@ class OpenAIAdapter:
 
 
 class GeminiAdapter:
-    """AI assist via Google Gemini API."""
+    """AI assist via Google Gemini API.
+
+    Uses gemini-3.1-flash-lite-preview for text tasks and
+    gemini-3.1-flash-image-preview for image generation.
+    """
+
+    IMAGE_MODEL = "gemini-3.1-flash-image-preview"
 
     def __init__(
-        self, api_key: str | None = None, model: str = "gemini-2.0-flash"
+        self,
+        api_key: str | None = None,
+        model: str = "gemini-3.1-flash-lite-preview",
     ) -> None:
         self.api_key = api_key or os.environ.get("GEMINI_API_KEY", "")
         self.model = model
         self._client: Any = None
+        self._image_client: Any = None
 
     def _get_client(self) -> Any:
         if self._client is None:
@@ -282,10 +291,52 @@ class GeminiAdapter:
             self._client = genai.GenerativeModel(self.model)
         return self._client
 
+    def _get_image_client(self) -> Any:
+        if self._image_client is None:
+            import google.generativeai as genai
+
+            genai.configure(api_key=self.api_key)
+            self._image_client = genai.GenerativeModel(self.IMAGE_MODEL)
+        return self._image_client
+
     def _call(self, prompt: str) -> str:
         client = self._get_client()
         response = client.generate_content(prompt)
         return str(response.text)
+
+    def generate_image(
+        self,
+        prompt: str,
+        output_path: str,
+    ) -> str | None:
+        """Generate an image using gemini-3.1-flash-image-preview.
+
+        Used for custom avatar items and theme assets.
+        Returns the output path on success, None on failure.
+        """
+        try:
+            from pathlib import Path
+
+            client = self._get_image_client()
+            response = client.generate_content(prompt)
+
+            # Extract image data from response
+            for part in response.candidates[0].content.parts:
+                if hasattr(part, "inline_data") and part.inline_data:
+                    image_data = part.inline_data.data
+                    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+                    with open(output_path, "wb") as f:
+                        f.write(image_data)
+                    logger.info(f"Generated image: {output_path}")
+                    return output_path
+
+            # If response is text-only, no image was generated
+            logger.warning("Gemini image generation returned text, not image")
+            return None
+
+        except Exception as e:
+            logger.warning(f"Gemini image generation failed: {e}")
+            return None
 
     def tag_regions(
         self, image_path: str, source: SourceWorksheetModel
@@ -433,19 +484,19 @@ _PROVIDERS: dict[str, type] = {
 def get_adapter(provider: str = "auto", **kwargs: str) -> ModelAdapter:
     """Get an AI adapter by provider name.
 
-    "auto" — tries providers in order: Claude, Gemini, OpenAI, NoOp.
+    "auto" — tries providers in order: OpenAI, Gemini, Claude, NoOp.
+    "openai" — requires OPENAI_API_KEY (primary, GPT-5.4).
+    "gemini" — requires GEMINI_API_KEY (text + image generation).
     "claude" — requires ANTHROPIC_API_KEY.
-    "openai" — requires OPENAI_API_KEY.
-    "gemini" — requires GEMINI_API_KEY.
     "none" — deterministic baseline, no AI.
     """
     if provider == "auto":
-        if os.environ.get("ANTHROPIC_API_KEY"):
-            provider = "claude"
+        if os.environ.get("OPENAI_API_KEY"):
+            provider = "openai"
         elif os.environ.get("GEMINI_API_KEY"):
             provider = "gemini"
-        elif os.environ.get("OPENAI_API_KEY"):
-            provider = "openai"
+        elif os.environ.get("ANTHROPIC_API_KEY"):
+            provider = "claude"
         else:
             provider = "none"
 
