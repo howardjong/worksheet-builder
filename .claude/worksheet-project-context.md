@@ -8,7 +8,7 @@
 
 ## Current State
 
-**Status:** Milestone 3 complete. Full MVP pipeline working: photo in → ADHD-adapted PDF out. All 3 MVP milestones done.
+**Status:** Milestone 4 complete. Companion layer (profiles, avatar catalog, token economy, caregiver controls) working. M1-M4 done. Only M5 (AI Assist) remains.
 **Branch:** `main`
 **Plan version:** 1.4.0
 **Last Updated:** 2026-03-07
@@ -20,6 +20,7 @@
 | M1: Foundation + Source Extraction | **Complete** | ~~1.1~~, ~~1.2~~, ~~1.3~~, ~~1.4~~ | All done |
 | M2: Skill Extraction + ADHD Adaptation | **Complete** | ~~2.1~~, ~~2.2~~, ~~2.3~~, ~~2.4~~ | All done (2.2 merged into 2.1) |
 | M3: Theme + Render + Validate + E2E | **Complete** | ~~3.1~~, ~~3.2~~, ~~3.3~~, ~~4.4~~ | All done |
+| M4: Companion + Avatar | **Complete** | ~~4.1~~, ~~4.2~~, ~~4.3~~ | All done |
 | M3: Theme + Render + Validate + E2E | Not started | 3.1, 3.2, 3.3, **4.4** | MVP (4.4 moved here) |
 | M4: Companion + Avatar | Not started | 4.1, 4.2, 4.3 | Post-core, pre-launch |
 | M5: AI Assist + Generative | Not started | 5.1, 5.2, 5.3 | Post-launch |
@@ -69,10 +70,18 @@
 - `transform.py` — CLI entry point wiring full 8-stage pipeline
 - `tests/test_smoke.py` — verifies all packages importable
 
+- `companion/profile.py` — profile CRUD (create, update accommodations, ensure companion fields)
+- `companion/catalog.py` — 15-item avatar catalog across 3 themes + universal
+- `companion/rewards.py` — token economy (effort-based, milestone bonuses, purchase, equip/unequip)
+- `companion/caregiver.py` — progress reports, accommodation adjustments
+- `complete.py` — CLI entry point for completion, rewards, progress, accommodations
+- `tests/test_companion.py` — 28 tests (profile, catalog, rewards, caregiver)
+
 ### What's Next
-**MVP is complete.** Next milestones are post-core:
-- **M4: Companion + Avatar** (Checkpoints 4.1-4.3) — learner profiles, avatar system, token economy
-- **M5: AI Assist + Generative** (Checkpoints 5.1-5.3) — model adapter, bounded AI, generative assets
+**M1-M4 complete.** Only M5 (AI Assist + Generative) remains:
+- **Checkpoint 5.1** — Model adapter interface (swap AI providers by config)
+- **Checkpoint 5.2** — Bounded AI assist (semantic tagging, skill inference, low-confidence review)
+- **Checkpoint 5.3** — Preference-driven generative asset creation
 
 ---
 
@@ -306,3 +315,18 @@ extract/adapter.py → Checkpoint 5.1 (post-launch)
 - All 132 tests pass, lint clean, types clean
 
 **What's next:** MVP complete. Post-core milestones: M4 (Companion + Avatar) and M5 (AI Assist)
+
+### Session 10 — 2026-03-07 (Checkpoints 4.1 + 4.2 + 4.3 Implementation)
+**Participants:** User + Claude Opus 4.6
+**What happened:**
+- Built Checkpoints 4.1-4.3: Companion + Avatar layer — completes Milestone 4
+- `companion/schema.py` — expanded with structured models: AvatarConfig, Preferences, Progress, CompletionRecord, OperationalSignals (replacing generic dict[str, Any] fields)
+- `companion/profile.py` — create_profile (saves to YAML), update_accommodations, ensure_companion_fields
+- `companion/catalog.py` — 15 avatar items across universal + 3 themes; get_item, get_affordable_items, get_milestone_items
+- `companion/rewards.py` — predictable effort-based token economy: 10 tokens/worksheet, milestone every 5 (25 bonus), purchase/equip/unequip items; enforces ADHD-safe rules (no accuracy scoring, milestone items auto-unlock)
+- `companion/caregiver.py` — view_progress report, adjust_accommodations
+- `complete.py` — CLI: --lesson (award), --progress (report), --buy (purchase), --set-chunking (adjust)
+- `tests/test_companion.py` — 28 tests: profile (5), catalog (6), rewards (13), caregiver (4)
+- All 160 tests pass, lint clean, types clean
+
+**What's next:** M5 (AI Assist + Generative) — post-launch milestone
