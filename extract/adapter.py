@@ -209,7 +209,7 @@ class OpenAIAdapter:
         client = self._get_client()
         response = client.chat.completions.create(
             model=self.model,
-            max_tokens=max_tokens,
+            max_completion_tokens=max_tokens,
             messages=[{"role": "user", "content": prompt}],
         )
         return str(response.choices[0].message.content or "")
@@ -283,7 +283,6 @@ class OpenAIAdapter:
                 prompt=prompt,
                 n=1,
                 size=size,
-                response_format="b64_json",
             )
 
             b64_data = response.data[0].b64_json
@@ -307,7 +306,7 @@ class OpenAIAdapter:
 
 
 class GeminiAdapter:
-    """AI assist via Google Gemini API.
+    """AI assist via Google Gemini API (google.genai SDK).
 
     Uses gemini-3.1-flash-lite-preview for text tasks and
     gemini-3.1-flash-image-preview for image generation.
@@ -323,27 +322,20 @@ class GeminiAdapter:
         self.api_key = api_key or os.environ.get("GEMINI_API_KEY", "")
         self.model = model
         self._client: Any = None
-        self._image_client: Any = None
 
     def _get_client(self) -> Any:
         if self._client is None:
-            import google.generativeai as genai
+            from google import genai
 
-            genai.configure(api_key=self.api_key)
-            self._client = genai.GenerativeModel(self.model)
+            self._client = genai.Client(api_key=self.api_key)
         return self._client
-
-    def _get_image_client(self) -> Any:
-        if self._image_client is None:
-            import google.generativeai as genai
-
-            genai.configure(api_key=self.api_key)
-            self._image_client = genai.GenerativeModel(self.IMAGE_MODEL)
-        return self._image_client
 
     def _call(self, prompt: str) -> str:
         client = self._get_client()
-        response = client.generate_content(prompt)
+        response = client.models.generate_content(
+            model=self.model,
+            contents=prompt,
+        )
         return str(response.text)
 
     def generate_image(
@@ -359,20 +351,25 @@ class GeminiAdapter:
         try:
             from pathlib import Path
 
-            client = self._get_image_client()
-            response = client.generate_content(prompt)
+            from google.genai import types
 
-            # Extract image data from response
+            client = self._get_client()
+            response = client.models.generate_content(
+                model=self.IMAGE_MODEL,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_modalities=["TEXT", "IMAGE"],
+                ),
+            )
+
             for part in response.candidates[0].content.parts:
-                if hasattr(part, "inline_data") and part.inline_data:
-                    image_data = part.inline_data.data
+                if part.inline_data:
                     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
                     with open(output_path, "wb") as f:
-                        f.write(image_data)
+                        f.write(part.inline_data.data)
                     logger.info(f"Generated image: {output_path}")
                     return output_path
 
-            # If response is text-only, no image was generated
             logger.warning("Gemini image generation returned text, not image")
             return None
 

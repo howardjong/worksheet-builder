@@ -28,6 +28,7 @@ module = [
     "anthropic.*",
     "openai.*",
     "google.*",
+    "google.genai.*",
 ]
 ignore_missing_imports = true
 

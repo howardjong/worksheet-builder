@@ -9,6 +9,11 @@ pydantic>=2.0,<3
 click>=8.0,<9
 PyYAML>=6.0
 
+# AI assist (optional — pipeline works without these)
+openai>=1.0
+google-genai>=1.0
+python-dotenv>=1.0
+
 # Dev / CI
 pytest>=7.0
 mypy>=1.5
