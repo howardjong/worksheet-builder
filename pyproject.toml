@@ -25,6 +25,7 @@ module = [
     "reportlab.*",
     "fitz.*",
     "pytesseract.*",
+    "anthropic.*",
 ]
 ignore_missing_imports = true
 
