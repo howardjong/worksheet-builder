@@ -164,25 +164,43 @@ def _draw_chunk(
     # Activity items
     c.setFillColor(HexColor(theme_colors.text))
     c.setFont(theme.fonts.primary, sizes["body"])
+    max_chars = int(CONTENT_WIDTH / (sizes["body"] * 0.5))
+
     for item in chunk.items:
-        # Item content
-        text = f"  {item.item_id}. {item.content}"
+        is_chain = item.metadata.get("display") == "chain"
 
-        # Add response format indicator
-        if item.response_format == "write":
-            text += "  ____________________"
-        elif item.response_format == "circle":
-            text += "  (circle one)"
-        elif item.response_format == "read_aloud":
-            text += "  [read aloud]"
+        if is_chain:
+            # Word chain: show chain sequence, then write line below
+            label = f"  {item.item_id}. "
+            c.drawString(MARGIN + 10, y - sizes["body"], label + item.content)
+            y -= sizes["body"] + 4
+            # Write line for student to practice
+            c.drawString(MARGIN + 30, y - sizes["body"], "Write: ____________________")
+            y -= sizes["body"] + 6
+        else:
+            # Regular item — wrap long text across lines
+            text = f"  {item.item_id}. {item.content}"
+            lines = _wrap_text(text, max_chars)
 
-        # Truncate if too long for one line
-        max_chars = int(CONTENT_WIDTH / (sizes["body"] * 0.5))
-        if len(text) > max_chars:
-            text = text[:max_chars - 3] + "..."
+            for k, line in enumerate(lines):
+                c.drawString(MARGIN + 10, y - sizes["body"], line)
+                y -= sizes["body"] + 4
 
-        c.drawString(MARGIN + 10, y - sizes["body"], text)
-        y -= sizes["body"] + 6
+            # Add response format indicator on a new line
+            if item.response_format == "write":
+                c.drawString(MARGIN + 30, y - sizes["body"], "____________________")
+                y -= sizes["body"] + 4
+            elif item.response_format == "circle":
+                c.drawString(MARGIN + 30, y - sizes["body"], "(circle one)")
+                y -= sizes["body"] + 4
+            elif item.response_format == "read_aloud":
+                c.setFont(theme.fonts.primary, sizes["small"])
+                c.drawString(MARGIN + 30, y - sizes["small"], "[read aloud]")
+                c.setFont(theme.fonts.primary, sizes["body"])
+                y -= sizes["small"] + 4
+
+            y += 4  # offset the last +4, then add spacing
+            y -= 6
 
     # Chunk divider
     y -= 8
@@ -192,6 +210,30 @@ def _draw_chunk(
     y -= 12
 
     return y
+
+
+def _wrap_text(text: str, max_chars: int) -> list[str]:
+    """Wrap text into lines that fit within max_chars."""
+    if len(text) <= max_chars:
+        return [text]
+
+    lines: list[str] = []
+    words = text.split()
+    current_line = ""
+
+    for word in words:
+        candidate = f"{current_line} {word}".strip() if current_line else word
+        if len(candidate) <= max_chars:
+            current_line = candidate
+        else:
+            if current_line:
+                lines.append(current_line)
+            current_line = word
+
+    if current_line:
+        lines.append(current_line)
+
+    return lines if lines else [text]
 
 
 def _draw_self_assessment(

@@ -9,17 +9,26 @@ from pathlib import Path
 
 import click
 
+# Load .env before anything else
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except ImportError:
+    pass
+
 from adapt.engine import adapt_activity
 from capture.preprocess import preprocess_page
 from capture.store import store_master
 from companion.schema import load_profile
 from extract.heuristics import map_to_source_model
 from extract.ocr import extract_text_with_fallback
-from extract.vision import extract_with_vision, ocr_quality_is_poor
+from extract.vision import extract_with_vision
 from render.pdf import render_worksheet
 from skill.extractor import extract_skill
 from theme.engine import apply_theme, load_theme
 from validate.adhd_compliance import validate_adhd_compliance
+from validate.ai_review import review_adapted_worksheet
 from validate.print_checks import validate_print_quality
 from validate.skill_parity import validate_age_band, validate_skill_parity
 
@@ -89,20 +98,20 @@ def run_pipeline(
     masters_dir.mkdir(parents=True, exist_ok=True)
     master = store_master(preprocessed_path, str(masters_dir))
 
-    # Stage 3: OCR + Source extraction
-    logger.info("Stage 3: Running OCR and source extraction...")
-    ocr_result = extract_text_with_fallback(preprocessed_path)
-    source_model = map_to_source_model(ocr_result, master.image_hash)
+    # Stage 3: Source extraction (AI vision primary, OCR fallback)
+    logger.info("Stage 3: Extracting source content...")
+    source_model = None
 
-    # Check OCR quality — fall back to Gemini vision if poor
-    if ocr_quality_is_poor(ocr_result, source_model):
-        logger.info("  OCR quality poor — trying Gemini vision fallback...")
-        vision_model = extract_with_vision(preprocessed_path, master.image_hash)
-        if vision_model is not None:
-            source_model = vision_model
-            logger.info("  Using Gemini vision extraction")
-        else:
-            logger.warning("  Gemini vision unavailable — using OCR results as-is")
+    # Try AI vision first (much faster and more accurate on phone photos)
+    vision_model = extract_with_vision(preprocessed_path, master.image_hash)
+    if vision_model is not None:
+        source_model = vision_model
+        logger.info("  Using AI vision extraction")
+    else:
+        # Fall back to OCR if no AI API key available
+        logger.info("  AI vision unavailable — falling back to OCR...")
+        ocr_result = extract_text_with_fallback(preprocessed_path)
+        source_model = map_to_source_model(ocr_result, master.image_hash)
 
     # Persist source model
     source_json = artifacts / "source_model.json"
@@ -125,6 +134,26 @@ def run_pipeline(
     adapted_json = artifacts / "adapted_model.json"
     adapted_json.write_text(adapted.model_dump_json(indent=2))
     logger.info(f"  Chunks: {len(adapted.chunks)}, Grade: {adapted.grade_level}")
+
+    # Stage 5b: AI quality review (iterative)
+    logger.info("Stage 5b: AI quality review...")
+    adapted, reviews = review_adapted_worksheet(adapted)
+
+    # Persist review results
+    review_data = [r.to_dict() for r in reviews]
+    review_json = artifacts / "ai_review.json"
+    review_json.write_text(json.dumps(review_data, indent=2))
+
+    if reviews and reviews[-1].passed:
+        logger.info("  AI quality review: PASSED")
+    elif reviews:
+        logger.warning(
+            f"  AI quality review: {len(reviews[-1].issues)} issues remaining "
+            f"after {len(reviews)} iterations"
+        )
+
+    # Re-persist adapted model (may have been modified by AI review)
+    adapted_json.write_text(adapted.model_dump_json(indent=2))
 
     # Stage 6: Apply theme
     logger.info("Stage 6: Applying theme...")

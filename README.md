@@ -9,14 +9,15 @@ Phone photo of worksheet  -->  ADHD-adapted, themed PDF
 ```
 
 1. **Capture** a worksheet with your phone camera
-2. **OCR** extracts text, detects the worksheet template (UFLI word work or decodable story)
+2. **AI vision** (Gemini) analyzes the photo and extracts structured content — OCR is the fallback if no API key
 3. **Skill extraction** identifies the literacy skill being taught (phonics, fluency, etc.)
 4. **ADHD adaptation** chunks content, adds scaffolding, worked examples, and self-assessment
-5. **Theme** applies a calm visual theme (Space, Underwater, or Dinosaur)
-6. **Render** produces a print-ready PDF with vector text
-7. **Validate** checks skill preservation, ADHD compliance, and print quality
+5. **AI quality review** iteratively evaluates the adapted worksheet for correctness before rendering
+6. **Theme** applies a calm visual theme (Space, Underwater, or Dinosaur)
+7. **Render** produces a print-ready PDF with vector text
+8. **Validate** checks skill preservation, ADHD compliance, and print quality
 
-The pipeline is fully deterministic — no API keys required. AI assist (Claude, Gemini, or OpenAI) is optional and enhances extraction on unfamiliar layouts.
+AI vision (Gemini) is the primary extraction mode — dramatically more accurate than OCR on phone photos. The pipeline falls back to OCR if no API key is set. AI quality review catches structural issues before the final PDF is generated.
 
 ## Quick start
 
@@ -56,7 +57,7 @@ export GEMINI_API_KEY="your-key"      # Gemini 3.1 Flash Lite for text + image g
 export ANTHROPIC_API_KEY="your-key"   # Claude as fallback
 ```
 
-Auto-detection priority: **OpenAI > Gemini > Claude > NoOp**. No keys = deterministic-only mode (works fine).
+Extraction priority: **Gemini vision (primary) > OCR fallback**. Quality review: **Gemini 2.5 Flash (primary) > GPT-5.4 fallback**. No keys = OCR-only mode (still works).
 
 ### AI image generation
 
@@ -74,6 +75,8 @@ path = generate_image(
 
 | Capability | Primary | Fallback |
 |---|---|---|
+| Worksheet extraction | Gemini 3.1 Flash Lite (vision) | PaddleOCR / Tesseract |
+| Quality review | Gemini 2.5 Flash | GPT-5.4 |
 | Text tasks | OpenAI GPT-5.4 | Gemini 3.1 Flash Lite / Claude |
 | Image generation | Gemini 3.1 Flash Image Preview | OpenAI gpt-image-1.5 |
 
@@ -99,16 +102,17 @@ The engine follows evidence-consistent ADHD design rules:
 ## Architecture
 
 ```
-Paper → [1] Capture → [2] Normalize → [3] Extract → [4] Skill → [5] Adapt → [6] Theme → [7] Render → [8] Validate
+Paper → [1] Capture → [2] Store → [3] Extract (AI vision / OCR) → [4] Skill → [5] Adapt → [5b] AI Review → [6] Theme → [7] Render → [8] Validate
 ```
 
 | Stage | Module | Input | Output |
 |-------|--------|-------|--------|
 | Capture | `capture/preprocess.py` | Phone photo | Cleaned image |
 | Store | `capture/store.py` | Cleaned image | Hash-named master |
-| Extract | `extract/ocr.py` + `heuristics.py` + `vision.py` | Image | `SourceWorksheetModel` |
+| Extract | `extract/vision.py` (primary) or `extract/ocr.py` + `heuristics.py` (fallback) | Image | `SourceWorksheetModel` |
 | Skill | `skill/extractor.py` | Source model | `LiteracySkillModel` |
 | Adapt | `adapt/engine.py` | Skill + Profile | `AdaptedActivityModel` |
+| AI Review | `validate/ai_review.py` | Adapted model | Reviewed/fixed `AdaptedActivityModel` |
 | Theme | `theme/engine.py` | Adapted model | `ThemedModel` |
 | Render | `render/pdf.py` | Themed model | PDF file |
 | Validate | `validate/*.py` | All models + PDF | `ValidationResult` |
@@ -126,18 +130,28 @@ All AI calls go through `extract/adapter.py` behind a `ModelAdapter` protocol. T
 
 AI outputs are schema-validated before entering the pipeline. The pipeline produces valid, complete results with or without AI.
 
-### Gemini vision fallback
+### AI vision extraction
 
-When OCR produces poor results (>80 fragmented text blocks or low confidence), the pipeline automatically sends the worksheet image to Gemini for vision-based extraction. Gemini analyzes the photo directly and returns structured regions — dramatically improving accuracy on real phone photos.
+Gemini vision is the primary extraction mode. The pipeline sends the worksheet photo directly to Gemini 3.1 Flash Lite, which analyzes the image and returns structured regions (concept labels, word chains, sentences, etc.). OCR (PaddleOCR/Tesseract) is only used as a fallback when no API key is available.
 
 ```
-OCR (PaddleOCR/Tesseract) → quality check → if poor → Gemini vision → SourceWorksheetModel
-                                           → if good → heuristics    → SourceWorksheetModel
+Photo → Gemini vision (primary) → SourceWorksheetModel
+      → OCR fallback (no API key) → heuristics → SourceWorksheetModel
 ```
 
 Tested on a real UFLI Lesson 59 phone photo (two-page spread):
 - OCR alone: 113 fragments, wrong template, wrong skill, 8-page PDF
-- With Gemini fallback: 8 clean regions, correct template, correct skill, 2-page PDF
+- Gemini vision: 10 clean regions, correct template, correct skill, 2-page PDF
+
+### AI quality review
+
+After ADHD adaptation (Stage 5), the pipeline sends the adapted worksheet to AI for iterative quality review (up to 3 iterations). The reviewer checks for structural issues — truncated text, formatting artifacts, ADHD anti-patterns — while preserving the original source content.
+
+```
+Adapted model → AI review → fix issues → re-review → ... → final adapted model
+```
+
+The review is conservative: it flags structural problems but never substitutes the source words (which are the learning targets from the original worksheet). Review uses Gemini 2.5 Flash (primary) with GPT-5.4 as fallback.
 
 ## Companion layer
 
@@ -192,7 +206,7 @@ adapt/          ADHD activity adaptation + accommodation rules
 theme/          Calm theme engine + 3 built-in themes
 companion/      Learner profiles, avatar catalog, token economy, caregiver
 render/         ReportLab vector PDF generation
-validate/       Skill-parity, ADHD compliance, print quality validators
+validate/       Skill-parity, ADHD compliance, print quality, AI quality review
 transform.py    CLI: transform worksheets (full pipeline)
 complete.py     CLI: mark completion, manage rewards and accommodations
 ```

@@ -173,24 +173,35 @@ def _source_items_to_activity_items(
                 )
 
         elif source_item.item_type == "sentence":
-            item_id += 1
-            items.append(
-                ActivityItem(
-                    item_id=item_id,
-                    content=source_item.content,
-                    response_format=response_format,
+            # Split multi-sentence blocks into individual sentences
+            sentences = _split_sentences(source_item.content)
+            for sentence in sentences:
+                item_id += 1
+                items.append(
+                    ActivityItem(
+                        item_id=item_id,
+                        content=sentence,
+                        response_format=response_format,
+                    )
                 )
-            )
 
         elif source_item.item_type == "word_chain":
-            item_id += 1
-            items.append(
-                ActivityItem(
-                    item_id=item_id,
-                    content=source_item.content,
-                    response_format="write",
+            # Split chains into individual transformation steps
+            chains = _split_word_chains(source_item.content)
+            for chain in chains:
+                item_id += 1
+                items.append(
+                    ActivityItem(
+                        item_id=item_id,
+                        content=chain,
+                        response_format="write",
+                        metadata={"display": "chain"},
+                    )
                 )
-            )
+
+        elif source_item.item_type == "chain_script":
+            # Chain scripts are teacher instructions — skip as student items
+            pass
 
         elif source_item.item_type == "passage":
             item_id += 1
@@ -247,11 +258,58 @@ def _words_to_activity_items(
     return items
 
 
+def _split_sentences(text: str) -> list[str]:
+    """Split a multi-sentence block into individual sentences."""
+    import re
+
+    # Split on numbered prefixes like "1. " or "2. "
+    numbered = re.split(r"(?:^|\s)(\d+)\.\s+", text.strip())
+    if len(numbered) > 2:
+        # numbered splits as ['', '1', 'sentence1', '2', 'sentence2', ...]
+        sentences = []
+        for j in range(1, len(numbered), 2):
+            if j + 1 < len(numbered):
+                s = numbered[j + 1].strip()
+                if s:
+                    sentences.append(s)
+        if sentences:
+            return sentences
+
+    # Fallback: split on sentence-ending punctuation
+    parts = re.split(r"(?<=[.!?])\s+", text.strip())
+    return [p.strip() for p in parts if p.strip()]
+
+
+def _split_word_chains(text: str) -> list[str]:
+    """Split word chain content into individual chain sequences.
+
+    Input like: "1. tune → tone → cone → cane 2. tame → time → dime → dome"
+    Output: ["tune → tone → cone → cane", "tame → time → dime → dome"]
+    """
+    import re
+
+    # Try splitting on numbered prefixes
+    numbered = re.split(r"(?:^|\s)(\d+)\.\s+", text.strip())
+    if len(numbered) > 2:
+        chains = []
+        for j in range(1, len(numbered), 2):
+            if j + 1 < len(numbered):
+                chain = numbered[j + 1].strip()
+                if chain:
+                    chains.append(chain)
+        if chains:
+            return chains
+
+    # Single chain — return as-is
+    return [text.strip()] if text.strip() else []
+
+
 def _default_format_for_type(item_type: str) -> str:
     """Return default response format for a source item type."""
     return {
         "word_list": "write",
         "word_chain": "write",
+        "chain_script": "write",
         "sentence": "write",
         "passage": "read_aloud",
         "sight_words": "write",

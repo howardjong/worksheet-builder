@@ -45,6 +45,20 @@ def _run_paddleocr(image_path: str) -> OCRResult:
     os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
 
     from paddleocr import PaddleOCR
+    from PIL import Image as PILImage
+
+    # Resize large images to prevent OCR timeout on CPU
+    MAX_OCR_SIDE = 2000
+    img = PILImage.open(image_path)
+    w, h = img.size
+    if max(w, h) > MAX_OCR_SIDE:
+        scale = MAX_OCR_SIDE / max(w, h)
+        new_w, new_h = int(w * scale), int(h * scale)
+        img = img.resize((new_w, new_h), PILImage.LANCZOS)
+        resized_path = image_path.rsplit(".", 1)[0] + "_ocr_resized.png"
+        img.save(resized_path)
+        image_path = resized_path
+        logger.info(f"Resized image from {w}x{h} to {new_w}x{new_h} for OCR")
 
     ocr = PaddleOCR(lang="en")
     raw: list[Any] = ocr.ocr(image_path)

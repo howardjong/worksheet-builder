@@ -75,7 +75,7 @@ def _extract_word_work(source: SourceWorksheetModel) -> LiteracySkillModel:
         elif region.type == "chain_script":
             source_items.append(
                 SourceItem(
-                    item_type="word_chain",
+                    item_type="chain_script",
                     content=region.content,
                     source_region_index=i,
                 )
