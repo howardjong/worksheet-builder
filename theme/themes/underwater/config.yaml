@@ -1,0 +1,19 @@
+name: "Ocean Explorer"
+style: calm
+fonts:
+  primary: "Helvetica"
+  heading: "Helvetica-Bold"
+colors:
+  directions: "#0369A1"
+  examples: "#059669"
+  key_words: "#D97706"
+  rewards: "#D97706"
+  background: "#F0F9FF"
+  text: "#1E3A5F"
+  chunk_border: "#BAE6FD"
+avatar_position: "bottom-right"
+decorative_elements:
+  max_per_page: 2
+  assets:
+    - "fish.svg"
+    - "coral.svg"

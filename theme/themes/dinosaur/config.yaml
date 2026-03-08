@@ -1,0 +1,19 @@
+name: "Dino Discovery"
+style: calm
+fonts:
+  primary: "Helvetica"
+  heading: "Helvetica-Bold"
+colors:
+  directions: "#2563EB"
+  examples: "#16A34A"
+  key_words: "#B45309"
+  rewards: "#D97706"
+  background: "#FEFCE8"
+  text: "#1C1917"
+  chunk_border: "#D6D3D1"
+avatar_position: "bottom-right"
+decorative_elements:
+  max_per_page: 2
+  assets:
+    - "dino.svg"
+    - "footprint.svg"

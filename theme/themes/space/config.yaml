@@ -1,0 +1,19 @@
+name: "Space Adventure"
+style: calm
+fonts:
+  primary: "Helvetica"
+  heading: "Helvetica-Bold"
+colors:
+  directions: "#2563EB"
+  examples: "#059669"
+  key_words: "#D97706"
+  rewards: "#D97706"
+  background: "#FAFAFA"
+  text: "#1F2937"
+  chunk_border: "#E5E7EB"
+avatar_position: "bottom-right"
+decorative_elements:
+  max_per_page: 2
+  assets:
+    - "rocket.svg"
+    - "planet.svg"

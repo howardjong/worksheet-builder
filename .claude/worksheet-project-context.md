@@ -8,7 +8,7 @@
 
 ## Current State
 
-**Status:** Milestone 2 complete. ADHD adaptation + validation pipeline working. Ready for Milestone 3 (Checkpoint 3.1).
+**Status:** Milestone 3 complete. Full MVP pipeline working: photo in → ADHD-adapted PDF out. All 3 MVP milestones done.
 **Branch:** `main`
 **Plan version:** 1.4.0
 **Last Updated:** 2026-03-07
@@ -19,6 +19,7 @@
 |-----------|--------|-------------|-------|
 | M1: Foundation + Source Extraction | **Complete** | ~~1.1~~, ~~1.2~~, ~~1.3~~, ~~1.4~~ | All done |
 | M2: Skill Extraction + ADHD Adaptation | **Complete** | ~~2.1~~, ~~2.2~~, ~~2.3~~, ~~2.4~~ | All done (2.2 merged into 2.1) |
+| M3: Theme + Render + Validate + E2E | **Complete** | ~~3.1~~, ~~3.2~~, ~~3.3~~, ~~4.4~~ | All done |
 | M3: Theme + Render + Validate + E2E | Not started | 3.1, 3.2, 3.3, **4.4** | MVP (4.4 moved here) |
 | M4: Companion + Avatar | Not started | 4.1, 4.2, 4.3 | Post-core, pre-launch |
 | M5: AI Assist + Generative | Not started | 5.1, 5.2, 5.3 | Post-launch |
@@ -56,18 +57,22 @@
 - `validate/skill_parity.py` — skill-parity + age-band validation (domain, skill, grade, format checks)
 - `validate/adhd_compliance.py` — 10 ADHD design rule checks (chunk size, instructions, decoration, scoring, etc.)
 - `tests/test_validate.py` — 25 tests (skill parity, age band, ADHD compliance, schema)
+- `theme/schema.py` — ThemeConfig, ThemeColors, ThemeFonts, ThemedModel models
+- `theme/engine.py` — theme loading (YAML) + application; 3 built-in themes
+- `theme/themes/space/config.yaml` — Space Adventure theme
+- `theme/themes/underwater/config.yaml` — Ocean Explorer theme
+- `theme/themes/dinosaur/config.yaml` — Dino Discovery theme
+- `tests/test_theme.py` — 11 tests (theme loading, application, round-trip)
+- `render/pdf.py` — ReportLab PDF renderer (letter size, margins, vector text, chunks, self-assessment)
+- `validate/print_checks.py` — PDF print quality validation (dimensions, text, pages)
+- `tests/test_render.py` — 12 tests (PDF rendering, print quality validation)
+- `transform.py` — CLI entry point wiring full 8-stage pipeline
 - `tests/test_smoke.py` — verifies all packages importable
 
 ### What's Next
-**Checkpoint 3.1: Theme Engine**
-- Implement `theme/engine.py` — calm theme application
-- Create `theme/themes/space/config.yaml` — space theme config
-- Implement `theme/assets.py` — asset resolution (curated lookup)
-**Checkpoint 3.2: PDF Rendering**
-- Implement `render/pdf.py` — ReportLab vector PDF generation
-**Checkpoint 3.3: E2E Integration**
-- Implement `transform.py` — CLI entry point wiring full pipeline
-- Write `tests/test_e2e.py` — golden E2E tests
+**MVP is complete.** Next milestones are post-core:
+- **M4: Companion + Avatar** (Checkpoints 4.1-4.3) — learner profiles, avatar system, token economy
+- **M5: AI Assist + Generative** (Checkpoints 5.1-5.3) — model adapter, bounded AI, generative assets
 
 ---
 
@@ -285,3 +290,19 @@ extract/adapter.py → Checkpoint 5.1 (post-launch)
 - All 109 tests pass, lint clean, types clean
 
 **What's next:** Checkpoint 3.1 — Theme Engine
+
+### Session 9 — 2026-03-07 (Checkpoints 3.1 + 3.2 + 3.3 + 4.4 Implementation)
+**Participants:** User + Claude Opus 4.6
+**What happened:**
+- Built Checkpoints 3.1-3.3 + 4.4: Theme Engine + PDF Renderer + Print Validation + E2E Pipeline — completes Milestone 3 and all MVP milestones
+- `theme/schema.py` — ThemeConfig, ThemeColors, ThemeFonts, DecorativeConfig, ThemedModel
+- `theme/engine.py` — load themes from YAML, apply theme to adapted model, plan decoration placements within zones
+- 3 built-in themes: space (Space Adventure), underwater (Ocean Explorer), dinosaur (Dino Discovery)
+- `render/pdf.py` — ReportLab PDF renderer: letter size (8.5x11"), 0.75" margins, vector text, grade-scaled font sizes, chunk headers, numbered instructions, worked examples in green-tinted boxes, activity items with response format indicators, self-assessment checklists, themed footer
+- `validate/print_checks.py` — PDF validation: readable, letter dimensions, has pages, non-empty pages, vector text present
+- `transform.py` — Full CLI pipeline: preprocess → store master → OCR → source model → skill extraction → ADHD adaptation → theme → render PDF → validate (skill parity + age band + ADHD compliance + print quality) → persist all artifacts
+- `tests/test_theme.py` — 11 tests: theme loading (6), theme application (5)
+- `tests/test_render.py` — 12 tests: PDF rendering (7), print quality validation (5)
+- All 132 tests pass, lint clean, types clean
+
+**What's next:** MVP complete. Post-core milestones: M4 (Companion + Avatar) and M5 (AI Assist)
