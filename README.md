@@ -58,6 +58,25 @@ export ANTHROPIC_API_KEY="your-key"   # Claude as fallback
 
 Auto-detection priority: **OpenAI > Gemini > Claude > NoOp**. No keys = deterministic-only mode (works fine).
 
+### AI image generation
+
+Generate custom avatar items and theme assets:
+
+```python
+from extract.adapter import generate_image
+
+# Tries Gemini first, falls back to OpenAI, returns None if no keys
+path = generate_image(
+    "A friendly robot character, flat color, white background",
+    "assets/robot.png"
+)
+```
+
+| Capability | Primary | Fallback |
+|---|---|---|
+| Text tasks | OpenAI GPT-5.4 | Gemini 3.1 Flash Lite / Claude |
+| Image generation | Gemini 3.1 Flash Image Preview | OpenAI gpt-image-1.5 |
+
 ## ADHD design principles
 
 The engine follows evidence-consistent ADHD design rules:
@@ -145,7 +164,7 @@ Themes change only visual elements — content and structure remain identical. A
 ```bash
 make lint        # ruff check .
 make typecheck   # mypy . (strict mode)
-make test        # pytest (183 tests)
+make test        # pytest (189 tests)
 make format      # ruff format .
 make clean       # rm -rf artifacts/ __pycache__ .mypy_cache
 ```
@@ -167,7 +186,7 @@ complete.py     CLI: mark completion, manage rewards and accommodations
 
 ### Testing
 
-183 tests covering all pipeline stages:
+189 tests covering all pipeline stages:
 
 ```
 tests/test_capture.py     11 tests — preprocessing, storage, archival PDF
@@ -178,9 +197,41 @@ tests/test_validate.py    25 tests — skill parity, age band, ADHD compliance
 tests/test_theme.py       11 tests — theme loading, application
 tests/test_render.py      12 tests — PDF rendering, print quality
 tests/test_companion.py   28 tests — profile CRUD, catalog, rewards, caregiver
-tests/test_adapter.py     23 tests — AI adapter contracts, factory, providers
+tests/test_adapter.py     29 tests — AI adapter contracts, factory, image gen, providers
 tests/test_smoke.py        1 test  — all packages importable
 ```
+
+## Dependencies
+
+### Core (required)
+
+| Package | Purpose |
+|---------|---------|
+| `opencv-python-headless` | Image preprocessing (deskew, dewarp, denoise) |
+| `paddleocr` | Primary OCR engine |
+| `pytesseract` | Fallback OCR (requires `tesseract-ocr` binary) |
+| `reportlab` | Vector PDF generation |
+| `PyMuPDF` | PDF validation and inspection |
+| `Pillow` | Image manipulation |
+| `pydantic` | Schema validation for all data contracts |
+| `click` | CLI framework |
+| `PyYAML` | Profile and config storage |
+
+### AI assist (optional)
+
+| Package | Purpose |
+|---------|---------|
+| `openai` | GPT-5.4 text tasks + gpt-image-1.5 image generation |
+| `google-genai` | Gemini 3.1 Flash Lite text + Flash Image Preview generation |
+| `python-dotenv` | Load API keys from `.env` file |
+
+### Dev
+
+| Package | Purpose |
+|---------|---------|
+| `pytest` | Testing |
+| `mypy` | Type checking (strict) |
+| `ruff` | Linting + formatting |
 
 ## Input support
 

@@ -8,7 +8,7 @@
 
 ## Current State
 
-**Status:** All 5 milestones complete. Full pipeline + companion + AI assist layer implemented. 177 tests passing.
+**Status:** All 5 milestones complete. Full pipeline + companion + AI assist layer implemented. 189 tests passing.
 **Branch:** `main`
 **Plan version:** 1.4.0
 **Last Updated:** 2026-03-07
@@ -21,10 +21,7 @@
 | M2: Skill Extraction + ADHD Adaptation | **Complete** | ~~2.1~~, ~~2.2~~, ~~2.3~~, ~~2.4~~ | All done (2.2 merged into 2.1) |
 | M3: Theme + Render + Validate + E2E | **Complete** | ~~3.1~~, ~~3.2~~, ~~3.3~~, ~~4.4~~ | All done |
 | M4: Companion + Avatar | **Complete** | ~~4.1~~, ~~4.2~~, ~~4.3~~ | All done |
-| M5: AI Assist + Generative | **Complete** | ~~5.1~~, ~~5.2~~, ~~5.3~~ | Adapter + Claude provider |
-| M3: Theme + Render + Validate + E2E | Not started | 3.1, 3.2, 3.3, **4.4** | MVP (4.4 moved here) |
-| M4: Companion + Avatar | Not started | 4.1, 4.2, 4.3 | Post-core, pre-launch |
-| M5: AI Assist + Generative | Not started | 5.1, 5.2, 5.3 | Post-launch |
+| M5: AI Assist + Generative | **Complete** | ~~5.1~~, ~~5.2~~, ~~5.3~~ | OpenAI + Gemini + Claude |
 
 ### What Exists Now
 - `worksheet-builder-consolidated-plan.md` — full implementation plan (v1.4.0, 15 checkpoints)
@@ -78,15 +75,16 @@
 - `complete.py` — CLI entry point for completion, rewards, progress, accommodations
 - `tests/test_companion.py` — 28 tests (profile, catalog, rewards, caregiver)
 
-- `extract/adapter.py` — ModelAdapter protocol, NoOpAdapter, ClaudeAdapter, adapter factory, AI result runner
-- `tests/test_adapter.py` — 17 tests (schema contracts, NoOp adapter, factory, AI assist runner)
+- `extract/adapter.py` — ModelAdapter protocol; OpenAI (GPT-5.4), Gemini (3.1 Flash Lite), Claude adapters; NoOpAdapter baseline; image generation (Gemini 3.1 Flash Image Preview primary, OpenAI gpt-image-1.5 fallback); auto-detection: OpenAI > Gemini > Claude > NoOp
+- `tests/test_adapter.py` — 27 tests (schema contracts, adapters, factory, image gen, AI assist runner)
+- `.env` — API keys (gitignored): OPENAI_API_KEY, GEMINI_API_KEY
+- `README.md` — project documentation
 
 ### What's Next
 **All milestones complete.** The engine is fully built. Remaining work:
 - Real-world testing with UFLI phone photos
 - Custom font embedding (Nunito TTF files)
 - Avatar image composition (layered PNG/SVG rendering)
-- Generative asset creation (Checkpoint 5.3 — deferred to when image gen API is chosen)
 - Web/mobile companion app (beyond CLI)
 
 ---
@@ -113,6 +111,9 @@
 | D16 | Golden test fixtures must be synthetic | Original content mimicking UFLI layout — no copyrighted material in repo | 2026-03-07 |
 | D17 | Companion fields are Optional in data contracts | MVP builds and runs without companion layer; reward_event, avatar_prompts, avatar_image all Optional | 2026-03-07 |
 | D18 | Ontario curriculum primary, BC at high level | Ontario Language 2023 Strand B/C is specific; BC ELA K-3 is high-level alignment only | 2026-03-07 |
+| D19 | GPT-5.4 primary for text, Gemini for images | OpenAI best for structured JSON text tasks; Gemini 3.1 Flash Image Preview for asset generation with OpenAI gpt-image-1.5 fallback | 2026-03-07 |
+| D20 | google.genai SDK, not google.generativeai | Old SDK deprecated; new google.genai has different API (Client-based) | 2026-03-07 |
+| D21 | Auto-detection: OpenAI > Gemini > Claude | Priority based on available API keys; NoOp baseline when no keys | 2026-03-07 |
 
 ---
 
@@ -201,6 +202,9 @@ extract/adapter.py → Checkpoint 5.1 (post-launch)
 | G3 | OpenDyslexic not evidence-backed for ADHD | Was listed as font option | Removed, replaced with Nunito |
 | G4 | "All source target words must appear" is too strict | Blocks valid adaptations for phonics, morphology, fluency | Changed to instructional-intent preservation |
 | G5 | GitHub PAT needs `workflow` scope to push CI files | `.github/workflows/ci.yml` push rejected without it | User needs to update PAT or push CI file via web UI |
+| G6 | google.generativeai deprecated | FutureWarning on import | Migrated to google.genai SDK |
+| G7 | GPT-5.4 uses max_completion_tokens not max_tokens | 400 error with max_tokens param | Changed to max_completion_tokens |
+| G8 | gpt-image-1.5 doesn't support response_format param | 400 error; returns b64_json by default | Removed response_format param |
 
 ---
 
@@ -349,3 +353,19 @@ extract/adapter.py → Checkpoint 5.1 (post-launch)
 - All 177 tests pass, lint clean, types clean
 
 **Status:** All 15 checkpoints across 5 milestones implemented
+
+### Session 12 — 2026-03-07 (AI Provider Integration + Testing)
+**Participants:** User + Claude Opus 4.6
+**What happened:**
+- Added OpenAI (GPT-5.4) and Gemini (3.1 Flash Lite) adapters for text tasks
+- Added image generation: Gemini 3.1 Flash Image Preview (primary) + OpenAI gpt-image-1.5 (fallback)
+- Set auto-detection priority: OpenAI > Gemini > Claude > NoOp
+- Migrated from deprecated google.generativeai to google.genai SDK
+- Fixed GPT-5.4 requiring max_completion_tokens instead of max_tokens
+- Fixed gpt-image-1.5 not supporting response_format param (returns b64 by default)
+- Added .env to .gitignore to protect API keys
+- Integration tested all providers end-to-end: text and image generation confirmed working for both Gemini and OpenAI
+- Added generate_image() top-level function with Gemini-first, OpenAI-fallback chain
+- Added README.md with full project documentation
+- Updated requirements.txt with openai, google-genai, python-dotenv
+- All 189 tests pass, lint clean, types clean
