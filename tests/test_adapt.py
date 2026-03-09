@@ -5,7 +5,7 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from adapt.engine import adapt_activity
+from adapt.engine import adapt_activity, adapt_lesson
 from adapt.rules import (
     CHUNKING_RULES,
     build_rules,
@@ -332,3 +332,178 @@ class TestAdaptActivity:
         assert len(model.source_hash) > 0
         assert len(model.skill_model_hash) > 0
         assert len(model.learner_profile_hash) > 0
+
+
+# --- UFLI Lesson 59 fixture (CVCe pattern with chains, sight words, passage) ---
+
+
+def _ufli_59_skill() -> LiteracySkillModel:
+    """Synthetic UFLI Lesson 59 skill model with varied content types."""
+    return LiteracySkillModel(
+        grade_level="1",
+        domain="phonics",
+        specific_skill="cvce_pattern",
+        learning_objectives=[
+            "Read words with CVCe pattern",
+            "Apply CVCe pattern in connected text",
+        ],
+        target_words=["grade", "chase", "slide", "quite", "froze", "these"],
+        response_types=["write", "read_aloud"],
+        source_items=[
+            SourceItem(
+                item_type="word_list",
+                content="grade, chase, slide, quite, froze, these",
+                source_region_index=0,
+            ),
+            SourceItem(
+                item_type="word_chain",
+                content=(
+                    "1. tune \u2192 tone \u2192 cone \u2192 cane "
+                    "2. tame \u2192 time \u2192 dime \u2192 dome"
+                ),
+                source_region_index=1,
+            ),
+            SourceItem(
+                item_type="sight_words",
+                content="who, by, my, one, once",
+                source_region_index=2,
+            ),
+            SourceItem(
+                item_type="sentence",
+                content=(
+                    "1. The grade on the slide was quite nice. "
+                    "2. These froze by the chase."
+                ),
+                source_region_index=3,
+            ),
+            SourceItem(
+                item_type="passage",
+                content=(
+                    "A Cake for Tess. Tess had a cake. "
+                    "The cake was huge! She made it with love."
+                ),
+                source_region_index=4,
+            ),
+        ],
+        extraction_confidence=0.95,
+        template_type="ufli_word_work",
+    )
+
+
+# --- Multi-Worksheet Tests ---
+
+
+class TestAdaptLesson:
+    def test_produces_multiple_worksheets(self) -> None:
+        worksheets = adapt_lesson(_ufli_59_skill(), _grade_1_profile())
+        assert len(worksheets) >= 2
+        assert len(worksheets) <= 3
+
+    def test_worksheet_numbers_correct(self) -> None:
+        worksheets = adapt_lesson(_ufli_59_skill(), _grade_1_profile())
+        for i, ws in enumerate(worksheets):
+            assert ws.worksheet_number == i + 1
+            assert ws.worksheet_count == len(worksheets)
+
+    def test_worksheet_titles_set(self) -> None:
+        worksheets = adapt_lesson(_ufli_59_skill(), _grade_1_profile())
+        titles = [ws.worksheet_title for ws in worksheets]
+        assert "Word Discovery" in titles
+        assert "Word Builder" in titles
+
+    def test_activity_format_variety(self) -> None:
+        """Not all response formats should be 'write' across all worksheets."""
+        worksheets = adapt_lesson(_ufli_59_skill(), _grade_1_profile())
+        all_formats: set[str] = set()
+        for ws in worksheets:
+            for chunk in ws.chunks:
+                all_formats.add(chunk.response_format)
+                for item in chunk.items:
+                    all_formats.add(item.response_format)
+        # Should have at least 3 different formats
+        assert len(all_formats) >= 3, f"Only formats: {all_formats}"
+
+    def test_story_not_dropped(self) -> None:
+        """Decodable passage should appear in one of the worksheets."""
+        worksheets = adapt_lesson(_ufli_59_skill(), _grade_1_profile())
+        all_content = []
+        for ws in worksheets:
+            for chunk in ws.chunks:
+                for item in chunk.items:
+                    all_content.append(item.content)
+        # The passage about Tess should be present
+        assert any("Tess" in c or "cake" in c.lower() for c in all_content), \
+            "Decodable passage 'A Cake for Tess' was dropped"
+
+    def test_brain_break_prompts(self) -> None:
+        """Non-last worksheets should have break prompts."""
+        worksheets = adapt_lesson(_ufli_59_skill(), _grade_1_profile())
+        if len(worksheets) >= 2:
+            # First worksheet should have a break prompt
+            assert worksheets[0].break_prompt is not None
+            # Last worksheet should NOT have a break prompt
+            assert worksheets[-1].break_prompt is None
+
+    def test_fill_blank_generation(self) -> None:
+        """Fill-blank items should have correct vowel removal."""
+        from adapt.engine import _generate_fill_blank
+        blanked, vowel = _generate_fill_blank("grade")
+        assert "_" in blanked
+        assert vowel in "aeiou"
+        assert len(blanked) == len("grade")
+
+    def test_circle_distractors(self) -> None:
+        """Distractor words should be plausible non-pattern words."""
+        from adapt.engine import _generate_distractors
+        distractors = _generate_distractors(["grade", "chase"], 4)
+        assert len(distractors) == 4
+        assert "grade" not in distractors
+        assert "chase" not in distractors
+
+    def test_backward_compat_adapt_activity(self) -> None:
+        """adapt_activity() still works unchanged after adding adapt_lesson()."""
+        model = adapt_activity(_ufli_59_skill(), _grade_1_profile())
+        assert model.worksheet_number == 1
+        assert model.worksheet_count == 1
+        assert model.break_prompt is None
+        assert len(model.chunks) >= 1
+
+    def test_word_discovery_has_match_items(self) -> None:
+        """Worksheet 1 (Word Discovery) should have match-format items."""
+        worksheets = adapt_lesson(_ufli_59_skill(), _grade_1_profile())
+        discovery = [ws for ws in worksheets if ws.worksheet_title == "Word Discovery"]
+        assert len(discovery) == 1
+        match_items = [
+            item
+            for chunk in discovery[0].chunks
+            for item in chunk.items
+            if item.response_format == "match"
+        ]
+        assert len(match_items) >= 1
+
+    def test_match_items_have_picture_prompts(self) -> None:
+        """Match items should have picture_prompt set."""
+        worksheets = adapt_lesson(_ufli_59_skill(), _grade_1_profile())
+        for ws in worksheets:
+            for chunk in ws.chunks:
+                for item in chunk.items:
+                    if item.response_format == "match":
+                        assert item.picture_prompt is not None
+
+    def test_single_worksheet_fallback(self) -> None:
+        """Skills with only word lists should still produce at least 1 worksheet."""
+        minimal = LiteracySkillModel(
+            grade_level="1",
+            domain="phonics",
+            specific_skill="cvc_blending",
+            learning_objectives=["Blend CVC words"],
+            target_words=["cat", "hat"],
+            response_types=["write"],
+            source_items=[
+                SourceItem(item_type="word_list", content="cat, hat", source_region_index=0),
+            ],
+            extraction_confidence=0.95,
+            template_type="ufli_word_work",
+        )
+        worksheets = adapt_lesson(minimal, _grade_1_profile())
+        assert len(worksheets) >= 1

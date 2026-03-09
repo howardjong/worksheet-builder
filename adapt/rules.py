@@ -19,7 +19,29 @@ RESPONSE_FORMAT_SUBSTITUTIONS: dict[str, list[str]] = {
     "write": ["circle", "match", "verbal"],
     "fill_blank": ["circle", "match"],
     "trace": ["write", "circle"],
+    "match": ["circle", "write"],
+    "read_aloud": ["write"],
 }
+
+# Rendering metadata for response formats
+FORMAT_RENDERING: dict[str, dict[str, str]] = {
+    "write": {"widget": "write_line", "description": "Write on the line"},
+    "circle": {"widget": "bubble_row", "description": "Circle the answer"},
+    "match": {"widget": "match_tiles", "description": "Draw a line to match"},
+    "fill_blank": {"widget": "blank_with_bank", "description": "Fill in the blank"},
+    "trace": {"widget": "dotted_letters", "description": "Trace the letters"},
+    "read_aloud": {"widget": "reading_box", "description": "Read aloud"},
+    "verbal": {"widget": "speech_icon", "description": "Say it out loud"},
+}
+
+# Brain break prompts (one per worksheet transition)
+BRAIN_BREAK_PROMPTS: list[str] = [
+    "Stand up and stretch!",
+    "Do 5 jumping jacks!",
+    "Get a drink of water!",
+    "Touch your toes 3 times!",
+    "Take 3 deep breaths!",
+]
 
 # Instruction constraints by grade
 INSTRUCTION_LIMITS: dict[str, dict[str, int]] = {

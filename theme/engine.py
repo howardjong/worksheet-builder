@@ -103,6 +103,7 @@ def _parse_theme_config(data: dict[str, object]) -> ThemeConfig:
         colors=colors,
         avatar_position=str(data.get("avatar_position", "bottom-right")),
         decorative_elements=deco,
+        multi_worksheet=bool(data.get("multi_worksheet", False)),
     )
 
 

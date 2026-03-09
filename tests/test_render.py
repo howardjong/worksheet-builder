@@ -5,7 +5,7 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
-from adapt.engine import adapt_activity
+from adapt.engine import adapt_activity, adapt_lesson
 from companion.schema import Accommodations, LearnerProfile
 from render.pdf import (
     CONTENT_BOTTOM,
@@ -171,4 +171,154 @@ class TestPrintQuality:
         result = validate_print_quality(pdf_path)
         page_violations = [v for v in result.violations if v.check == "has_pages"]
         assert len(page_violations) == 0
+        Path(pdf_path).unlink()
+
+
+# --- Multi-Worksheet Render Tests ---
+
+
+def _ufli_59_skill() -> LiteracySkillModel:
+    """UFLI Lesson 59 fixture for render tests."""
+    return LiteracySkillModel(
+        grade_level="1",
+        domain="phonics",
+        specific_skill="cvce_pattern",
+        learning_objectives=["Read CVCe words"],
+        target_words=["grade", "chase", "slide", "quite", "froze", "these"],
+        response_types=["write", "read_aloud"],
+        source_items=[
+            SourceItem(
+                item_type="word_list",
+                content="grade, chase, slide, quite",
+                source_region_index=0,
+            ),
+            SourceItem(
+                item_type="word_chain",
+                content="1. tune \u2192 tone \u2192 cone \u2192 cane",
+                source_region_index=1,
+            ),
+            SourceItem(
+                item_type="sight_words",
+                content="who, by, my",
+                source_region_index=2,
+            ),
+            SourceItem(
+                item_type="sentence",
+                content="1. The slide was quite fun.",
+                source_region_index=3,
+            ),
+            SourceItem(
+                item_type="passage",
+                content="A Cake for Tess. Tess had a cake. The cake was huge!",
+                source_region_index=4,
+            ),
+        ],
+        extraction_confidence=0.95,
+        template_type="ufli_word_work",
+    )
+
+
+class TestMultiWorksheetRender:
+    def test_render_match_items(self) -> None:
+        """Word-picture matching items should render without error."""
+        worksheets = adapt_lesson(_ufli_59_skill(), _profile())
+        discovery = [ws for ws in worksheets if ws.worksheet_title == "Word Discovery"]
+        assert len(discovery) == 1
+        theme = load_theme("space")
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            pdf_path = f.name
+        render_worksheet(discovery[0], theme, pdf_path)
+        assert Path(pdf_path).stat().st_size > 0
+        Path(pdf_path).unlink()
+
+    def test_render_trace_items(self) -> None:
+        """Trace items (dotted letters) should render without error."""
+        worksheets = adapt_lesson(_ufli_59_skill(), _profile())
+        discovery = [ws for ws in worksheets if ws.worksheet_title == "Word Discovery"]
+        assert len(discovery) == 1
+        # Verify trace items exist
+        trace_items = [
+            item
+            for chunk in discovery[0].chunks
+            for item in chunk.items
+            if item.response_format == "trace"
+        ]
+        assert len(trace_items) >= 1
+        theme = load_theme("space")
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            pdf_path = f.name
+        render_worksheet(discovery[0], theme, pdf_path)
+        assert Path(pdf_path).stat().st_size > 0
+        Path(pdf_path).unlink()
+
+    def test_render_fill_blank_items(self) -> None:
+        """Fill-blank items should render without error."""
+        worksheets = adapt_lesson(_ufli_59_skill(), _profile())
+        builder = [ws for ws in worksheets if ws.worksheet_title == "Word Builder"]
+        assert len(builder) == 1
+        theme = load_theme("space")
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            pdf_path = f.name
+        render_worksheet(builder[0], theme, pdf_path)
+        assert Path(pdf_path).stat().st_size > 0
+        Path(pdf_path).unlink()
+
+    def test_render_read_aloud_items(self) -> None:
+        """Read-aloud passage should render in styled box."""
+        worksheets = adapt_lesson(_ufli_59_skill(), _profile())
+        story = [ws for ws in worksheets if ws.worksheet_title == "Story Time"]
+        assert len(story) == 1
+        theme = load_theme("space")
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            pdf_path = f.name
+        render_worksheet(story[0], theme, pdf_path)
+        assert Path(pdf_path).stat().st_size > 0
+        Path(pdf_path).unlink()
+
+    def test_render_all_worksheets(self) -> None:
+        """All multi-worksheets should render successfully."""
+        worksheets = adapt_lesson(_ufli_59_skill(), _profile())
+        theme = load_theme("space")
+        for i, ws in enumerate(worksheets):
+            with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+                pdf_path = f.name
+            render_worksheet(ws, theme, pdf_path)
+            assert Path(pdf_path).stat().st_size > 0
+            # Verify print quality
+            result = validate_print_quality(pdf_path)
+            assert result.passed, f"Worksheet {i+1} failed print quality: {result.violations}"
+            Path(pdf_path).unlink()
+
+    def test_render_with_roblox_obby_theme(self) -> None:
+        """Roblox Obby theme should load and render correctly."""
+        theme = load_theme("roblox_obby")
+        assert theme.multi_worksheet is True
+        assert theme.avatar_position == "integrated"
+        worksheets = adapt_lesson(_ufli_59_skill(), _profile())
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            pdf_path = f.name
+        render_worksheet(worksheets[0], theme, pdf_path)
+        assert Path(pdf_path).stat().st_size > 0
+        Path(pdf_path).unlink()
+
+    def test_break_prompt_renders(self) -> None:
+        """Brain break prompt should render without error."""
+        worksheets = adapt_lesson(_ufli_59_skill(), _profile())
+        # First worksheet should have a break prompt
+        assert worksheets[0].break_prompt is not None
+        theme = load_theme("space")
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            pdf_path = f.name
+        render_worksheet(worksheets[0], theme, pdf_path)
+        assert Path(pdf_path).stat().st_size > 0
+        Path(pdf_path).unlink()
+
+    def test_backward_compat_single_worksheet(self) -> None:
+        """Original single-worksheet rendering still works unchanged."""
+        adapted = adapt_activity(_phonics_skill(), _profile())
+        theme = load_theme("space")
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            pdf_path = f.name
+        render_worksheet(adapted, theme, pdf_path)
+        assert Path(pdf_path).stat().st_size > 0
         Path(pdf_path).unlink()

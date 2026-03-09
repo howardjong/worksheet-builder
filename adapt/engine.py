@@ -4,7 +4,12 @@ from __future__ import annotations
 
 import hashlib
 
-from adapt.rules import AccommodationRules, build_rules, get_substitute_format
+from adapt.rules import (
+    BRAIN_BREAK_PROMPTS,
+    AccommodationRules,
+    build_rules,
+    get_substitute_format,
+)
 from adapt.schema import (
     ActivityChunk,
     ActivityItem,
@@ -67,6 +72,566 @@ def adapt_activity(
         avatar_prompts=None,  # MVP: no companion layer
         self_assessment=self_assessment,
     )
+
+
+def adapt_lesson(
+    skill: LiteracySkillModel,
+    profile: LearnerProfile,
+    theme_id: str = "default",
+    rules: AccommodationRules | None = None,
+) -> list[AdaptedActivityModel]:
+    """Transform a skill model into 2-3 ADHD-optimized mini-worksheets.
+
+    Each mini-worksheet focuses on a different activity type for multi-sensory variety:
+    1. Word Discovery — word-picture matching, trace, circle
+    2. Word Builder — word chains, fill-blank, sight words
+    3. Story Time — sentence completion, read-aloud passage, comprehension
+
+    Returns a list of 1-3 AdaptedActivityModels, one per mini-worksheet.
+    """
+    if rules is None:
+        rules = build_rules(profile)
+
+    # Categorize source items by type
+    word_items: list[str] = []
+    chain_items: list[str] = []
+    sight_words: list[str] = []
+    sentences: list[str] = []
+    passages: list[str] = []
+
+    for si in skill.source_items:
+        if si.item_type == "word_list":
+            raw = si.content.replace(",", " ").split()
+            words = [
+                w.strip() for w in raw
+                if w.strip() and w.strip().isalpha()
+            ]
+            word_items.extend(words)
+        elif si.item_type == "word_chain":
+            chains = _split_word_chains(si.content)
+            chain_items.extend(chains)
+        elif si.item_type == "sight_words":
+            raw = si.content.replace(",", " ").split()
+            words = [
+                w.strip("*\u2665\u2764") for w in raw if w.strip()
+            ]
+            sight_words.extend([w for w in words if w.isalpha()])
+        elif si.item_type == "sentence":
+            sents = _split_sentences(si.content)
+            sentences.extend(sents)
+        elif si.item_type == "passage":
+            passages.append(si.content)
+
+    worksheets: list[AdaptedActivityModel] = []
+    base_hash = _hash_str(skill.template_type + str(skill.target_words))
+    skill_hash = _hash_str(skill.model_dump_json())
+    profile_hash = _hash_str(profile.model_dump_json())
+
+    # Worksheet 1: Word Discovery (if we have word items or target words)
+    discovery_words = word_items or skill.target_words[:6]
+    if discovery_words:
+        chunks = _build_discovery_chunks(discovery_words, skill, rules)
+        worksheets.append(AdaptedActivityModel(
+            source_hash=base_hash,
+            skill_model_hash=skill_hash,
+            learner_profile_hash=profile_hash,
+            grade_level=skill.grade_level,
+            domain=skill.domain,
+            specific_skill=skill.specific_skill,
+            chunks=chunks,
+            scaffolding=ScaffoldConfig(
+                show_worked_example=True, fade_after_chunk=1,
+                hint_level="full" if skill.grade_level in ("K", "1") else "partial",
+            ),
+            theme_id=theme_id,
+            decoration_zones=_define_decoration_zones(),
+            self_assessment=_build_self_assessment(skill),
+            worksheet_number=1,
+            worksheet_title="Word Discovery",
+            break_prompt=BRAIN_BREAK_PROMPTS[0],
+        ))
+
+    # Worksheet 2: Word Builder (chains + fill_blank + sight words)
+    if chain_items or word_items or sight_words:
+        chunks = _build_builder_chunks(
+            chain_items, word_items or skill.target_words[:6],
+            sight_words, skill, rules,
+        )
+        worksheets.append(AdaptedActivityModel(
+            source_hash=base_hash,
+            skill_model_hash=skill_hash,
+            learner_profile_hash=profile_hash,
+            grade_level=skill.grade_level,
+            domain=skill.domain,
+            specific_skill=skill.specific_skill,
+            chunks=chunks,
+            scaffolding=ScaffoldConfig(
+                show_worked_example=True, fade_after_chunk=1,
+                hint_level="full" if skill.grade_level in ("K", "1") else "partial",
+            ),
+            theme_id=theme_id,
+            decoration_zones=_define_decoration_zones(),
+            self_assessment=None,
+            worksheet_number=len(worksheets) + 1,
+            worksheet_title="Word Builder",
+            break_prompt=BRAIN_BREAK_PROMPTS[1 % len(BRAIN_BREAK_PROMPTS)],
+        ))
+
+    # Worksheet 3: Story Time (sentences + passage + comprehension)
+    if sentences or passages:
+        chunks = _build_story_chunks(sentences, passages, skill, rules)
+        worksheets.append(AdaptedActivityModel(
+            source_hash=base_hash,
+            skill_model_hash=skill_hash,
+            learner_profile_hash=profile_hash,
+            grade_level=skill.grade_level,
+            domain=skill.domain,
+            specific_skill=skill.specific_skill,
+            chunks=chunks,
+            scaffolding=ScaffoldConfig(
+                show_worked_example=False, fade_after_chunk=0,
+                hint_level="full" if skill.grade_level in ("K", "1") else "partial",
+            ),
+            theme_id=theme_id,
+            decoration_zones=_define_decoration_zones(),
+            self_assessment=_build_self_assessment(skill),
+            worksheet_number=len(worksheets) + 1,
+            worksheet_title="Story Time",
+            break_prompt=None,  # Last worksheet — no break needed
+        ))
+
+    # Set worksheet_count on all worksheets
+    count = len(worksheets)
+    for ws in worksheets:
+        ws.worksheet_count = count
+
+    # Fallback: if nothing produced, return single worksheet via existing path
+    if not worksheets:
+        single = adapt_activity(skill, profile, theme_id=theme_id, rules=rules)
+        return [single]
+
+    return worksheets
+
+
+def _build_discovery_chunks(
+    words: list[str],
+    skill: LiteracySkillModel,
+    rules: AccommodationRules,
+) -> list[ActivityChunk]:
+    """Build Word Discovery chunks: match + trace + circle activities."""
+    chunks: list[ActivityChunk] = []
+    item_id = 0
+
+    # Chunk 1: Word-picture matching (up to 4 words)
+    match_words = words[:4]
+    if match_words:
+        items: list[ActivityItem] = []
+        for w in match_words:
+            item_id += 1
+            items.append(ActivityItem(
+                item_id=item_id,
+                content=w,
+                response_format="match",
+                picture_prompt=_word_to_picture_prompt(w),
+                options=[w],  # renderer will add picture tiles
+            ))
+        chunks.append(ActivityChunk(
+            chunk_id=1,
+            micro_goal=f"Match {len(match_words)} words to their pictures",
+            instructions=[
+                Step(number=1, text="Look at each picture."),
+                Step(number=2, text="Draw a line to the matching word."),
+            ],
+            worked_example=Example(
+                instruction="Watch how I do the first one:",
+                content=(
+                    f'The picture of a '
+                    f'{_word_to_picture_prompt(match_words[0]).split(",")[0].replace("a ", "")}'
+                    f' matches "{match_words[0]}"!'
+                ),
+            ),
+            items=items,
+            response_format="match",
+            time_estimate="About 2 minutes",
+        ))
+
+    # Chunk 2: Read & trace (up to 4 words)
+    trace_words = words[:4]
+    if trace_words:
+        items = []
+        for w in trace_words:
+            item_id += 1
+            items.append(ActivityItem(
+                item_id=item_id,
+                content=w,
+                response_format="trace",
+            ))
+        chunks.append(ActivityChunk(
+            chunk_id=2,
+            micro_goal=f"Trace {len(trace_words)} words",
+            instructions=[
+                Step(number=1, text="Say each word out loud."),
+                Step(number=2, text="Trace the dotted letters."),
+            ],
+            worked_example=None,
+            items=items,
+            response_format="trace",
+            time_estimate="About 2 minutes",
+        ))
+
+    # Chunk 3: Circle the CVCe words (mix target + distractors)
+    if words:
+        distractors = _generate_distractors(words, min(4, len(words)))
+        all_options = words[:4] + distractors
+        items = []
+        item_id += 1
+        items.append(ActivityItem(
+            item_id=item_id,
+            content="Circle all the words that follow the pattern.",
+            response_format="circle",
+            options=all_options,
+            answer=",".join(words[:4]),
+        ))
+        chunks.append(ActivityChunk(
+            chunk_id=3,
+            micro_goal="Find the pattern words",
+            instructions=[
+                Step(number=1, text="Look at each word."),
+                Step(number=2, text="Circle the words that match the pattern."),
+            ],
+            worked_example=None,
+            items=items,
+            response_format="circle",
+            time_estimate="About 1 minute",
+        ))
+
+    return chunks
+
+
+def _build_builder_chunks(
+    chains: list[str],
+    words: list[str],
+    sight_words_list: list[str],
+    skill: LiteracySkillModel,
+    rules: AccommodationRules,
+) -> list[ActivityChunk]:
+    """Build Word Builder chunks: chains + fill-blank + sight words."""
+    chunks: list[ActivityChunk] = []
+    item_id = 0
+
+    # Chunk 1: Word chains (write format, keep existing behavior)
+    if chains:
+        items: list[ActivityItem] = []
+        for chain in chains:
+            item_id += 1
+            items.append(ActivityItem(
+                item_id=item_id,
+                content=chain,
+                response_format="write",
+                metadata={"display": "chain"},
+            ))
+        chunks.append(ActivityChunk(
+            chunk_id=1,
+            micro_goal=f"Follow {len(chains)} word chains",
+            instructions=[
+                Step(number=1, text="Read the chain of words."),
+                Step(number=2, text="Write each word on the line."),
+            ],
+            worked_example=Example(
+                instruction="Watch how the letters change:",
+                content=f'In "{chains[0]}" — one letter changes each time!',
+            ) if chains else None,
+            items=items,
+            response_format="write",
+            time_estimate="About 2 minutes",
+        ))
+
+    # Chunk 2: Fill in the missing letter
+    fill_words = words[:4]
+    if fill_words:
+        items = []
+        for w in fill_words:
+            blank_content, answer_letter = _generate_fill_blank(w)
+            if blank_content:
+                item_id += 1
+                items.append(ActivityItem(
+                    item_id=item_id,
+                    content=blank_content,
+                    response_format="fill_blank",
+                    answer=answer_letter,
+                    options=["a", "e", "i", "o", "u"],
+                ))
+        if items:
+            chunks.append(ActivityChunk(
+                chunk_id=len(chunks) + 1,
+                micro_goal=f"Fill in {len(items)} missing letters",
+                instructions=[
+                    Step(number=1, text="Look at the word with a missing letter."),
+                    Step(number=2, text="Write the missing letter on the line."),
+                ],
+                worked_example=None,
+                items=items,
+                response_format="fill_blank",
+                time_estimate="About 2 minutes",
+            ))
+
+    # Chunk 3: Sight word flash (write format)
+    if sight_words_list:
+        items = []
+        for sw in sight_words_list:
+            item_id += 1
+            items.append(ActivityItem(
+                item_id=item_id,
+                content=sw,
+                response_format="write",
+                metadata={"sight_word": True},
+            ))
+        chunks.append(ActivityChunk(
+            chunk_id=len(chunks) + 1,
+            micro_goal=f"Practice {len(sight_words_list)} sight words",
+            instructions=[
+                Step(number=1, text="Read each sight word."),
+                Step(number=2, text="Write each word on the line."),
+            ],
+            worked_example=None,
+            items=items,
+            response_format="write",
+            time_estimate="About 1 minute",
+        ))
+
+    return chunks
+
+
+def _build_story_chunks(
+    sentences: list[str],
+    passages: list[str],
+    skill: LiteracySkillModel,
+    rules: AccommodationRules,
+) -> list[ActivityChunk]:
+    """Build Story Time chunks: sentence completion + read-aloud + comprehension."""
+    chunks: list[ActivityChunk] = []
+    item_id = 0
+
+    # Chunk 1: Sentence completion with word bank
+    if sentences:
+        items: list[ActivityItem] = []
+        for sent in sentences:
+            item_id += 1
+            blank_sent, removed_word = _sentence_to_fill_blank(sent, skill.target_words)
+            if blank_sent and removed_word:
+                # Create word bank from target words + the answer
+                bank = list(set([removed_word] + skill.target_words[:3]))
+                items.append(ActivityItem(
+                    item_id=item_id,
+                    content=blank_sent,
+                    response_format="fill_blank",
+                    answer=removed_word,
+                    options=bank,
+                ))
+            else:
+                items.append(ActivityItem(
+                    item_id=item_id,
+                    content=sent,
+                    response_format="write",
+                ))
+        if items:
+            chunks.append(ActivityChunk(
+                chunk_id=1,
+                micro_goal=f"Complete {len(items)} sentences",
+                instructions=[
+                    Step(number=1, text="Read the sentence."),
+                    Step(number=2, text="Fill in the missing word."),
+                ],
+                worked_example=None,
+                items=items,
+                response_format=(
+                    "fill_blank"
+                    if any(i.response_format == "fill_blank" for i in items)
+                    else "write"
+                ),
+                time_estimate="About 2 minutes",
+            ))
+
+    # Chunk 2: Read the story (passage)
+    if passages:
+        items = []
+        for passage in passages:
+            item_id += 1
+            items.append(ActivityItem(
+                item_id=item_id,
+                content=passage,
+                response_format="read_aloud",
+            ))
+        chunks.append(ActivityChunk(
+            chunk_id=len(chunks) + 1,
+            micro_goal="Read the story",
+            instructions=[
+                Step(number=1, text="Read the story out loud."),
+                Step(number=2, text="Point to each word as you read."),
+            ],
+            worked_example=None,
+            items=items,
+            response_format="read_aloud",
+            time_estimate="About 3 minutes",
+        ))
+
+    # Chunk 3: Story comprehension (circle format)
+    if passages:
+        comp_questions = _generate_comprehension_questions(passages, skill.target_words)
+        if comp_questions:
+            items = []
+            for q, opts, ans in comp_questions:
+                item_id += 1
+                items.append(ActivityItem(
+                    item_id=item_id,
+                    content=q,
+                    response_format="circle",
+                    options=opts,
+                    answer=ans,
+                ))
+            chunks.append(ActivityChunk(
+                chunk_id=len(chunks) + 1,
+                micro_goal="Check your understanding",
+                instructions=[
+                    Step(number=1, text="Think about the story."),
+                    Step(number=2, text="Circle the best answer."),
+                ],
+                worked_example=None,
+                items=items,
+                response_format="circle",
+                time_estimate="About 2 minutes",
+            ))
+
+    return chunks
+
+
+def _generate_distractors(target_words: list[str], count: int) -> list[str]:
+    """Generate plausible non-pattern words as distractors for circle activities."""
+    common_distractors = [
+        "the", "and", "cat", "dog", "big", "run", "sit", "hat",
+        "pen", "cup", "red", "hop", "fun", "bus", "map", "net",
+    ]
+    # Filter out any that are in target_words
+    available = [d for d in common_distractors if d not in target_words]
+    return available[:count]
+
+
+def _generate_fill_blank(word: str) -> tuple[str, str]:
+    """Remove a vowel from a word to create a fill-in-the-blank item.
+
+    Returns (blanked_word, removed_vowel). E.g., "grade" -> ("gr_de", "a")
+    """
+    vowels = "aeiou"
+    # Find the first vowel that's not at position 0 or last position
+    for i, ch in enumerate(word):
+        if ch.lower() in vowels and 0 < i < len(word) - 1:
+            blanked = word[:i] + "_" + word[i + 1:]
+            return blanked, ch.lower()
+    # Fallback: blank the first vowel
+    for i, ch in enumerate(word):
+        if ch.lower() in vowels:
+            blanked = word[:i] + "_" + word[i + 1:]
+            return blanked, ch.lower()
+    return "", ""
+
+
+def _sentence_to_fill_blank(
+    sentence: str, target_words: list[str],
+) -> tuple[str, str]:
+    """Convert a sentence to fill-blank by removing a target word.
+
+    Returns (blanked_sentence, removed_word).
+    """
+    lower_targets = {w.lower() for w in target_words}
+    words = sentence.split()
+    for i, w in enumerate(words):
+        cleaned = w.strip(".,!?;:").lower()
+        if cleaned in lower_targets:
+            # Replace this word with a blank
+            original_word = w.strip(".,!?;:")
+            blank = "________"
+            # Preserve trailing punctuation
+            trailing = ""
+            if w and not w[-1].isalpha():
+                trailing = w[-1]
+            words[i] = blank + trailing
+            return " ".join(words), original_word
+    return "", ""
+
+
+def _generate_comprehension_questions(
+    passages: list[str], target_words: list[str],
+) -> list[tuple[str, list[str], str]]:
+    """Generate simple comprehension questions from passage text.
+
+    Returns list of (question, options, answer).
+    """
+    questions: list[tuple[str, list[str], str]] = []
+    full_text = " ".join(passages).lower()
+
+    # Question 1: What word appears in the story?
+    found_words = [w for w in target_words if w.lower() in full_text]
+    if found_words:
+        correct = found_words[0]
+        distractors = _generate_distractors(found_words, 2)
+        options = [correct] + distractors
+        questions.append((
+            "Which word from the pattern is in the story?",
+            options,
+            correct,
+        ))
+
+    # Question 2: Simple yes/no about a word presence
+    if len(target_words) >= 2:
+        not_found = [w for w in target_words if w.lower() not in full_text]
+        if not_found:
+            questions.append((
+                f'Is the word "{not_found[0]}" in the story?',
+                ["Yes", "No"],
+                "No",
+            ))
+        elif found_words and len(found_words) >= 2:
+            questions.append((
+                f'Is the word "{found_words[1]}" in the story?',
+                ["Yes", "No"],
+                "Yes",
+            ))
+
+    return questions[:3]  # Max 3 questions
+
+
+def _word_to_picture_prompt(word: str) -> str:
+    """Generate a simple picture description for a word.
+
+    Returns a description suitable for AI image generation.
+    """
+    # Simple word-to-picture mapping for common phonics words
+    picture_map: dict[str, str] = {
+        "cake": "a birthday cake with frosting",
+        "grade": "a school report card with a gold star",
+        "chase": "a playful dog running",
+        "slide": "a playground slide",
+        "quite": "a child with finger on lips saying shh",
+        "froze": "a snowflake and ice cube",
+        "these": "a hand pointing at objects",
+        "tune": "musical notes floating in the air",
+        "tone": "a bell ringing",
+        "cone": "an ice cream cone",
+        "cane": "a candy cane",
+        "tame": "a gentle pet animal",
+        "time": "a clock showing the time",
+        "dime": "a shiny coin",
+        "dome": "a round dome building",
+        "tall": "a tall giraffe",
+        "call": "a telephone ringing",
+        "wall": "a brick wall",
+        "fall": "autumn leaves falling",
+        "mall": "a shopping mall building",
+        "doll": "a cute doll toy",
+        "roll": "a bread roll",
+        "poll": "a clipboard with checkmarks",
+    }
+    return picture_map.get(word.lower(), f"a simple cartoon representing {word}")
 
 
 def _build_chunks(

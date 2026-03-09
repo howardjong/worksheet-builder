@@ -8,10 +8,10 @@
 
 ## Current State
 
-**Status:** All 5 milestones complete. Full pipeline + companion + AI assist layer implemented. 189 tests passing.
+**Status:** All 5 milestones + multi-sensory activities complete. Full pipeline + companion + AI assist + multi-worksheet mode. 214 tests passing.
 **Branch:** `main`
-**Plan version:** 1.4.0
-**Last Updated:** 2026-03-07
+**Plan version:** 1.5.0
+**Last Updated:** 2026-03-09
 
 ### Milestone Progress
 
@@ -48,24 +48,27 @@
 - `tests/test_extract.py` — 13 tests (template detection, region classification, confidence)
 - `tests/test_skill.py` — 31 tests (taxonomy, word work/story/generic extraction, schema)
 - `companion/schema.py` — LearnerProfile + Accommodations (MVP fields, companion Optional)
-- `adapt/schema.py` — AdaptedActivityModel, ActivityChunk, ScaffoldConfig, Step, Example, ActivityItem
-- `adapt/rules.py` — AccommodationRules, chunking tables, response format substitutions, color system
-- `adapt/engine.py` — ADHD activity adaptation (chunking, instructions, worked examples, self-assessment)
-- `tests/test_adapt.py` — 28 tests (profile, rules, adaptation engine, schema)
+- `adapt/schema.py` — AdaptedActivityModel, ActivityChunk, ScaffoldConfig, Step, Example, ActivityItem (with options, answer, picture_prompt, worksheet_number/count/title, break_prompt)
+- `adapt/rules.py` — AccommodationRules, chunking tables, response format substitutions, FORMAT_RENDERING metadata, BRAIN_BREAK_PROMPTS, color system
+- `adapt/engine.py` — ADHD activity adaptation: single-worksheet `adapt_activity()` + multi-worksheet `adapt_lesson()` producing 2-3 mini-worksheets with varied response types (match, trace, circle, fill_blank, write, read_aloud); helpers for distractors, fill-blank generation, comprehension questions, word-picture prompts
+- `tests/test_adapt.py` — 40 tests (profile, rules, adaptation engine, multi-worksheet, format variety, schema)
 - `validate/schema.py` — ValidationResult, ValidationViolation models
 - `validate/skill_parity.py` — skill-parity + age-band validation (domain, skill, grade, format checks)
-- `validate/adhd_compliance.py` — 10 ADHD design rule checks (chunk size, instructions, decoration, scoring, etc.)
+- `validate/adhd_compliance.py` — 12 ADHD design rule checks (chunk size, instructions, decoration, scoring, format variety, worksheet time limit, etc.)
 - `tests/test_validate.py` — 25 tests (skill parity, age band, ADHD compliance, schema)
-- `theme/schema.py` — ThemeConfig, ThemeColors, ThemeFonts, ThemedModel models
-- `theme/engine.py` — theme loading (YAML) + application; 3 built-in themes
+- `theme/schema.py` — ThemeConfig (with multi_worksheet flag), ThemeColors, ThemeFonts, AssetManifest, ThemedModel models
+- `theme/engine.py` — theme loading (YAML) + application; 4 built-in themes
 - `theme/themes/space/config.yaml` — Space Adventure theme
 - `theme/themes/underwater/config.yaml` — Ocean Explorer theme
 - `theme/themes/dinosaur/config.yaml` — Dino Discovery theme
+- `theme/themes/roblox_obby/config.yaml` — Roblox Obby Quest (multi_worksheet: true, avatar_position: integrated)
 - `tests/test_theme.py` — 11 tests (theme loading, application, round-trip)
-- `render/pdf.py` — ReportLab PDF renderer (letter size, margins, vector text, chunks, self-assessment)
+- `render/pdf.py` — ReportLab PDF renderer: letter size, margins, vector text, chunks, self-assessment + new format renderers (_draw_match_item, _draw_trace_item, _draw_circle_item, _draw_fill_blank_item, _draw_read_aloud_item, _draw_break_prompt, _draw_chunk_with_scene)
+- `render/pose_planner.py` — content-driven scene planning: analyzes chunk content to generate character scene descriptions and word picture prompts
+- `render/asset_gen.py` — AI asset generation with hash-based caching; generates character scenes + word pictures via Gemini; graceful fallback when no API key
 - `validate/print_checks.py` — PDF print quality validation (dimensions, text, pages)
-- `tests/test_render.py` — 12 tests (PDF rendering, print quality validation)
-- `transform.py` — CLI entry point wiring full 8-stage pipeline
+- `tests/test_render.py` — 20 tests (PDF rendering, multi-format rendering, print quality validation)
+- `transform.py` — CLI entry point: single-worksheet (backward-compatible) and multi-worksheet pipelines with format variety validation
 - `tests/test_smoke.py` — verifies all packages importable
 
 - `companion/profile.py` — profile CRUD (create, update accommodations, ensure companion fields)
@@ -82,10 +85,11 @@
 - `README.md` — project documentation
 
 ### What's Next
-**All milestones complete. Real-world tested on UFLI Lesson 59.** Remaining work:
-- Test on more UFLI worksheets (other lessons, different photo conditions)
+**All milestones + multi-sensory activities complete. Real-world tested on UFLI Lesson 59.** Remaining work:
+- Test multi-worksheet output on more UFLI lessons
+- AI asset generation end-to-end (requires Gemini API key with image gen capability)
 - Custom font embedding (Nunito TTF files)
-- Avatar image composition (layered PNG/SVG rendering)
+- Two-column scene layout refinement (content-column-width-constrained rendering)
 - Web/mobile companion app (beyond CLI)
 
 ---
@@ -127,10 +131,12 @@
 [2] Normalize  → preprocessed image (OpenCV)
 [3] Extract    → SourceWorksheetModel (Pydantic) — OCR + heuristics, Gemini vision fallback
 [4] Skill      → LiteracySkillModel (Pydantic) — dispatches by template_type
-[5] Adapt      → AdaptedActivityModel (Pydantic) — companion fields Optional
-[6] Theme      → themed model with decoration zones (avatar Optional for MVP)
-[7] Render     → PDF (ReportLab, vector text, avatar Optional)
-[8] Validate   → skill-parity, age-band, print, ADHD compliance
+[5] Adapt      → AdaptedActivityModel (single) or list[AdaptedActivityModel] (multi-worksheet)
+[5b] AI Review → iterative quality review
+[6] Theme      → themed model with decoration zones; multi_worksheet themes → 2-3 mini-worksheets
+[6c] Assets    → AI-generated character scenes + word pictures (optional, cached)
+[7] Render     → PDF (ReportLab, vector text, match/trace/circle/fill_blank/read_aloud renderers)
+[8] Validate   → skill-parity, age-band, print, ADHD compliance, format variety
 ```
 
 ### UFLI Template Types
@@ -384,3 +390,25 @@ extract/adapter.py → Checkpoint 5.1 (post-launch)
 - Wired into transform.py pipeline automatically — no user intervention needed
 - Gemini correctly identified both pages, prioritized word work page as planned
 - All 189 tests pass, lint clean, types clean
+
+### Session 14 — 2026-03-09 (Multi-Sensory Activities + Content-Driven Illustrations)
+**Participants:** User + Claude Opus 4.6
+**What happened:**
+- Implemented multi-worksheet adaptation engine and multi-format PDF rendering
+- **Problem addressed:** UFLI Lesson 59 produced 15 items across 4 chunks, ALL "write" format. Decodable story dropped entirely. No variety.
+- **Solution:** `adapt_lesson()` splits one lesson into 2-3 focused mini-worksheets:
+  - Worksheet 1 "Word Discovery": match (word-picture), trace (dotted letters), circle (pattern recognition)
+  - Worksheet 2 "Word Builder": word chains (write), fill-blank (missing vowels), sight words (write)
+  - Worksheet 3 "Story Time": sentence completion (fill-blank with word bank), read-aloud passage, comprehension (circle)
+- `adapt/schema.py` — Added `options`, `answer`, `picture_prompt` to ActivityItem; `worksheet_number/count/title`, `break_prompt` to AdaptedActivityModel
+- `adapt/engine.py` — Added `adapt_lesson()` + 8 helper functions (discovery/builder/story chunk builders, distractor generation, fill-blank, sentence-to-blank, comprehension questions, word-to-picture prompts)
+- `adapt/rules.py` — Added FORMAT_RENDERING metadata, BRAIN_BREAK_PROMPTS
+- `render/pdf.py` — Added 7 new drawing functions: match tiles, trace letters, circle bubbles, fill-blank with word bank, read-aloud styled box, break prompts, two-column scene layout
+- `render/pose_planner.py` — NEW: content-driven scene planning from chunk content
+- `render/asset_gen.py` — NEW: AI asset generation with hash-based caching (Gemini Flash), graceful fallback
+- `theme/schema.py` — Added AssetManifest model, multi_worksheet flag on ThemeConfig
+- `theme/themes/roblox_obby/config.yaml` — NEW: multi_worksheet theme with integrated avatar
+- `transform.py` — Split into single-worksheet (backward-compatible) and multi-worksheet pipeline branches
+- `validate/adhd_compliance.py` — Added format variety check (Check 11) and worksheet time limit (Check 12)
+- 20 new tests (12 adapt + 8 render), all 214 pass, lint clean, types clean
+- **Fully backward compatible** — `adapt_activity()` and single-worksheet themes work unchanged

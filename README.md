@@ -11,11 +11,12 @@ Phone photo of worksheet  -->  ADHD-adapted, themed PDF
 1. **Capture** a worksheet with your phone camera
 2. **AI vision** (Gemini) analyzes the photo and extracts structured content — OCR is the fallback if no API key
 3. **Skill extraction** identifies the literacy skill being taught (phonics, fluency, etc.)
-4. **ADHD adaptation** chunks content, adds scaffolding, worked examples, and self-assessment
+4. **ADHD adaptation** chunks content into multi-sensory activities with varied response types (match, trace, circle, fill-blank, write, read-aloud)
 5. **AI quality review** iteratively evaluates the adapted worksheet for correctness before rendering
-6. **Theme** applies a calm visual theme (Space, Underwater, or Dinosaur)
-7. **Render** produces a print-ready PDF with vector text
-8. **Validate** checks skill preservation, ADHD compliance, and print quality
+6. **Multi-worksheet split** produces 2-3 focused mini-worksheets per lesson (Word Discovery, Word Builder, Story Time) with brain breaks between them
+7. **Theme** applies a calm visual theme (Space, Underwater, Dinosaur, or Roblox Obby Quest)
+8. **Render** produces print-ready PDFs with vector text, word-picture matching tiles, traceable letters, and styled reading boxes
+9. **Validate** checks skill preservation, ADHD compliance, format variety, and print quality
 
 AI vision (Gemini) is the primary extraction mode — dramatically more accurate than OCR on phone photos. The pipeline falls back to OCR if no API key is set. AI quality review catches structural issues before the final PDF is generated.
 
@@ -28,8 +29,11 @@ cd worksheet-builder
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
 
-# Transform a worksheet
+# Transform a worksheet (single PDF)
 python transform.py --input photo.jpg --profile profiles/ian.yaml --theme space --output ./output/
+
+# Transform into multi-worksheet set (3 mini-worksheets with varied activities)
+python transform.py --input photo.jpg --profile profiles/ian.yaml --theme roblox_obby --output ./output/
 
 # Mark completion and award tokens
 python complete.py --profile profiles/ian.yaml --lesson 5
@@ -85,6 +89,8 @@ path = generate_image(
 The engine follows evidence-consistent ADHD design rules:
 
 - **Game-themed structure, visually calm execution** — levels and XP labels motivate, but the visual field stays clean
+- **Multi-sensory activities** — word-picture matching, letter tracing, word circling, fill-in-the-blank, writing, and read-aloud — varied formats produce 40% greater gains over isolated read/write
+- **Multi-worksheet split** — one lesson becomes 2-3 focused mini-worksheets (5-8 min each) with brain breaks
 - **Chunked content** — 2-3 items per chunk (K) up to 5-8 (Grade 3), ~3-7 minutes each
 - **Effort-based rewards** — tokens for completing and trying, never for accuracy or speed
 - **Predictable layout** — instructions always top-left, examples in shaded box, consistent placement
@@ -111,7 +117,7 @@ Paper → [1] Capture → [2] Store → [3] Extract (AI vision / OCR) → [4] Sk
 | Store | `capture/store.py` | Cleaned image | Hash-named master |
 | Extract | `extract/vision.py` (primary) or `extract/ocr.py` + `heuristics.py` (fallback) | Image | `SourceWorksheetModel` |
 | Skill | `skill/extractor.py` | Source model | `LiteracySkillModel` |
-| Adapt | `adapt/engine.py` | Skill + Profile | `AdaptedActivityModel` |
+| Adapt | `adapt/engine.py` | Skill + Profile | `AdaptedActivityModel` (single) or `list[AdaptedActivityModel]` (multi) |
 | AI Review | `validate/ai_review.py` | Adapted model | Reviewed/fixed `AdaptedActivityModel` |
 | Theme | `theme/engine.py` | Adapted model | `ThemedModel` |
 | Render | `render/pdf.py` | Themed model | PDF file |
@@ -153,6 +159,25 @@ Adapted model → AI review → fix issues → re-review → ... → final adapt
 
 The review is conservative: it flags structural problems but never substitutes the source words (which are the learning targets from the original worksheet). Review uses Gemini 2.5 Flash (primary) with GPT-5.4 as fallback.
 
+### Multi-worksheet mode
+
+When using a theme with `multi_worksheet: true` (e.g., `roblox_obby`), one lesson is split into 2-3 focused mini-worksheets:
+
+| Worksheet | Title | Activities | Time |
+|-----------|-------|-----------|------|
+| 1 | Word Discovery | Word-picture matching, letter tracing, word circling | ~5 min |
+| 2 | Word Builder | Word chains, fill-in-the-blank, sight word practice | ~5 min |
+| 3 | Story Time | Sentence completion, read-aloud passage, comprehension | ~8 min |
+
+Each worksheet ends with a brain break prompt ("Stand up and stretch!", "Do 5 jumping jacks!"). This addresses the key problem where UFLI Lesson 59 produced 15 items across 4 chunks, all with "write" response format — research shows varied multi-sensory activities produce 40% greater gains.
+
+```bash
+# Produces 3 PDFs: worksheet_..._1of3.pdf, worksheet_..._2of3.pdf, worksheet_..._3of3.pdf
+python transform.py --input photo.jpg --profile profiles/ian.yaml --theme roblox_obby --output ./output/
+```
+
+Single-worksheet mode (`--theme space`) works exactly as before — fully backward compatible.
+
 ## Companion layer
 
 Beyond worksheet transformation, the companion layer provides:
@@ -176,22 +201,23 @@ python complete.py --profile profiles/ian.yaml --set-chunking small
 
 ## Themes
 
-Three built-in calm themes with functional color coding:
+Four built-in calm themes with functional color coding:
 
-| Theme | Name | Accent |
-|-------|------|--------|
-| `space` | Space Adventure | Blue/amber on near-white |
-| `underwater` | Ocean Explorer | Ocean blue on light blue |
-| `dinosaur` | Dino Discovery | Green/brown on warm white |
+| Theme | Name | Multi-worksheet | Accent |
+|-------|------|-----------------|--------|
+| `space` | Space Adventure | No | Blue/amber on near-white |
+| `underwater` | Ocean Explorer | No | Ocean blue on light blue |
+| `dinosaur` | Dino Discovery | No | Green/brown on warm white |
+| `roblox_obby` | Roblox Obby Quest | **Yes** | Blue/amber, integrated character scenes |
 
-Themes change only visual elements — content and structure remain identical. Add custom themes by creating a `config.yaml` in `theme/themes/<name>/`.
+Themes change only visual elements — content and structure remain identical. Themes with `multi_worksheet: true` produce 2-3 mini-worksheets per lesson with varied activity types. Add custom themes by creating a `config.yaml` in `theme/themes/<name>/`.
 
 ## Development
 
 ```bash
 make lint        # ruff check .
 make typecheck   # mypy . (strict mode)
-make test        # pytest (189 tests)
+make test        # pytest (214 tests)
 make format      # ruff format .
 make clean       # rm -rf artifacts/ __pycache__ .mypy_cache
 ```
@@ -205,24 +231,24 @@ skill/          K-3 literacy skill taxonomy + extraction
 adapt/          ADHD activity adaptation + accommodation rules
 theme/          Calm theme engine + 3 built-in themes
 companion/      Learner profiles, avatar catalog, token economy, caregiver
-render/         ReportLab vector PDF generation
-validate/       Skill-parity, ADHD compliance, print quality, AI quality review
+render/         ReportLab vector PDF generation + scene planning + AI asset generation
+validate/       Skill-parity, ADHD compliance, format variety, print quality, AI quality review
 transform.py    CLI: transform worksheets (full pipeline)
 complete.py     CLI: mark completion, manage rewards and accommodations
 ```
 
 ### Testing
 
-189 tests covering all pipeline stages:
+214 tests covering all pipeline stages:
 
 ```
 tests/test_capture.py     11 tests — preprocessing, storage, archival PDF
 tests/test_extract.py     13 tests — template detection, region classification
 tests/test_skill.py       31 tests — taxonomy, extraction (phonics, fluency, generic)
-tests/test_adapt.py       28 tests — profile, rules, adaptation engine
+tests/test_adapt.py       40 tests — profile, rules, adaptation engine, multi-worksheet
 tests/test_validate.py    25 tests — skill parity, age band, ADHD compliance
 tests/test_theme.py       11 tests — theme loading, application
-tests/test_render.py      12 tests — PDF rendering, print quality
+tests/test_render.py      20 tests — PDF rendering, multi-format rendering, print quality
 tests/test_companion.py   28 tests — profile CRUD, catalog, rewards, caregiver
 tests/test_adapter.py     29 tests — AI adapter contracts, factory, image gen, providers
 tests/test_smoke.py        1 test  — all packages importable

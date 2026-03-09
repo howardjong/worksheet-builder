@@ -17,10 +17,9 @@ try:
 except ImportError:
     pass
 
-from adapt.engine import adapt_activity
+from adapt.engine import adapt_activity, adapt_lesson
 from capture.preprocess import preprocess_page
 from capture.store import store_master
-from companion.avatar import compose_avatar
 from companion.schema import load_profile
 from extract.heuristics import map_to_source_model
 from extract.ocr import extract_text_with_fallback
@@ -130,6 +129,44 @@ def run_pipeline(
     # Stage 5: ADHD adaptation
     logger.info("Stage 5: Adapting for ADHD...")
     profile = load_profile(profile_path)
+
+    # Stage 6: Load theme (needed before deciding single vs multi)
+    logger.info("Stage 6: Loading theme...")
+    theme = load_theme(theme_id)
+
+    # Determine single vs multi-worksheet mode
+    if theme.multi_worksheet:
+        return _run_multi_worksheet_pipeline(
+            skill_model, profile, theme, theme_id,
+            master.image_hash, output, artifacts,
+        )
+    else:
+        return _run_single_worksheet_pipeline(
+            skill_model, profile, theme, theme_id,
+            master.image_hash, output, artifacts, profile_path,
+        )
+
+
+def _run_single_worksheet_pipeline(
+    skill_model: object,
+    profile: object,
+    theme: object,
+    theme_id: str,
+    image_hash: str,
+    output: Path,
+    artifacts: Path,
+    profile_path: str,
+) -> str:
+    """Original single-worksheet pipeline (backward compatible)."""
+    from companion.avatar import compose_avatar
+    from companion.schema import LearnerProfile
+    from skill.schema import LiteracySkillModel
+    from theme.schema import ThemeConfig
+
+    assert isinstance(skill_model, LiteracySkillModel)
+    assert isinstance(profile, LearnerProfile)
+    assert isinstance(theme, ThemeConfig)
+
     adapted = adapt_activity(skill_model, profile, theme_id=theme_id)
 
     adapted_json = artifacts / "adapted_model.json"
@@ -156,12 +193,10 @@ def run_pipeline(
     # Re-persist adapted model (may have been modified by AI review)
     adapted_json.write_text(adapted.model_dump_json(indent=2))
 
-    # Stage 6: Apply theme
-    logger.info("Stage 6: Applying theme...")
-    theme = load_theme(theme_id)
-    apply_theme(adapted, theme)  # validates theme + adapted compatibility
+    # Apply theme
+    apply_theme(adapted, theme)
 
-    # Stage 6b: Compose avatar
+    # Compose avatar
     avatar_path: str | None = None
     if profile.avatar:
         logger.info("Stage 6b: Composing avatar...")
@@ -172,9 +207,8 @@ def run_pipeline(
 
     # Stage 7: Render PDF
     logger.info("Stage 7: Rendering PDF...")
-    # Generate deterministic output filename
     content_hash = hashlib.sha256(
-        f"{master.image_hash}:{profile.name}:{theme_id}".encode()
+        f"{image_hash}:{profile.name}:{theme_id}".encode()
     ).hexdigest()[:12]
     pdf_filename = f"worksheet_{content_hash}.pdf"
     pdf_path = str(output / pdf_filename)
@@ -183,24 +217,119 @@ def run_pipeline(
 
     # Stage 8: Validate
     logger.info("Stage 8: Running validation...")
+    _validate_and_report(skill_model, adapted, profile, pdf_path, artifacts)
 
-    # Skill parity
+    logger.info(f"Done! PDF saved to: {pdf_path}")
+    return pdf_path
+
+
+def _run_multi_worksheet_pipeline(
+    skill_model: object,
+    profile: object,
+    theme: object,
+    theme_id: str,
+    image_hash: str,
+    output: Path,
+    artifacts: Path,
+) -> str:
+    """Multi-worksheet pipeline — produces 2-3 mini-worksheets per lesson."""
+    from companion.schema import LearnerProfile
+    from render.asset_gen import (
+        compute_worksheet_hash,
+        generate_worksheet_assets,
+    )
+    from render.pose_planner import plan_scenes, plan_word_pictures
+    from skill.schema import LiteracySkillModel
+    from theme.schema import ThemeConfig
+
+    assert isinstance(skill_model, LiteracySkillModel)
+    assert isinstance(profile, LearnerProfile)
+    assert isinstance(theme, ThemeConfig)
+
+    worksheets = adapt_lesson(skill_model, profile, theme_id=theme_id)
+    logger.info(f"  Generated {len(worksheets)} mini-worksheets")
+
+    pdf_paths: list[str] = []
+    content_hash = hashlib.sha256(
+        f"{image_hash}:{profile.name}:{theme_id}".encode()
+    ).hexdigest()[:12]
+
+    for i, adapted in enumerate(worksheets):
+        ws_num = i + 1
+        ws_title = adapted.worksheet_title or "Untitled"
+        logger.info(
+            f"  Processing worksheet {ws_num}/{len(worksheets)}: "
+            f"{ws_title}"
+        )
+
+        # Persist adapted model
+        adapted_json = artifacts / f"adapted_model_{ws_num}.json"
+        adapted_json.write_text(adapted.model_dump_json(indent=2))
+
+        # Apply theme
+        apply_theme(adapted, theme)
+
+        # Stage 6c: Generate AI assets (scenes + word pictures)
+        asset_manifest = None
+        try:
+            scenes = plan_scenes(adapted)
+            word_prompts = plan_word_pictures(adapted)
+            ws_hash = compute_worksheet_hash(adapted.source_hash, ws_num, theme_id)
+            asset_manifest = generate_worksheet_assets(scenes, word_prompts, ws_hash)
+        except Exception as e:
+            logger.warning(f"  Asset generation skipped: {e}")
+
+        # Stage 7: Render PDF
+        pdf_filename = f"worksheet_{content_hash}_{ws_num}of{len(worksheets)}.pdf"
+        pdf_path = str(output / pdf_filename)
+        render_worksheet(adapted, theme, pdf_path, asset_manifest=asset_manifest)
+        pdf_paths.append(pdf_path)
+        logger.info(f"  Output: {pdf_path}")
+
+        # Stage 8: Validate each worksheet
+        _validate_and_report(
+            skill_model, adapted, profile,
+            pdf_path, artifacts, suffix=f"_{ws_num}",
+        )
+
+    # Validate format variety across the set
+    _validate_format_variety(worksheets)
+
+    logger.info(f"Done! {len(pdf_paths)} PDFs saved to: {output}")
+    return pdf_paths[0] if pdf_paths else ""
+
+
+def _validate_and_report(
+    skill_model: object,
+    adapted: object,
+    profile: object,
+    pdf_path: str,
+    artifacts: Path,
+    suffix: str = "",
+) -> None:
+    """Run validation checks and persist results."""
+    from adapt.schema import AdaptedActivityModel
+    from companion.schema import LearnerProfile
+    from skill.schema import LiteracySkillModel
+
+    assert isinstance(skill_model, LiteracySkillModel)
+    assert isinstance(adapted, AdaptedActivityModel)
+    assert isinstance(profile, LearnerProfile)
+
     parity_result = validate_skill_parity(skill_model, adapted)
     age_result = validate_age_band(adapted, profile.grade_level)
     adhd_result = validate_adhd_compliance(adapted)
     print_result = validate_print_quality(pdf_path)
 
-    # Persist validation results
     validation = {
         "skill_parity": parity_result.model_dump(),
         "age_band": age_result.model_dump(),
         "adhd_compliance": adhd_result.model_dump(),
         "print_quality": print_result.model_dump(),
     }
-    val_json = artifacts / "validation.json"
+    val_json = artifacts / f"validation{suffix}.json"
     val_json.write_text(json.dumps(validation, indent=2))
 
-    # Report results
     all_passed = all([
         parity_result.passed,
         age_result.passed,
@@ -209,7 +338,7 @@ def run_pipeline(
     ])
 
     if all_passed:
-        logger.info("All validations passed!")
+        logger.info(f"  All validations passed{suffix}!")
     else:
         for name, res in [
             ("Skill parity", parity_result),
@@ -220,9 +349,8 @@ def run_pipeline(
             if not res.passed:
                 for v in res.violations:
                     if v.severity == "error":
-                        logger.error(f"  {name}: {v.message}")
+                        logger.error(f"  {name}{suffix}: {v.message}")
 
-    # Report warnings
     for name, res in [
         ("Skill parity", parity_result),
         ("Age band", age_result),
@@ -231,10 +359,24 @@ def run_pipeline(
     ]:
         for v in res.violations:
             if v.severity == "warning":
-                logger.warning(f"  {name}: {v.message}")
+                logger.warning(f"  {name}{suffix}: {v.message}")
 
-    logger.info(f"Done! PDF saved to: {pdf_path}")
-    return pdf_path
+
+def _validate_format_variety(worksheets: list[object]) -> None:
+    """Check that the multi-worksheet set has response format variety."""
+    from adapt.schema import AdaptedActivityModel
+
+    all_formats: set[str] = set()
+    for ws in worksheets:
+        assert isinstance(ws, AdaptedActivityModel)
+        for chunk in ws.chunks:
+            all_formats.add(chunk.response_format)
+
+    if len(all_formats) < 2:
+        logger.warning(
+            f"  Format variety: only {len(all_formats)} format(s) used across "
+            f"{len(worksheets)} worksheets. Recommend at least 2 different formats."
+        )
 
 
 if __name__ == "__main__":

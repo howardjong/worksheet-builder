@@ -24,8 +24,11 @@ class ActivityItem(BaseModel):
 
     item_id: int
     content: str  # the actual question/word/prompt
-    response_format: str  # "circle", "write", "match", "verbal", "read_aloud", "trace"
+    response_format: str  # "circle"/"write"/"match"/"verbal"/"read_aloud"/"trace"/"fill_blank"
     metadata: dict[str, str | int | float | bool] = Field(default_factory=dict)
+    options: list[str] | None = None  # choices for circle/match/fill_blank activities
+    answer: str | None = None  # correct answer for fill_blank/circle
+    picture_prompt: str | None = None  # description for AI to generate a matching illustration
 
 
 class ActivityChunk(BaseModel):
@@ -64,3 +67,7 @@ class AdaptedActivityModel(BaseModel):
     decoration_zones: list[tuple[float, float, float, float]]  # safe areas for illustrations
     avatar_prompts: list[str] | None = None  # None for MVP
     self_assessment: list[str] | None = None  # "I can..." checklist items
+    worksheet_number: int = 1  # which mini-worksheet this is (1, 2, or 3)
+    worksheet_count: int = 1  # total mini-worksheets for this lesson
+    worksheet_title: str | None = None  # e.g., "Word Discovery", "Word Builder"
+    break_prompt: str | None = None  # brain break message after this worksheet

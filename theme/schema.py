@@ -38,8 +38,17 @@ class ThemeConfig(BaseModel):
     style: str = "calm"
     fonts: ThemeFonts = Field(default_factory=ThemeFonts)
     colors: ThemeColors = Field(default_factory=ThemeColors)
-    avatar_position: str = "bottom-right"
+    avatar_position: str = "bottom-right"  # bottom-right/bottom-left/top-right/integrated
     decorative_elements: DecorativeConfig = Field(default_factory=DecorativeConfig)
+    multi_worksheet: bool = False  # enable multi-worksheet (3 mini-worksheets per lesson)
+
+
+class AssetManifest(BaseModel):
+    """Manifest of generated assets for a worksheet — scenes and word pictures."""
+
+    scene_paths: dict[int, str] = Field(default_factory=dict)  # chunk_id -> scene image path
+    word_picture_paths: dict[str, str] = Field(default_factory=dict)  # word -> picture image path
+    cache_dir: str = ""  # directory where cached assets are stored
 
 
 class ThemedModel(BaseModel):

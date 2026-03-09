@@ -10,9 +10,9 @@ from reportlab.lib.pagesizes import letter
 from reportlab.lib.units import inch
 from reportlab.pdfgen.canvas import Canvas
 
-from adapt.schema import ActivityChunk, AdaptedActivityModel
+from adapt.schema import ActivityChunk, ActivityItem, AdaptedActivityModel
 from theme.assets import resolve_decoration
-from theme.schema import ThemeConfig
+from theme.schema import AssetManifest, ThemeConfig
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +37,7 @@ def render_worksheet(
     theme: ThemeConfig,
     output_path: str,
     avatar_image: str | None = None,
+    asset_manifest: AssetManifest | None = None,
 ) -> str:
     """Render an adapted activity to a print-ready PDF.
 
@@ -62,8 +63,18 @@ def render_worksheet(
         _draw_avatar(c, avatar_image, theme)
 
     # Render each chunk
-    for chunk in adapted.chunks:
-        y = _draw_chunk(c, chunk, adapted, theme, sizes, colors, y)
+    use_scenes = (
+        asset_manifest is not None
+        and theme.avatar_position == "integrated"
+    )
+    for chunk_idx, chunk in enumerate(adapted.chunks):
+        if use_scenes and asset_manifest is not None:
+            y = _draw_chunk_with_scene(
+                c, chunk, adapted, theme, sizes, colors, y,
+                asset_manifest, chunk_idx,
+            )
+        else:
+            y = _draw_chunk(c, chunk, adapted, theme, sizes, colors, y)
 
         # Check if we need a new page
         if y < CONTENT_BOTTOM + 100:
@@ -75,6 +86,10 @@ def render_worksheet(
             _draw_decorations(c, theme, adapted.theme_id)
             if avatar_image:
                 _draw_avatar(c, avatar_image, theme)
+
+    # Brain break prompt (if multi-worksheet)
+    if adapted.break_prompt:
+        y = _draw_break_prompt(c, adapted.break_prompt, theme, sizes, y)
 
     # Self-assessment at the bottom
     if adapted.self_assessment:
@@ -106,16 +121,31 @@ def _draw_header(
     c.setFont(theme.fonts.heading, sizes["heading"])
     c.setFillColor(HexColor(theme.colors.text))
 
-    title = f"{adapted.specific_skill.replace('_', ' ').title()} Practice"
-    c.drawString(MARGIN, y - sizes["heading"], title)
-    y -= sizes["heading"] + 8
-
-    # Subtitle with domain
-    c.setFont(theme.fonts.primary, sizes["small"])
-    c.setFillColor(HexColor(theme.colors.directions))
-    subtitle = f"Domain: {adapted.domain.replace('_', ' ').title()} | Grade {adapted.grade_level}"
-    c.drawString(MARGIN, y - sizes["small"], subtitle)
-    y -= sizes["small"] + 16
+    # Title: include worksheet title if multi-worksheet
+    if adapted.worksheet_title and adapted.worksheet_count > 1:
+        title = f"{adapted.worksheet_title}"
+        c.drawString(MARGIN, y - sizes["heading"], title)
+        y -= sizes["heading"] + 4
+        # Sub-title with worksheet number
+        c.setFont(theme.fonts.primary, sizes["small"])
+        c.setFillColor(HexColor(theme.colors.directions))
+        subtitle = (
+            f"{adapted.specific_skill.replace('_', ' ').title()} "
+            f"| Part {adapted.worksheet_number} of {adapted.worksheet_count}"
+        )
+        c.drawString(MARGIN, y - sizes["small"], subtitle)
+        y -= sizes["small"] + 12
+    else:
+        title = f"{adapted.specific_skill.replace('_', ' ').title()} Practice"
+        c.drawString(MARGIN, y - sizes["heading"], title)
+        y -= sizes["heading"] + 8
+        # Subtitle with domain
+        c.setFont(theme.fonts.primary, sizes["small"])
+        c.setFillColor(HexColor(theme.colors.directions))
+        domain_label = adapted.domain.replace("_", " ").title()
+        subtitle = f"Domain: {domain_label} | Grade {adapted.grade_level}"
+        c.drawString(MARGIN, y - sizes["small"], subtitle)
+        y -= sizes["small"] + 16
 
     # Divider line
     c.setStrokeColor(HexColor(theme.colors.chunk_border))
@@ -193,6 +223,16 @@ def _draw_chunk(
             # Write line for student to practice
             c.drawString(MARGIN + 30, y - sizes["body"], "Write: ____________________")
             y -= sizes["body"] + 6
+        elif item.response_format == "match":
+            y = _draw_match_item(c, item, theme, sizes, y)
+        elif item.response_format == "trace":
+            y = _draw_trace_item(c, item, theme, sizes, y)
+        elif item.response_format == "circle" and item.options:
+            y = _draw_circle_item(c, item, theme, sizes, y)
+        elif item.response_format == "fill_blank":
+            y = _draw_fill_blank_item(c, item, theme, sizes, y)
+        elif item.response_format == "read_aloud":
+            y = _draw_read_aloud_item(c, item, theme, sizes, y)
         else:
             # Regular item — wrap long text across lines
             text = f"  {item.item_id}. {item.content}"
@@ -209,11 +249,6 @@ def _draw_chunk(
             elif item.response_format == "circle":
                 c.drawString(MARGIN + 30, y - sizes["body"], "(circle one)")
                 y -= sizes["body"] + 4
-            elif item.response_format == "read_aloud":
-                c.setFont(theme.fonts.primary, sizes["small"])
-                c.drawString(MARGIN + 30, y - sizes["small"], "[read aloud]")
-                c.setFont(theme.fonts.primary, sizes["body"])
-                y -= sizes["small"] + 4
 
             y += 4  # offset the last +4, then add spacing
             y -= 6
@@ -250,6 +285,288 @@ def _wrap_text(text: str, max_chars: int) -> list[str]:
         lines.append(current_line)
 
     return lines if lines else [text]
+
+
+def _draw_match_item(
+    c: Canvas,
+    item: ActivityItem,
+    theme: ThemeConfig,
+    sizes: dict[str, int],
+    y: float,
+) -> float:
+    """Draw a word-picture matching item: word on left, picture zone on right."""
+    body = sizes["body"]
+    # Word label on the left
+    c.setFont(theme.fonts.heading, body + 2)
+    c.setFillColor(HexColor(theme.colors.text))
+    c.drawString(MARGIN + 15, y - body - 2, item.content)
+
+    # Picture zone placeholder on the right (dashed box)
+    pic_x = MARGIN + CONTENT_WIDTH * 0.5
+    pic_size = body + 16
+    c.setStrokeColor(HexColor(theme.colors.chunk_border))
+    c.setDash(3, 3)
+    c.rect(pic_x, y - pic_size, pic_size, pic_size, fill=False, stroke=True)
+    c.setDash()
+
+    # Picture label inside box
+    c.setFont(theme.fonts.primary, sizes["small"] - 2)
+    c.setFillColor(HexColor(theme.colors.directions))
+    prompt_text = (item.picture_prompt or item.content)[:12]
+    c.drawString(pic_x + 3, y - pic_size + 4, f"[{prompt_text}]")
+
+    # Connecting line stub (dotted)
+    line_start_x = MARGIN + 15 + len(item.content) * (body * 0.6)
+    line_end_x = pic_x - 5
+    line_y = y - body / 2 - 4
+    c.setStrokeColor(HexColor(theme.colors.chunk_border))
+    c.setDash(2, 4)
+    c.line(min(line_start_x, line_end_x - 20), line_y, line_end_x, line_y)
+    c.setDash()
+
+    y -= pic_size + 8
+    c.setFont(theme.fonts.primary, body)
+    return y
+
+
+def _draw_trace_item(
+    c: Canvas,
+    item: ActivityItem,
+    theme: ThemeConfig,
+    sizes: dict[str, int],
+    y: float,
+) -> float:
+    """Draw a word in large dotted/gray outline letters for tracing."""
+    trace_size = sizes["heading"] + 6  # Larger for tracing
+    c.setFont(theme.fonts.heading, trace_size)
+    c.setFillColor(HexColor("#D1D5DB"))  # Light gray for tracing
+    c.drawString(MARGIN + 20, y - trace_size, item.content)
+
+    # Add a solid write line below
+    line_y = y - trace_size - 6
+    c.setStrokeColor(HexColor(theme.colors.chunk_border))
+    c.setLineWidth(0.5)
+    line_width = len(item.content) * trace_size * 0.6
+    c.line(MARGIN + 20, line_y, MARGIN + 20 + max(line_width, 100), line_y)
+
+    y -= trace_size + 14
+    c.setFont(theme.fonts.primary, sizes["body"])
+    return y
+
+
+def _draw_circle_item(
+    c: Canvas,
+    item: ActivityItem,
+    theme: ThemeConfig,
+    sizes: dict[str, int],
+    y: float,
+) -> float:
+    """Draw a row of words in bubbles for circling."""
+    body = sizes["body"]
+
+    # Instruction text
+    c.setFont(theme.fonts.primary, body)
+    c.setFillColor(HexColor(theme.colors.text))
+    c.drawString(MARGIN + 10, y - body, f"  {item.item_id}. {item.content}")
+    y -= body + 8
+
+    # Draw word bubbles in a row
+    if item.options:
+        x = MARGIN + 25
+        bubble_padding = 12
+        for word in item.options:
+            word_width = len(word) * body * 0.55 + bubble_padding * 2
+            # Draw rounded rectangle bubble
+            c.setStrokeColor(HexColor(theme.colors.text))
+            c.setFillColor(HexColor("#FFFFFF"))
+            c.setLineWidth(1)
+            c.roundRect(x, y - body - 4, word_width, body + 8, 6, fill=True, stroke=True)
+            # Word text inside bubble
+            c.setFillColor(HexColor(theme.colors.text))
+            c.setFont(theme.fonts.primary, body)
+            c.drawString(x + bubble_padding, y - body + 1, word)
+            x += word_width + 8
+            # Wrap to next line if needed
+            if x > PAGE_WIDTH - MARGIN - 30:
+                x = MARGIN + 25
+                y -= body + 14
+
+        y -= body + 12
+
+    return y
+
+
+def _draw_fill_blank_item(
+    c: Canvas,
+    item: ActivityItem,
+    theme: ThemeConfig,
+    sizes: dict[str, int],
+    y: float,
+) -> float:
+    """Draw a word/sentence with blank and optional word bank."""
+    body = sizes["body"]
+
+    # Content with blank
+    c.setFont(theme.fonts.primary, body + 2)
+    c.setFillColor(HexColor(theme.colors.text))
+    c.drawString(MARGIN + 15, y - body - 2, f"{item.item_id}. {item.content}")
+    y -= body + 10
+
+    # Word bank (options) in a shaded box
+    if item.options:
+        bank_height = body + 12
+        bx = MARGIN + 25
+        bw = CONTENT_WIDTH - 50
+        c.setFillColor(HexColor("#F9FAFB"))
+        c.rect(bx, y - bank_height, bw, bank_height, fill=True, stroke=False)
+        c.setStrokeColor(HexColor(theme.colors.chunk_border))
+        c.rect(bx, y - bank_height, bw, bank_height, fill=False, stroke=True)
+
+        c.setFillColor(HexColor(theme.colors.directions))
+        c.setFont(theme.fonts.primary, sizes["small"])
+        bank_text = "Word bank: " + "   ".join(item.options)
+        c.drawString(MARGIN + 35, y - body - 2, bank_text)
+        y -= bank_height + 6
+
+    c.setFont(theme.fonts.primary, body)
+    return y
+
+
+def _draw_read_aloud_item(
+    c: Canvas,
+    item: ActivityItem,
+    theme: ThemeConfig,
+    sizes: dict[str, int],
+    y: float,
+) -> float:
+    """Draw a passage in a styled reading box with read-aloud icon."""
+    body = sizes["body"]
+    max_chars = int((CONTENT_WIDTH - 40) / (body * 0.5))
+    lines = _wrap_text(item.content, max_chars)
+
+    box_height = len(lines) * (body + 4) + 20
+    # Ensure enough space
+    if y - box_height < CONTENT_BOTTOM:
+        box_height = y - CONTENT_BOTTOM - 10
+
+    # Light blue reading box
+    rx, rw = MARGIN + 10, CONTENT_WIDTH - 20
+    c.setFillColor(HexColor("#EFF6FF"))
+    c.roundRect(rx, y - box_height, rw, box_height, 8, fill=True, stroke=False)
+    c.setStrokeColor(HexColor("#BFDBFE"))
+    c.roundRect(rx, y - box_height, rw, box_height, 8, fill=False, stroke=True)
+
+    # Read aloud icon indicator
+    c.setFont(theme.fonts.heading, sizes["small"])
+    c.setFillColor(HexColor(theme.colors.directions))
+    c.drawString(MARGIN + 20, y - sizes["small"] - 6, "Read Aloud:")
+    inner_y = y - sizes["small"] - 14
+
+    # Story text
+    c.setFont(theme.fonts.primary, body)
+    c.setFillColor(HexColor(theme.colors.text))
+    for line in lines:
+        if inner_y < y - box_height + 8:
+            break
+        c.drawString(MARGIN + 20, inner_y - body, line)
+        inner_y -= body + 4
+
+    y -= box_height + 8
+    return y
+
+
+def _draw_break_prompt(
+    c: Canvas,
+    prompt: str,
+    theme: ThemeConfig,
+    sizes: dict[str, int],
+    y: float,
+) -> float:
+    """Draw a fun 'Take a Break!' section with movement suggestion."""
+    body = sizes["body"]
+    box_height = body * 2 + 24
+
+    # Check space
+    if y - box_height < CONTENT_BOTTOM:
+        c.showPage()
+        y = CONTENT_TOP
+
+    # Bright, fun box
+    bx, bw = MARGIN + 20, CONTENT_WIDTH - 40
+    c.setFillColor(HexColor("#FEF3C7"))  # Warm yellow
+    c.roundRect(bx, y - box_height, bw, box_height, 10, fill=True, stroke=False)
+    c.setStrokeColor(HexColor("#F59E0B"))
+    c.setLineWidth(2)
+    c.roundRect(bx, y - box_height, bw, box_height, 10, fill=False, stroke=True)
+    c.setLineWidth(1)
+
+    # Title
+    c.setFont(theme.fonts.heading, body + 2)
+    c.setFillColor(HexColor("#92400E"))
+    c.drawCentredString(PAGE_WIDTH / 2, y - body - 6, "Take a Break!")
+
+    # Prompt text
+    c.setFont(theme.fonts.primary, body)
+    c.setFillColor(HexColor("#78350F"))
+    c.drawCentredString(PAGE_WIDTH / 2, y - body * 2 - 12, prompt)
+
+    y -= box_height + 12
+    return y
+
+
+def _draw_chunk_with_scene(
+    c: Canvas,
+    chunk: ActivityChunk,
+    adapted: AdaptedActivityModel,
+    theme: ThemeConfig,
+    sizes: dict[str, int],
+    colors: object,
+    y: float,
+    asset_manifest: AssetManifest,
+    chunk_idx: int,
+) -> float:
+    """Draw chunk with two-column layout: content (60%) + scene illustration (40%).
+
+    Alternates scene position left/right between chunks.
+    Falls back to standard layout if no scene asset available.
+    """
+    scene_path = asset_manifest.scene_paths.get(chunk.chunk_id)
+
+    if not scene_path or not Path(scene_path).exists():
+        return _draw_chunk(c, chunk, adapted, theme, sizes, colors, y)
+
+    # Determine layout: even chunks = scene right, odd = scene left
+    scene_right = chunk_idx % 2 == 0
+
+    # Scene dimensions
+    scene_width = CONTENT_WIDTH * 0.35
+    scene_height = 120  # Fixed height for scenes
+    content_width = CONTENT_WIDTH * 0.60
+
+    if scene_right:
+        scene_x = MARGIN + content_width + 10
+    else:
+        scene_x = MARGIN
+
+    # Draw scene image
+    try:
+        c.drawImage(
+            scene_path, scene_x, y - scene_height,
+            width=scene_width, height=scene_height,
+            preserveAspectRatio=True, mask="auto",
+        )
+    except Exception as e:
+        logger.warning(f"Failed to draw scene for chunk {chunk.chunk_id}: {e}")
+
+    # Draw content in the remaining column (using standard chunk drawing
+    # but constrained to the content column width)
+    # For now, draw standard chunk — the scene is purely additive
+    y_after = _draw_chunk(c, chunk, adapted, theme, sizes, colors, y)
+
+    # Ensure we move past the scene height
+    y_after = min(y_after, y - scene_height - 8)
+
+    return y_after
 
 
 def _draw_self_assessment(
@@ -386,4 +703,6 @@ def _draw_footer(
     c.setFont(theme.fonts.primary, 8)
     c.setFillColor(HexColor(theme.colors.chunk_border))
     footer = f"{theme.name} | Worksheet Builder v0.1.0"
+    if adapted.worksheet_count > 1:
+        footer += f" | Part {adapted.worksheet_number} of {adapted.worksheet_count}"
     c.drawString(MARGIN, MARGIN / 2, footer)

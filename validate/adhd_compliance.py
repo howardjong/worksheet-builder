@@ -175,6 +175,38 @@ def validate_adhd_compliance(
                     severity="warning",
                 )
 
+    # Check 11: Response format variety (multi-worksheet awareness)
+    result.checks_run += 1
+    formats_used = {chunk.response_format for chunk in adapted.chunks}
+    if len(adapted.chunks) >= 3 and len(formats_used) < 2:
+        result.add_violation(
+            check="format_variety",
+            message=(
+                f"Only {len(formats_used)} response format(s) used across "
+                f"{len(adapted.chunks)} chunks. Varied formats improve engagement."
+            ),
+            severity="warning",
+        )
+
+    # Check 12: Worksheet time limit (max 8 min per mini-worksheet)
+    result.checks_run += 1
+    if adapted.worksheet_count > 1:
+        total_minutes = 0
+        for chunk in adapted.chunks:
+            if chunk.time_estimate:
+                m = _parse_minutes(chunk.time_estimate)
+                if m is not None:
+                    total_minutes += m
+        if total_minutes > 8:
+            result.add_violation(
+                check="worksheet_time_limit",
+                message=(
+                    f"Mini-worksheet {adapted.worksheet_number} estimated at "
+                    f"{total_minutes} minutes, max is 8 minutes"
+                ),
+                severity="warning",
+            )
+
     return result
 
 
