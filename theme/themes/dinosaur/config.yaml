@@ -15,5 +15,5 @@ avatar_position: "bottom-right"
 decorative_elements:
   max_per_page: 2
   assets:
-    - "dino.svg"
-    - "footprint.svg"
+    - "fossil.png"
+    - "leaf.png"

@@ -15,5 +15,5 @@ avatar_position: "bottom-right"
 decorative_elements:
   max_per_page: 2
   assets:
-    - "rocket.svg"
-    - "planet.svg"
+    - "rocket.png"
+    - "planet.png"

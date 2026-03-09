@@ -20,6 +20,7 @@ except ImportError:
 from adapt.engine import adapt_activity
 from capture.preprocess import preprocess_page
 from capture.store import store_master
+from companion.avatar import compose_avatar
 from companion.schema import load_profile
 from extract.heuristics import map_to_source_model
 from extract.ocr import extract_text_with_fallback
@@ -160,6 +161,15 @@ def run_pipeline(
     theme = load_theme(theme_id)
     apply_theme(adapted, theme)  # validates theme + adapted compatibility
 
+    # Stage 6b: Compose avatar
+    avatar_path: str | None = None
+    if profile.avatar:
+        logger.info("Stage 6b: Composing avatar...")
+        avatar_result = compose_avatar(profile, size="companion", theme_id=theme_id)
+        if avatar_result:
+            avatar_path = str(avatar_result)
+            logger.info(f"  Avatar: {profile.avatar.base_character} -> {avatar_path}")
+
     # Stage 7: Render PDF
     logger.info("Stage 7: Rendering PDF...")
     # Generate deterministic output filename
@@ -168,7 +178,7 @@ def run_pipeline(
     ).hexdigest()[:12]
     pdf_filename = f"worksheet_{content_hash}.pdf"
     pdf_path = str(output / pdf_filename)
-    render_worksheet(adapted, theme, pdf_path)
+    render_worksheet(adapted, theme, pdf_path, avatar_image=avatar_path)
     logger.info(f"  Output: {pdf_path}")
 
     # Stage 8: Validate

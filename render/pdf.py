@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 from reportlab.lib.colors import HexColor
@@ -10,7 +11,10 @@ from reportlab.lib.units import inch
 from reportlab.pdfgen.canvas import Canvas
 
 from adapt.schema import ActivityChunk, AdaptedActivityModel
+from theme.assets import resolve_decoration
 from theme.schema import ThemeConfig
+
+logger = logging.getLogger(__name__)
 
 # Page geometry
 PAGE_WIDTH, PAGE_HEIGHT = letter  # 612 x 792 points
@@ -47,9 +51,15 @@ def render_worksheet(
     sizes = GRADE_FONT_SIZES.get(adapted.grade_level, GRADE_FONT_SIZES["1"])
     colors = theme.colors
     y = CONTENT_TOP
+    page_num = 1
 
     # Page header
     y = _draw_header(c, adapted, theme, sizes, y)
+
+    # Draw decorations and avatar on first page
+    _draw_decorations(c, theme, adapted.theme_id)
+    if avatar_image:
+        _draw_avatar(c, avatar_image, theme)
 
     # Render each chunk
     for chunk in adapted.chunks:
@@ -57,8 +67,14 @@ def render_worksheet(
 
         # Check if we need a new page
         if y < CONTENT_BOTTOM + 100:
+            _draw_footer(c, theme, adapted)
             c.showPage()
+            page_num += 1
             y = CONTENT_TOP
+            # Draw decorations on new pages too
+            _draw_decorations(c, theme, adapted.theme_id)
+            if avatar_image:
+                _draw_avatar(c, avatar_image, theme)
 
     # Self-assessment at the bottom
     if adapted.self_assessment:
@@ -267,6 +283,98 @@ def _draw_self_assessment(
         y -= sizes["body"] + 6
 
     return y
+
+
+def _draw_avatar(
+    c: Canvas,
+    avatar_path: str,
+    theme: ThemeConfig,
+) -> None:
+    """Draw the learning buddy avatar in the configured position.
+
+    ADHD rules: avatar in fixed position, visually subordinate to content,
+    with a short encouraging speech bubble.
+    """
+    avatar_file = Path(avatar_path)
+    if not avatar_file.exists():
+        return
+
+    # Avatar position from theme config (default: bottom-right)
+    position = theme.avatar_position
+    avatar_size = 70  # points (~1 inch)
+
+    if position == "bottom-right":
+        x = PAGE_WIDTH - MARGIN - avatar_size
+        y = MARGIN + 10
+    elif position == "bottom-left":
+        x = MARGIN
+        y = MARGIN + 10
+    elif position == "top-right":
+        x = PAGE_WIDTH - MARGIN - avatar_size
+        y = PAGE_HEIGHT - MARGIN - avatar_size
+    else:
+        x = PAGE_WIDTH - MARGIN - avatar_size
+        y = MARGIN + 10
+
+    try:
+        c.drawImage(
+            str(avatar_file), x, y,
+            width=avatar_size, height=avatar_size,
+            preserveAspectRatio=True,
+            mask="auto",
+        )
+
+        # Speech bubble with encouragement (visually subordinate)
+        bubble_x = x - 90
+        bubble_y = y + avatar_size - 10
+        c.setFillColor(HexColor("#F3F4F6"))
+        c.roundRect(bubble_x, bubble_y, 85, 18, 4, fill=True, stroke=False)
+        c.setFont(theme.fonts.primary, 7)
+        c.setFillColor(HexColor(theme.colors.directions))
+        c.drawString(bubble_x + 5, bubble_y + 5, "You can do it!")
+    except Exception as e:
+        logger.warning(f"Failed to draw avatar: {e}")
+
+
+def _draw_decorations(
+    c: Canvas,
+    theme: ThemeConfig,
+    theme_id: str,
+) -> None:
+    """Draw theme decorative elements in safe zones.
+
+    ADHD rules: max 2 per page, in fixed corners only, never between items.
+    """
+    assets = theme.decorative_elements.assets
+    max_elements = theme.decorative_elements.max_per_page
+
+    if not assets:
+        return
+
+    # Decoration zones: top-right corner and bottom-left corner
+    zones = [
+        (PAGE_WIDTH - MARGIN - 45, PAGE_HEIGHT - MARGIN - 45, 40),  # top-right
+        (MARGIN + 5, MARGIN + 5, 35),  # bottom-left
+    ]
+
+    for i, asset_name in enumerate(assets):
+        if i >= max_elements or i >= len(zones):
+            break
+
+        asset_path = resolve_decoration(asset_name, theme_id)
+        if asset_path is None:
+            continue
+
+        x, y, size = zones[i]
+        try:
+            c.drawImage(
+                str(asset_path), x, y,
+                width=size, height=size,
+                preserveAspectRatio=True,
+                mask="auto",
+            )
+        except Exception as e:
+            logger.warning(f"Failed to draw decoration {asset_name}: {e}")
 
 
 def _draw_footer(
