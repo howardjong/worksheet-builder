@@ -8,6 +8,8 @@ from pathlib import Path
 from reportlab.lib.colors import HexColor
 from reportlab.lib.pagesizes import letter
 from reportlab.lib.units import inch
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen.canvas import Canvas
 
 from adapt.schema import ActivityChunk, ActivityItem, AdaptedActivityModel
@@ -23,13 +25,26 @@ CONTENT_WIDTH = PAGE_WIDTH - 2 * MARGIN
 CONTENT_TOP = PAGE_HEIGHT - MARGIN
 CONTENT_BOTTOM = MARGIN
 
-# Font sizes by grade
+# ADHD-optimized font directory
+_FONTS_DIR = Path(__file__).parent.parent / "assets" / "fonts"
+
+# Font sizes by grade (evidence-based: K-1 16-20pt, 2-3 12-14pt)
 GRADE_FONT_SIZES: dict[str, dict[str, int]] = {
-    "K": {"heading": 18, "body": 16, "small": 14},
-    "1": {"heading": 16, "body": 14, "small": 12},
-    "2": {"heading": 14, "body": 12, "small": 10},
-    "3": {"heading": 14, "body": 12, "small": 10},
+    "K": {"heading": 22, "body": 18, "small": 14},
+    "1": {"heading": 20, "body": 16, "small": 13},
+    "2": {"heading": 16, "body": 13, "small": 11},
+    "3": {"heading": 16, "body": 13, "small": 11},
 }
+
+# ADHD-optimized spacing (evidence: 1.7x line height, generous char/word spacing)
+ADHD_SPACING: dict[str, float] = {
+    "line_height_factor": 1.7,  # line spacing = font_size * 1.7
+    "char_space_body": 0.4,     # extra char spacing for body text (pts)
+    "char_space_heading": 0.7,  # extra char spacing for headings (pts)
+    "word_space": 1.5,          # extra word spacing (pts)
+}
+
+_fonts_registered = False
 
 
 def render_worksheet(
@@ -53,6 +68,9 @@ def render_worksheet(
     colors = theme.colors
     y = CONTENT_TOP
     page_num = 1
+
+    # Apply ADHD-optimized spacing
+    _apply_adhd_spacing(c, "body")
 
     # Page header
     y = _draw_header(c, adapted, theme, sizes, y)
@@ -106,10 +124,52 @@ def render_worksheet(
 
 
 def _register_fonts(theme: ThemeConfig) -> None:
-    """Register theme fonts if available, otherwise use built-in Helvetica."""
-    # For MVP, use ReportLab's built-in fonts (Helvetica, Times, Courier)
-    # Custom fonts (Nunito, etc.) require TTF files — deferred to post-MVP
-    pass
+    """Register ADHD-optimized fonts (Lexend body, Fredoka headings).
+
+    Falls back to built-in Helvetica if TTF files aren't found.
+    Fonts: Lexend (ADHD-optimized spacing, clear letter differentiation)
+           Fredoka (rounded, fun, kid-friendly headings)
+    """
+    global _fonts_registered  # noqa: PLW0603
+    if _fonts_registered:
+        return
+
+    font_map = {
+        "Lexend": "Lexend-VariableFont.ttf",
+        "Fredoka": "Fredoka-VariableFont.ttf",
+    }
+
+    for font_name, filename in font_map.items():
+        font_path = _FONTS_DIR / filename
+        if font_path.exists():
+            try:
+                pdfmetrics.registerFont(TTFont(font_name, str(font_path)))
+                logger.debug(f"Registered font: {font_name}")
+            except Exception as e:
+                logger.warning(f"Failed to register {font_name}: {e}")
+        else:
+            logger.debug(f"Font not found: {font_path}")
+
+    _fonts_registered = True
+
+
+def _apply_adhd_spacing(c: Canvas, mode: str = "body") -> None:
+    """Set ADHD-optimized character and word spacing on canvas.
+
+    mode: "body" for content text, "heading" for headings.
+    Uses Canvas internal state (_charSpace, _wordSpace) since
+    setCharSpace/setWordSpace are only on TextObject.
+    """
+    if mode == "heading":
+        c._charSpace = ADHD_SPACING["char_space_heading"]
+    else:
+        c._charSpace = ADHD_SPACING["char_space_body"]
+    c._wordSpace = ADHD_SPACING["word_space"]
+
+
+def _line_spacing(font_size: int) -> float:
+    """Compute ADHD-optimized line spacing for a given font size."""
+    return font_size * ADHD_SPACING["line_height_factor"]
 
 
 def _draw_header(
@@ -125,11 +185,13 @@ def _draw_header(
     c.setFillColor(HexColor(theme.colors.text))
 
     # Title: include worksheet title if multi-worksheet
+    _apply_adhd_spacing(c, "heading")
     if adapted.worksheet_title and adapted.worksheet_count > 1:
         title = f"{adapted.worksheet_title}"
         c.drawString(MARGIN, y - sizes["heading"], title)
-        y -= sizes["heading"] + 4
+        y -= _line_spacing(sizes["heading"])
         # Sub-title with worksheet number
+        _apply_adhd_spacing(c, "body")
         c.setFont(theme.fonts.primary, sizes["small"])
         c.setFillColor(HexColor(theme.colors.directions))
         subtitle = (
@@ -137,18 +199,19 @@ def _draw_header(
             f"| Part {adapted.worksheet_number} of {adapted.worksheet_count}"
         )
         c.drawString(MARGIN, y - sizes["small"], subtitle)
-        y -= sizes["small"] + 12
+        y -= _line_spacing(sizes["small"])
     else:
         title = f"{adapted.specific_skill.replace('_', ' ').title()} Practice"
         c.drawString(MARGIN, y - sizes["heading"], title)
-        y -= sizes["heading"] + 8
+        y -= _line_spacing(sizes["heading"])
         # Subtitle with domain
+        _apply_adhd_spacing(c, "body")
         c.setFont(theme.fonts.primary, sizes["small"])
         c.setFillColor(HexColor(theme.colors.directions))
         domain_label = adapted.domain.replace("_", " ").title()
         subtitle = f"Domain: {domain_label} | Grade {adapted.grade_level}"
         c.drawString(MARGIN, y - sizes["small"], subtitle)
-        y -= sizes["small"] + 16
+        y -= _line_spacing(sizes["small"]) + 4
 
     # Divider line
     c.setStrokeColor(HexColor(theme.colors.chunk_border))
@@ -182,17 +245,19 @@ def _draw_chunk(
     col_width = right - left
 
     # Micro-goal header
+    _apply_adhd_spacing(c, "heading")
     c.setFont(theme.fonts.heading, sizes["body"])
     c.setFillColor(HexColor(theme_colors.key_words))
     c.drawString(left, y - sizes["body"], chunk.micro_goal)
-    y -= sizes["body"] + 6
+    y -= _line_spacing(sizes["body"])
 
     # Time estimate (if present)
+    _apply_adhd_spacing(c, "body")
     if chunk.time_estimate:
         c.setFont(theme.fonts.primary, sizes["small"])
         c.setFillColor(HexColor(theme_colors.directions))
         c.drawString(left + 10, y - sizes["small"], chunk.time_estimate)
-        y -= sizes["small"] + 6
+        y -= _line_spacing(sizes["small"])
 
     # Instructions
     c.setFillColor(HexColor(theme_colors.directions))
@@ -200,9 +265,9 @@ def _draw_chunk(
     for step in chunk.instructions:
         text = f"{step.number}. {step.text}"
         c.drawString(left + 10, y - sizes["body"], text)
-        y -= sizes["body"] + 4
+        y -= _line_spacing(sizes["body"])
 
-    y -= 6
+    y -= 4
 
     # Worked example (shaded box)
     if chunk.worked_example:

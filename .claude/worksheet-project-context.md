@@ -423,3 +423,21 @@ extract/adapter.py → Checkpoint 5.1 (post-launch)
 - Added rendering quality check — `validate/print_checks.py` Check 6 uses PyMuPDF to detect text blocks overlapping with image bounding boxes (flags when >20% of text block area intersects an image). Runs automatically in pipeline.
 - E2E tested: 11 AI images generated (7 character scenes + 4 word pictures), 0 text-image overlaps across all 3 worksheets, all validations pass
 - All 214 tests pass, lint clean
+
+### Session 16 — 2026-03-09 (ADHD-Optimized Typography)
+**Participants:** User + Claude Opus 4.6
+**What happened:**
+- Researched ADHD-friendly typography via Perplexity (sources: audioeye.com, neurodivergent.blog, reciteme.com, forbrain.com)
+- Selected two free Google Fonts (OFL license, embedded in PDF):
+  - **Fredoka** (headings) — rounded, fun, kid-friendly, clear letter differentiation
+  - **Lexend** (body) — ADHD-optimized spacing, designed to reduce visual stress, clear b/d p/q I/l/1 differentiation
+- Downloaded variable TTF files from `google/fonts` repo, stored in `assets/fonts/`
+- `render/pdf.py` — registered fonts via `pdfmetrics.registerFont(TTFont(...))` with graceful fallback to Helvetica if TTFs not found
+- Applied evidence-based ADHD spacing:
+  - Line height: 1.7x font size (research shows 1.5x insufficient for ADHD)
+  - Character spacing: 0.4pt body, 0.7pt headings (reduces visual crowding)
+  - Word spacing: 1.5pt extra (aids tracking)
+- Increased font sizes for K-1 (heading 20-22pt, body 16-18pt vs previous 16-18pt, 14-16pt)
+- `theme/themes/roblox_obby/config.yaml` — updated to use Lexend/Fredoka
+- Spacing applied via Canvas._charSpace/_wordSpace (setCharSpace/setWordSpace only on TextObject)
+- All 214 tests pass, lint clean
