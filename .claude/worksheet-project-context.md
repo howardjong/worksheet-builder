@@ -8,7 +8,7 @@
 
 ## Current State
 
-**Status:** All 5 milestones + multi-sensory activities complete. Full pipeline + companion + AI assist + multi-worksheet mode. 214 tests passing.
+**Status:** All 5 milestones + multi-sensory activities + batch processing complete. Full pipeline + companion + AI assist + multi-worksheet mode + batch CLI. 239 tests passing.
 **Branch:** `main`
 **Plan version:** 1.5.0
 **Last Updated:** 2026-03-09
@@ -32,7 +32,7 @@
 - `samples/output/` — 3 manually-created adapted worksheet examples (committed)
 - `pyproject.toml` — ruff, mypy (strict), pytest config
 - `requirements.txt` — all pipeline dependencies pinned
-- `Makefile` — lint, typecheck, test, test-golden, test-all, format, clean
+- `Makefile` — lint, typecheck, test, test-golden, test-all, format, clean, batch
 - `.github/workflows/ci.yml` — CI with Python 3.11, Tesseract, lint+typecheck+test
 - 8 pipeline packages with `__init__.py`: capture, extract, skill, adapt, theme, companion, render, validate
 - `capture/preprocess.py` — OpenCV preprocessing (deskew, dewarp, denoise, CLAHE)
@@ -83,9 +83,13 @@
 - `extract/vision.py` — Gemini vision fallback: sends image to Gemini when OCR quality is poor (>80 fragments or <0.5 avg confidence)
 - `.env` — API keys (gitignored): OPENAI_API_KEY, GEMINI_API_KEY
 - `README.md` — project documentation
+- `batch.py` — batch processing CLI: multi-threaded orchestration with rate limiting, retry, graceful shutdown, manifest-based skip detection
+- `batch_utils.py` — batch utilities: FileResult, RateLimiter (token-bucket), ProgressTracker, file collection, manifest I/O, report generation
+- `tests/test_batch.py` — 25 tests (file collection, rate limiter, progress tracker, manifest, process_single_file, CLI dry-run)
 
 ### What's Next
-**All milestones + multi-sensory activities complete. Real-world tested on UFLI Lesson 59.** Remaining work:
+**All milestones + multi-sensory activities + batch processing complete. Real-world tested on UFLI Lesson 59.** Remaining work:
+- Test batch processing on full folder of UFLI lessons
 - Test multi-worksheet output on more UFLI lessons
 - AI asset generation end-to-end (requires Gemini API key with image gen capability)
 - Custom font embedding (Nunito TTF files)
@@ -441,3 +445,19 @@ extract/adapter.py → Checkpoint 5.1 (post-launch)
 - `theme/themes/roblox_obby/config.yaml` — updated to use Lexend/Fredoka
 - Spacing applied via Canvas._charSpace/_wordSpace (setCharSpace/setWordSpace only on TextObject)
 - All 214 tests pass, lint clean
+
+### Session 17 — 2026-03-09 (Batch Processing with Rate-Limited API Orchestration)
+**Participants:** User + Claude Opus 4.6
+**What happened:**
+- Implemented batch processing CLI for bulk worksheet transformation
+- `batch.py` — click CLI with `--input-dir`, `--profile`, `--theme`, `--output`, `--workers`, `--max-retries`, `--force`, `--dry-run`, `--no-images`, `--no-recursive`, `--rpm` options
+- `batch_utils.py` — FileResult dataclass, RateLimiter (sliding-window token bucket, thread-safe via threading.Condition), ProgressTracker (thread-safe with ETA), collect_input_files, load/save manifest, generate_report
+- Rate limiting: default 4 RPM to stay under Gemini's 5 RPM hard limit (Tier 1)
+- Retry: exponential backoff (5s → 10s → 20s) + random jitter, configurable max retries
+- Graceful shutdown: SIGINT handler lets running workers finish, cancels pending, writes partial report
+- Skip detection: `batch_manifest.json` tracks completed files; re-runs skip automatically unless `--force`
+- `--no-images` flag: sets `WORKSHEET_SKIP_ASSET_GEN=1` env var; 1-line check added to `render/asset_gen.py` returns None immediately. Enables bulk text-only processing (avoids 35 RPD image gen limit)
+- `pipeline_fn` parameter on `_process_single_file` for testability (avoids pymupdf segfault from heavy transform module import under pytest)
+- `tests/test_batch.py` — 25 tests covering all utilities and orchestration
+- Updated Makefile (batch target), CLAUDE.md (batch CLI usage), README.md (batch processing section)
+- All 239 tests pass (214 existing + 25 new), lint clean

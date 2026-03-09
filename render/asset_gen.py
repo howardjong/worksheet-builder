@@ -43,6 +43,9 @@ def generate_worksheet_assets(
     Uses content-hash-based caching -- second run with same content
     hits cache with no API calls.
     """
+    if os.environ.get("WORKSHEET_SKIP_ASSET_GEN"):
+        return None
+
     cache_dir = _CACHE_DIR / f"worksheet_{worksheet_hash}"
 
     # Check if all assets already cached

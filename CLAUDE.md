@@ -35,8 +35,17 @@ make clean       # rm -rf artifacts/ __pycache__ .mypy_cache
 
 ### CLI Usage
 ```bash
-# Transform a worksheet
+# Transform a single worksheet
 python transform.py --input photo.jpg --profile profiles/ian.yaml --theme space --output ./output/
+
+# Batch process a folder of worksheets
+python batch.py --input-dir ./photos/ --profile profiles/ian.yaml --theme space --output ./output/
+
+# Batch without AI images (fast, avoids 35 RPD limit)
+python batch.py --input-dir ./photos/ --profile profiles/ian.yaml --theme roblox_obby --output ./output/ --no-images
+
+# Batch dry run (list files without processing)
+python batch.py --input-dir ./photos/ --profile profiles/ian.yaml --theme space --dry-run
 
 # Mark completion and award tokens
 python complete.py --profile profiles/ian.yaml --lesson 5

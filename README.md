@@ -35,6 +35,9 @@ python transform.py --input photo.jpg --profile profiles/ian.yaml --theme space 
 # Transform into multi-worksheet set (3 mini-worksheets with varied activities)
 python transform.py --input photo.jpg --profile profiles/ian.yaml --theme roblox_obby --output ./output/
 
+# Batch process a folder of worksheets
+python batch.py --input-dir ./photos/ --profile profiles/ian.yaml --theme space --output ./output/
+
 # Mark completion and award tokens
 python complete.py --profile profiles/ian.yaml --lesson 5
 
@@ -177,6 +180,43 @@ python transform.py --input photo.jpg --profile profiles/ian.yaml --theme roblox
 ```
 
 Single-worksheet mode (`--theme space`) works exactly as before — fully backward compatible.
+
+### Batch processing
+
+Process an entire folder of worksheet photos at once with rate limiting and retry logic:
+
+```bash
+# Basic batch run (2 workers, 4 RPM limit)
+python batch.py --input-dir ./photos/ --profile profiles/ian.yaml --theme space --output ./output/
+
+# Without AI images (fast bulk run, avoids 35 RPD image gen limit)
+python batch.py --input-dir ./photos/ --profile profiles/ian.yaml --theme roblox_obby --output ./output/ --no-images
+
+# Dry run — list files without processing
+python batch.py --input-dir ./photos/ --profile profiles/ian.yaml --theme space --dry-run
+
+# Force reprocess already-completed files
+python batch.py --input-dir ./photos/ --profile profiles/ian.yaml --theme space --output ./output/ --force
+
+# Custom workers and rate limit
+python batch.py --input-dir ./photos/ --profile profiles/ian.yaml --theme space --workers 1 --rpm 3
+```
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `--workers` | 2 | Concurrent pipeline workers |
+| `--max-retries` | 2 | Retries per file on failure (exponential backoff) |
+| `--rpm` | 4 | Rate limit: max pipeline runs per minute |
+| `--force` | off | Reprocess even if output exists |
+| `--dry-run` | off | List files without processing |
+| `--no-images` | off | Skip AI image generation (text-only PDFs) |
+| `--no-recursive` | off | Don't search subdirectories |
+
+**Rate limiting:** Gemini image generation is capped at 5 RPM / 35 RPD on Tier 1. The default 4 RPM stays safely under the per-minute limit. For 30+ worksheets with images, run `--no-images` first, then selectively regenerate the most important 4 lessons with images (staying under 35 RPD).
+
+**Skip detection:** Batch writes a `batch_manifest.json` in the output directory. Re-runs automatically skip files that already have output PDFs. Use `--force` to override.
+
+**Graceful shutdown:** Press Ctrl+C during a batch run. Running workers finish their current file, pending work is cancelled, and a partial report is generated.
 
 ## Companion layer
 

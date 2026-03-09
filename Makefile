@@ -1,4 +1,4 @@
-.PHONY: lint typecheck test test-golden test-all format clean
+.PHONY: lint typecheck test test-golden test-all format clean batch
 
 lint:
 	ruff check .
@@ -20,3 +20,6 @@ format:
 
 clean:
 	rm -rf artifacts/ __pycache__ .mypy_cache .pytest_cache .ruff_cache
+
+batch:
+	python batch.py --input-dir ./samples/input --profile profiles/ian.yaml --theme space --output ./output/
