@@ -18,7 +18,7 @@ from companion.schema import (
 def create_profile(
     name: str,
     grade_level: str,
-    base_character: str = "robot",
+    base_character: str = "rainbow_roblox",
     profile_dir: str = "profiles",
 ) -> LearnerProfile:
     """Create a new learner profile with defaults."""

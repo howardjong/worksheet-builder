@@ -17,8 +17,9 @@ import signal
 import sys
 import threading
 import time
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import click
@@ -44,7 +45,11 @@ from batch_utils import (
 logger = logging.getLogger(__name__)
 
 
-def _get_run_pipeline():  # type: ignore[no-untyped-def]
+# Type alias for the pipeline function
+PipelineFn = Callable[..., str]
+
+
+def _get_run_pipeline() -> PipelineFn:
     """Lazy import of run_pipeline to avoid heavy module load at import time."""
     from transform import run_pipeline
 
@@ -60,7 +65,7 @@ def _process_single_file(
     rate_limiter: RateLimiter,
     shutdown_event: threading.Event,
     skip_images: bool,
-    pipeline_fn: object | None = None,
+    pipeline_fn: PipelineFn | None = None,
 ) -> FileResult:
     """Process one file with retry + rate limiting. Called per worker thread."""
     if pipeline_fn is None:
@@ -325,7 +330,7 @@ def batch(
                         input_file.name,
                         {
                             "output": result.output_path,
-                            "timestamp": datetime.now(timezone.utc).isoformat(),
+                            "timestamp": datetime.now(UTC).isoformat(),
                             "duration": result.duration_seconds,
                         },
                         manifest_lock,
@@ -371,7 +376,7 @@ def batch(
             data = {}
         data["profile"] = profile_path
         data["theme"] = theme_id
-        data["last_run"] = datetime.now(timezone.utc).isoformat()
+        data["last_run"] = datetime.now(UTC).isoformat()
         manifest_path.write_text(json.dumps(data, indent=2))
 
     sys.exit(1 if report["failed"] > 0 else 0)

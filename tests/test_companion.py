@@ -7,8 +7,10 @@ from pathlib import Path
 
 from companion.caregiver import adjust_accommodations, view_progress
 from companion.catalog import (
+    CATALOG,
     get_affordable_items,
     get_item,
+    get_items_by_slot,
     get_milestone_items,
 )
 from companion.profile import (
@@ -39,11 +41,11 @@ from companion.schema import (
 class TestProfile:
     def test_create_profile(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            profile = create_profile("Ian", "1", "robot", profile_dir=tmpdir)
+            profile = create_profile("Ian", "1", "rainbow_roblox", profile_dir=tmpdir)
             assert profile.name == "Ian"
             assert profile.grade_level == "1"
             assert profile.avatar is not None
-            assert profile.avatar.base_character == "robot"
+            assert profile.avatar.base_character == "rainbow_roblox"
             assert profile.progress is not None
             # Check file was created
             assert (Path(tmpdir) / "ian.yaml").exists()
@@ -52,7 +54,7 @@ class TestProfile:
         profile = LearnerProfile(
             name="Test",
             grade_level="K",
-            avatar=AvatarConfig(base_character="unicorn"),
+            avatar=AvatarConfig(base_character="rainbow_roblox"),
             progress=Progress(worksheets_completed=3, tokens_available=30),
         )
         with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False) as f:
@@ -62,7 +64,7 @@ class TestProfile:
         loaded = load_profile(path)
         assert loaded.name == "Test"
         assert loaded.avatar is not None
-        assert loaded.avatar.base_character == "unicorn"
+        assert loaded.avatar.base_character == "rainbow_roblox"
         assert loaded.progress is not None
         assert loaded.progress.worksheets_completed == 3
         path.unlink()
@@ -88,9 +90,9 @@ class TestProfile:
             name="Ian",
             grade_level="1",
             avatar=AvatarConfig(
-                base_character="astronaut",
-                equipped_items=["space_helmet"],
-                unlocked_items=["space_helmet", "star_badge"],
+                base_character="rainbow_roblox",
+                equipped_items={"shoes": "white_sneakers"},
+                unlocked_items=["white_sneakers", "red_hoodie"],
             ),
             preferences=Preferences(favorite_themes=["space", "dinosaur"]),
             progress=Progress(worksheets_completed=7, tokens_available=45),
@@ -99,9 +101,29 @@ class TestProfile:
         restored = LearnerProfile.model_validate_json(json_str)
         assert restored.name == profile.name
         assert restored.avatar is not None
-        assert restored.avatar.equipped_items == ["space_helmet"]
+        assert restored.avatar.equipped_items == {"shoes": "white_sneakers"}
         assert restored.progress is not None
         assert restored.progress.worksheets_completed == 7
+
+    def test_migrate_list_to_dict(self) -> None:
+        """Old list format should be migrated to dict on load."""
+        # Items that exist in the new catalog
+        avatar = AvatarConfig.model_validate({
+            "base_character": "rainbow_roblox",
+            "equipped_items": ["white_sneakers", "red_hoodie"],
+            "unlocked_items": ["white_sneakers", "red_hoodie"],
+        })
+        assert isinstance(avatar.equipped_items, dict)
+        assert avatar.equipped_items.get("shoes") == "white_sneakers"
+        assert avatar.equipped_items.get("shirt") == "red_hoodie"
+
+    def test_migrate_empty_list_to_dict(self) -> None:
+        """Empty list should become empty dict."""
+        avatar = AvatarConfig.model_validate({
+            "base_character": "rainbow_roblox",
+            "equipped_items": [],
+        })
+        assert avatar.equipped_items == {}
 
 
 # --- Catalog Tests ---
@@ -109,13 +131,26 @@ class TestProfile:
 
 class TestCatalog:
     def test_get_item_exists(self) -> None:
-        item = get_item("star_badge")
+        item = get_item("white_sneakers")
         assert item is not None
-        assert item.name == "Star Badge"
+        assert item.name == "White Sneakers"
         assert item.cost == 5
+        assert item.slot == "shoes"
 
     def test_get_item_not_found(self) -> None:
         assert get_item("nonexistent_item") is None
+
+    def test_catalog_slot_field(self) -> None:
+        """All catalog items have a valid slot."""
+        from companion.catalog import VALID_SLOTS
+        for item in CATALOG:
+            assert item.slot in VALID_SLOTS, f"{item.item_id} has invalid slot: {item.slot}"
+
+    def test_get_items_by_slot(self) -> None:
+        hat_items = get_items_by_slot("hat")
+        assert len(hat_items) >= 2  # wizard_hat + gold_crown
+        for item in hat_items:
+            assert item.slot == "hat"
 
     def test_affordable_items(self) -> None:
         items = get_affordable_items(10)
@@ -123,11 +158,6 @@ class TestCatalog:
         for item in items:
             assert item.cost <= 10
             assert not item.milestone_only
-
-    def test_affordable_items_with_theme(self) -> None:
-        items = get_affordable_items(100, theme="space")
-        for item in items:
-            assert item.theme in ("space", "any")
 
     def test_affordable_with_zero_tokens(self) -> None:
         items = get_affordable_items(0)
@@ -211,10 +241,10 @@ class TestRewards:
             avatar=AvatarConfig(),
             progress=Progress(tokens_available=20),
         )
-        result = purchase_item(profile, "star_badge")  # costs 5
+        result = purchase_item(profile, "white_sneakers")  # costs 5
         assert result.success
         assert result.tokens_remaining == 15
-        assert "star_badge" in profile.avatar.unlocked_items  # type: ignore[union-attr]
+        assert "white_sneakers" in profile.avatar.unlocked_items  # type: ignore[union-attr]
 
     def test_purchase_insufficient_tokens(self) -> None:
         profile = LearnerProfile(
@@ -222,16 +252,16 @@ class TestRewards:
             avatar=AvatarConfig(),
             progress=Progress(tokens_available=2),
         )
-        result = purchase_item(profile, "star_badge")  # costs 5
+        result = purchase_item(profile, "white_sneakers")  # costs 5
         assert not result.success
 
     def test_purchase_already_owned(self) -> None:
         profile = LearnerProfile(
             name="Test", grade_level="1",
-            avatar=AvatarConfig(unlocked_items=["star_badge"]),
+            avatar=AvatarConfig(unlocked_items=["white_sneakers"]),
             progress=Progress(tokens_available=20),
         )
-        result = purchase_item(profile, "star_badge")
+        result = purchase_item(profile, "white_sneakers")
         assert not result.success
 
     def test_purchase_milestone_item_blocked(self) -> None:
@@ -248,28 +278,58 @@ class TestRewards:
     def test_equip_item(self) -> None:
         profile = LearnerProfile(
             name="Test", grade_level="1",
-            avatar=AvatarConfig(unlocked_items=["star_badge"]),
+            avatar=AvatarConfig(unlocked_items=["white_sneakers"]),
         )
-        assert equip_item(profile, "star_badge")
-        assert "star_badge" in profile.avatar.equipped_items  # type: ignore[union-attr]
+        result = equip_item(profile, "white_sneakers")
+        assert result.success
+        assert result.slot == "shoes"
+        assert profile.avatar is not None
+        assert profile.avatar.equipped_items.get("shoes") == "white_sneakers"
 
     def test_equip_item_not_unlocked(self) -> None:
         profile = LearnerProfile(
             name="Test", grade_level="1",
             avatar=AvatarConfig(),
         )
-        assert not equip_item(profile, "star_badge")
+        result = equip_item(profile, "white_sneakers")
+        assert not result.success
+
+    def test_equip_replaces_same_slot(self) -> None:
+        """Equipping a new item in the same slot replaces the old one."""
+        profile = LearnerProfile(
+            name="Test", grade_level="1",
+            avatar=AvatarConfig(
+                unlocked_items=["wizard_hat", "gold_crown"],
+                equipped_items={"hat": "wizard_hat"},
+            ),
+        )
+        result = equip_item(profile, "gold_crown")
+        assert result.success
+        assert result.slot == "hat"
+        assert result.replaced_item == "wizard_hat"
+        assert profile.avatar is not None
+        assert profile.avatar.equipped_items["hat"] == "gold_crown"
 
     def test_unequip_item(self) -> None:
         profile = LearnerProfile(
             name="Test", grade_level="1",
             avatar=AvatarConfig(
-                unlocked_items=["star_badge"],
-                equipped_items=["star_badge"],
+                unlocked_items=["white_sneakers"],
+                equipped_items={"shoes": "white_sneakers"},
             ),
         )
-        assert unequip_item(profile, "star_badge")
-        assert "star_badge" not in profile.avatar.equipped_items  # type: ignore[union-attr]
+        result = unequip_item(profile, "white_sneakers")
+        assert result.success
+        assert profile.avatar is not None
+        assert "shoes" not in profile.avatar.equipped_items
+
+    def test_unequip_not_equipped(self) -> None:
+        profile = LearnerProfile(
+            name="Test", grade_level="1",
+            avatar=AvatarConfig(unlocked_items=["white_sneakers"]),
+        )
+        result = unequip_item(profile, "white_sneakers")
+        assert not result.success
 
     def test_effort_based_not_accuracy(self) -> None:
         """Tokens are always the same regardless of 'performance'."""

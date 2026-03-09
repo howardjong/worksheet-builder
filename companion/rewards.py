@@ -35,6 +35,16 @@ class PurchaseResult(BaseModel):
     message: str
 
 
+class EquipResult(BaseModel):
+    """Result of equipping an item."""
+
+    success: bool
+    item_id: str
+    slot: str = ""
+    replaced_item: str | None = None
+    message: str = ""
+
+
 def award_completion(
     profile: LearnerProfile,
     lesson: int,
@@ -171,22 +181,58 @@ def purchase_item(
     )
 
 
-def equip_item(profile: LearnerProfile, item_id: str) -> bool:
-    """Equip an unlocked item on the avatar."""
+def equip_item(profile: LearnerProfile, item_id: str) -> EquipResult:
+    """Equip an unlocked item on the avatar.
+
+    Looks up the item's slot and auto-replaces any existing item in that slot.
+    """
     if profile.avatar is None:
-        return False
+        return EquipResult(success=False, item_id=item_id, message="No avatar configured.")
+
     if item_id not in profile.avatar.unlocked_items:
-        return False
-    if item_id not in profile.avatar.equipped_items:
-        profile.avatar.equipped_items.append(item_id)
-    return True
+        return EquipResult(success=False, item_id=item_id, message="Item not unlocked.")
+
+    item = get_item(item_id)
+    if item is None:
+        return EquipResult(success=False, item_id=item_id, message="Item not in catalog.")
+
+    # Check what's currently in this slot
+    replaced = profile.avatar.equipped_items.get(item.slot)
+
+    # Equip in the slot (auto-replaces)
+    profile.avatar.equipped_items[item.slot] = item_id
+
+    if replaced and replaced != item_id:
+        return EquipResult(
+            success=True, item_id=item_id, slot=item.slot,
+            replaced_item=replaced,
+            message=f"Equipped '{item.name}' (replaced '{replaced}').",
+        )
+    return EquipResult(
+        success=True, item_id=item_id, slot=item.slot,
+        message=f"Equipped '{item.name}'!",
+    )
 
 
-def unequip_item(profile: LearnerProfile, item_id: str) -> bool:
-    """Unequip an item from the avatar."""
+def unequip_item(profile: LearnerProfile, item_id: str) -> EquipResult:
+    """Unequip an item from the avatar by finding its slot."""
     if profile.avatar is None:
-        return False
-    if item_id in profile.avatar.equipped_items:
-        profile.avatar.equipped_items.remove(item_id)
-        return True
-    return False
+        return EquipResult(success=False, item_id=item_id, message="No avatar configured.")
+
+    item = get_item(item_id)
+    if item is None:
+        return EquipResult(success=False, item_id=item_id, message="Item not in catalog.")
+
+    # Check if this item is actually equipped in its slot
+    current = profile.avatar.equipped_items.get(item.slot)
+    if current != item_id:
+        return EquipResult(
+            success=False, item_id=item_id, slot=item.slot,
+            message=f"'{item.name}' is not equipped.",
+        )
+
+    del profile.avatar.equipped_items[item.slot]
+    return EquipResult(
+        success=True, item_id=item_id, slot=item.slot,
+        message=f"Unequipped '{item.name}'.",
+    )

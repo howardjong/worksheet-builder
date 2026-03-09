@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class Accommodations(BaseModel):
@@ -23,12 +24,29 @@ class Accommodations(BaseModel):
 class AvatarConfig(BaseModel):
     """Avatar customization state."""
 
-    base_character: str = "robot"  # "robot" | "unicorn" | "astronaut"
+    base_character: str = "rainbow_roblox"
     base_colors: dict[str, str] = Field(
         default_factory=lambda: {"primary": "#4A90D9", "secondary": "#F5A623", "accent": "#7ED321"}
     )
-    equipped_items: list[str] = Field(default_factory=list)
+    equipped_items: dict[str, str] = Field(default_factory=dict)  # slot -> item_id
     unlocked_items: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_equipped_list(cls, values: Any) -> Any:
+        """Migrate old list format to dict format on load."""
+        if isinstance(values, dict):
+            equipped = values.get("equipped_items")
+            if isinstance(equipped, list):
+                # Convert list of item_ids to slot -> item_id dict
+                new_equipped: dict[str, str] = {}
+                for item_id in equipped:
+                    from companion.catalog import get_item
+                    cat_item = get_item(item_id)
+                    if cat_item:
+                        new_equipped[cat_item.slot] = item_id
+                values["equipped_items"] = new_equipped
+        return values
 
 
 class Preferences(BaseModel):

@@ -27,12 +27,17 @@ MAX_REVIEW_ITERATIONS = 3
 class ReviewResult:
     """Result of an AI quality review."""
 
-    def __init__(self, passed: bool, issues: list[dict[str, str]], suggestions: list[dict[str, str]]):
+    def __init__(
+        self,
+        passed: bool,
+        issues: list[dict[str, str]],
+        suggestions: list[dict[str, str]],
+    ) -> None:
         self.passed = passed
         self.issues = issues  # [{"criterion": ..., "description": ...}]
         self.suggestions = suggestions  # [{"chunk_id": ..., "item_id": ..., "fix": ...}]
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, object]:
         return {
             "passed": self.passed,
             "issues": self.issues,

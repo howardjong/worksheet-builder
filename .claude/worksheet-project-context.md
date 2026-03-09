@@ -8,7 +8,7 @@
 
 ## Current State
 
-**Status:** All 5 milestones + multi-sensory activities + batch processing complete. Full pipeline + companion + AI assist + multi-worksheet mode + batch CLI. 239 tests passing.
+**Status:** All 5 milestones + multi-sensory activities + batch processing complete. Full pipeline + companion + AI assist + multi-worksheet mode + batch CLI. CI passing (lint + typecheck + tests). 239 tests passing.
 **Branch:** `main`
 **Plan version:** 1.5.0
 **Last Updated:** 2026-03-09
@@ -461,3 +461,22 @@ extract/adapter.py → Checkpoint 5.1 (post-launch)
 - `tests/test_batch.py` — 25 tests covering all utilities and orchestration
 - Updated Makefile (batch target), CLAUDE.md (batch CLI usage), README.md (batch processing section)
 - All 239 tests pass (214 existing + 25 new), lint clean
+
+### Session 18 — 2026-03-09 (CI Fixes — Lint + Type Errors)
+**Participants:** User + Claude Opus 4.6
+**What happened:**
+- Fixed all CI failures (lint + typecheck were failing, tests passing)
+- **Ruff lint fixes (16 errors → 0):**
+  - Removed unused imports across `batch_utils.py`, `companion/generate_overlays.py`, `tests/test_batch.py`, `tests/test_companion.py`
+  - Fixed `UP017` — `timezone.utc` → `datetime.UTC` in `batch.py`
+  - Fixed `I001` — sorted import blocks in `tests/test_batch.py`, `batch.py`
+  - Fixed `E501` — line-length violations in `generate_overlays.py`, `complete.py`, `validate/ai_review.py`
+  - Fixed `N806` — `MAX_OCR_SIDE` → `max_ocr_side` (local var in function) in `extract/ocr.py`
+- **Mypy type fixes (39 errors → 0):**
+  - Added type parameters to bare `dict` annotations in `batch_utils.py`, `validate/ai_review.py`, `companion/generate_overlays.py`
+  - Fixed type conflict in `complete.py` — `equip_item`/`unequip_item` results shadowed `RewardResult`-typed variable
+  - Changed `_display_catalog(profile: object)` → `_display_catalog(profile: LearnerProfile)`
+  - Added `Callable` type alias for `pipeline_fn` in `batch.py` (was untyped `object`)
+  - Changed `_validate_format_variety(list[object])` → `Sequence[AdaptedActivityModel]` in `transform.py`
+  - Added `# type: ignore` for Gemini SDK incomplete type stubs (`generate_content` arg-type, `putdata` arg-type)
+- All 239 tests still pass, lint clean, typecheck clean

@@ -184,13 +184,13 @@ def _generate_scene(
 
         response = client.models.generate_content(
             model=_IMAGE_MODEL,
-            contents=contents,
+            contents=contents,  # type: ignore[arg-type]
             config=types.GenerateContentConfig(
                 response_modalities=["TEXT", "IMAGE"],
             ),
         )
 
-        for part in response.candidates[0].content.parts:
+        for part in response.candidates[0].content.parts:  # type: ignore[index,union-attr]
             if part.inline_data and part.inline_data.data:
                 Path(output_path).write_bytes(part.inline_data.data)
                 logger.info(f"  Generated scene: {output_path}")
@@ -227,13 +227,13 @@ def _generate_word_picture(
 
         response = client.models.generate_content(
             model=_IMAGE_MODEL,
-            contents=[types.Part(text=prompt)],
+            contents=[types.Part(text=prompt)],  # type: ignore[arg-type]
             config=types.GenerateContentConfig(
                 response_modalities=["TEXT", "IMAGE"],
             ),
         )
 
-        for part in response.candidates[0].content.parts:
+        for part in response.candidates[0].content.parts:  # type: ignore[index,union-attr]
             if part.inline_data and part.inline_data.data:
                 Path(output_path).write_bytes(part.inline_data.data)
                 logger.info(f"  Generated word picture: {output_path}")

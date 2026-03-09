@@ -1,4 +1,12 @@
-"""Avatar composition — layered character rendering from profile + equipped items."""
+"""Avatar composition — character variant rendering via AI image generation.
+
+Instead of layering flat overlay PNGs, this module generates complete character
+images with equipped items naturally integrated using Gemini's character-consistent
+image generation (passing the base character as a reference image).
+
+Results are cached by equipment combination so the API is only called once per
+unique loadout.
+"""
 
 from __future__ import annotations
 
@@ -6,7 +14,7 @@ import hashlib
 import logging
 from pathlib import Path
 
-from PIL import Image, ImageEnhance
+from PIL import Image
 
 from companion.schema import LearnerProfile
 
@@ -24,21 +32,19 @@ SIZES = {
     "icon": (64, 64),  # Small icon
 }
 
-# Z-order for layering equipped items
-Z_ORDER = ["body", "clothing", "accessories", "hats", "expressions"]
-
 
 def compose_avatar(
     profile: LearnerProfile,
     size: str = "companion",
     theme_id: str = "space",
 ) -> Path | None:
-    """Compose an avatar image from profile's base character and equipped items.
+    """Compose an avatar image for the profile's current equipment.
 
-    Loads the base character, applies color tinting, layers equipped items,
-    resizes to the requested size, and caches the result.
+    If no items are equipped, uses the base character directly.
+    If items are equipped, generates a character variant via Gemini AI
+    with the items naturally integrated (cached per equipment combo).
 
-    Returns path to the composed avatar PNG, or None if base character not found.
+    Returns path to the avatar PNG, or None if generation fails.
     """
     if not profile.avatar:
         return None
@@ -58,16 +64,22 @@ def compose_avatar(
     if cached_path.exists():
         return cached_path
 
-    # Load base character
-    img = Image.open(base_path).convert("RGBA")
+    equipped = profile.avatar.equipped_items
 
-    # Remove white background (make it transparent)
-    img = _remove_white_background(img)
-
-    # Apply color tinting from profile
-    if profile.avatar.base_colors:
-        primary = profile.avatar.base_colors.get("primary", "#4A90D9")
-        img = _apply_color_tint(img, primary)
+    if equipped:
+        # Generate a new character variant with items via AI
+        variant_path = _get_or_generate_variant(equipped)
+        if variant_path and variant_path.exists():
+            img = Image.open(variant_path).convert("RGBA")
+        else:
+            # Fall back to base character if generation fails
+            logger.warning("Variant generation failed, using base character")
+            img = Image.open(base_path).convert("RGBA")
+            img = _remove_white_background(img)
+    else:
+        # No items equipped — use base character
+        img = Image.open(base_path).convert("RGBA")
+        img = _remove_white_background(img)
 
     # Crop to content (remove excess transparent space)
     img = _crop_to_content(img)
@@ -83,6 +95,27 @@ def compose_avatar(
     return cached_path
 
 
+def _get_or_generate_variant(equipped: dict[str, str]) -> Path | None:
+    """Get a cached variant or generate a new one via AI."""
+    from companion.generate_overlays import generate_variant
+
+    # Cache variant by equipment combo
+    variants_dir = _ASSETS_DIR / "variants"
+    variant_key = _equipment_hash(equipped)
+    variant_path = variants_dir / f"variant_{variant_key}.png"
+
+    if variant_path.exists():
+        return variant_path
+
+    return generate_variant(equipped, variant_path)
+
+
+def _equipment_hash(equipped: dict[str, str]) -> str:
+    """Hash the equipped items dict for use as a cache key."""
+    items_str = ",".join(f"{k}={v}" for k, v in sorted(equipped.items()))
+    return hashlib.sha256(items_str.encode()).hexdigest()[:12]
+
+
 def _remove_white_background(img: Image.Image, threshold: int = 230) -> Image.Image:
     """Replace near-white pixels with transparency."""
     data = img.getdata()
@@ -94,37 +127,7 @@ def _remove_white_background(img: Image.Image, threshold: int = 230) -> Image.Im
         else:
             a = pixel[3] if len(pixel) > 3 else 255
             new_data.append((r, g, b, a))
-    img.putdata(new_data)
-    return img
-
-
-def _apply_color_tint(img: Image.Image, hex_color: str) -> Image.Image:
-    """Apply a subtle color tint to the character.
-
-    Shifts hue toward the target color while preserving the character's details.
-    Only tints non-transparent, non-dark pixels.
-    """
-    r_t = int(hex_color[1:3], 16)
-    g_t = int(hex_color[3:5], 16)
-    b_t = int(hex_color[5:7], 16)
-
-    # Subtle tint — blend 15% toward target color
-    blend = 0.15
-    data = img.getdata()
-    new_data = []
-    for pixel in data:
-        r, g, b, a = pixel
-        if a < 50:  # Skip transparent
-            new_data.append(pixel)
-            continue
-        # Only tint mid-tone pixels (not very dark or very light)
-        brightness = (r + g + b) / 3
-        if 30 < brightness < 220:
-            r = int(r * (1 - blend) + r_t * blend)
-            g = int(g * (1 - blend) + g_t * blend)
-            b = int(b * (1 - blend) + b_t * blend)
-        new_data.append((r, g, b, a))
-    img.putdata(new_data)
+    img.putdata(new_data)  # type: ignore[arg-type]
     return img
 
 
@@ -154,10 +157,12 @@ def _resize_contain(img: Image.Image, target: tuple[int, int]) -> Image.Image:
 
 def _cache_key(profile: LearnerProfile, size: str, theme_id: str) -> str:
     """Generate a cache key from profile avatar state."""
+    equipped_str = ",".join(
+        f"{k}={v}" for k, v in sorted(profile.avatar.equipped_items.items())
+    ) if profile.avatar else ""
     parts = [
         profile.avatar.base_character if profile.avatar else "none",
-        str(profile.avatar.base_colors) if profile.avatar else "",
-        ",".join(profile.avatar.equipped_items) if profile.avatar else "",
+        equipped_str,
         size,
         theme_id,
     ]

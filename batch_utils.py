@@ -6,9 +6,9 @@ import json
 import threading
 import time
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".tiff", ".tif", ".bmp", ".webp"}
 
@@ -24,7 +24,7 @@ class FileResult:
     duration_seconds: float = 0.0
     retries: int = 0
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> dict[str, Any]:
         return {
             "input_path": self.input_path,
             "status": self.status,
@@ -125,7 +125,7 @@ class ProgressTracker:
             )
 
     @property
-    def summary(self) -> dict:
+    def summary(self) -> dict[str, Any]:
         with self._lock:
             return {
                 "total": self._total,
@@ -164,13 +164,14 @@ def collect_input_files(input_dir: str, recursive: bool = True) -> list[Path]:
     return sorted(set(files))
 
 
-def load_manifest(output_dir: str) -> dict:
+def load_manifest(output_dir: str) -> dict[str, dict[str, str]]:
     """Load the batch manifest from the output directory."""
     manifest_path = Path(output_dir) / "batch_manifest.json"
     if manifest_path.exists():
         try:
             data = json.loads(manifest_path.read_text())
-            return data.get("files", {})
+            files: dict[str, dict[str, str]] = data.get("files", {})
+            return files
         except (json.JSONDecodeError, KeyError):
             return {}
     return {}
@@ -179,7 +180,7 @@ def load_manifest(output_dir: str) -> dict:
 def save_manifest_entry(
     manifest_path: Path,
     filename: str,
-    entry: dict,
+    entry: dict[str, Any],
     lock: threading.Lock,
 ) -> None:
     """Thread-safe atomic update of a single manifest entry."""
@@ -198,13 +199,13 @@ def save_manifest_entry(
         manifest_path.write_text(json.dumps(data, indent=2))
 
 
-def generate_report(results: list[FileResult], duration: float) -> dict:
+def generate_report(results: list[FileResult], duration: float) -> dict[str, Any]:
     """Generate a summary report from batch results."""
     success = [r for r in results if r.status == "success"]
     failed = [r for r in results if r.status == "failed"]
     skipped = [r for r in results if r.status == "skipped"]
 
-    report: dict = {
+    report: dict[str, Any] = {
         "total": len(results),
         "success": len(success),
         "failed": len(failed),

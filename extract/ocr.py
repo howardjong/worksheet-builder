@@ -48,11 +48,11 @@ def _run_paddleocr(image_path: str) -> OCRResult:
     from PIL import Image as PILImage
 
     # Resize large images to prevent OCR timeout on CPU
-    MAX_OCR_SIDE = 2000
+    max_ocr_side = 2000
     img = PILImage.open(image_path)
     w, h = img.size
-    if max(w, h) > MAX_OCR_SIDE:
-        scale = MAX_OCR_SIDE / max(w, h)
+    if max(w, h) > max_ocr_side:
+        scale = max_ocr_side / max(w, h)
         new_w, new_h = int(w * scale), int(h * scale)
         img = img.resize((new_w, new_h), PILImage.LANCZOS)
         resized_path = image_path.rsplit(".", 1)[0] + "_ocr_resized.png"

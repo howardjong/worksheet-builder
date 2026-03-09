@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+from collections.abc import Sequence
 from pathlib import Path
 
 import click
@@ -18,6 +19,7 @@ except ImportError:
     pass
 
 from adapt.engine import adapt_activity, adapt_lesson
+from adapt.schema import AdaptedActivityModel
 from capture.preprocess import preprocess_page
 from capture.store import store_master
 from companion.schema import load_profile
@@ -362,13 +364,10 @@ def _validate_and_report(
                 logger.warning(f"  {name}{suffix}: {v.message}")
 
 
-def _validate_format_variety(worksheets: list[object]) -> None:
+def _validate_format_variety(worksheets: Sequence[AdaptedActivityModel]) -> None:
     """Check that the multi-worksheet set has response format variety."""
-    from adapt.schema import AdaptedActivityModel
-
     all_formats: set[str] = set()
     for ws in worksheets:
-        assert isinstance(ws, AdaptedActivityModel)
         for chunk in ws.chunks:
             all_formats.add(chunk.response_format)
 
