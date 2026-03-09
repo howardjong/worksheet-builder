@@ -74,7 +74,10 @@ def render_worksheet(
                 asset_manifest, chunk_idx,
             )
         else:
-            y = _draw_chunk(c, chunk, adapted, theme, sizes, colors, y)
+            y = _draw_chunk(
+                c, chunk, adapted, theme, sizes, colors, y,
+                asset_manifest=asset_manifest,
+            )
 
         # Check if we need a new page
         if y < CONTENT_BOTTOM + 100:
@@ -164,21 +167,31 @@ def _draw_chunk(
     sizes: dict[str, int],
     colors: object,
     y: float,
+    content_left: float | None = None,
+    content_right: float | None = None,
+    asset_manifest: AssetManifest | None = None,
 ) -> float:
-    """Draw a single activity chunk."""
+    """Draw a single activity chunk.
+
+    content_left/content_right constrain text to a column
+    (used by _draw_chunk_with_scene to avoid image overlap).
+    """
     theme_colors = theme.colors
+    left = content_left if content_left is not None else MARGIN
+    right = content_right if content_right is not None else (PAGE_WIDTH - MARGIN)
+    col_width = right - left
 
     # Micro-goal header
     c.setFont(theme.fonts.heading, sizes["body"])
     c.setFillColor(HexColor(theme_colors.key_words))
-    c.drawString(MARGIN, y - sizes["body"], chunk.micro_goal)
+    c.drawString(left, y - sizes["body"], chunk.micro_goal)
     y -= sizes["body"] + 6
 
     # Time estimate (if present)
     if chunk.time_estimate:
         c.setFont(theme.fonts.primary, sizes["small"])
         c.setFillColor(HexColor(theme_colors.directions))
-        c.drawString(MARGIN + 10, y - sizes["small"], chunk.time_estimate)
+        c.drawString(left + 10, y - sizes["small"], chunk.time_estimate)
         y -= sizes["small"] + 6
 
     # Instructions
@@ -186,7 +199,7 @@ def _draw_chunk(
     c.setFont(theme.fonts.primary, sizes["body"])
     for step in chunk.instructions:
         text = f"{step.number}. {step.text}"
-        c.drawString(MARGIN + 10, y - sizes["body"], text)
+        c.drawString(left + 10, y - sizes["body"], text)
         y -= sizes["body"] + 4
 
     y -= 6
@@ -194,70 +207,94 @@ def _draw_chunk(
     # Worked example (shaded box)
     if chunk.worked_example:
         box_height = sizes["body"] * 2 + 16
-        # Green-tinted background box
         c.setFillColor(HexColor("#F0FDF4"))
-        c.rect(MARGIN + 5, y - box_height, CONTENT_WIDTH - 10, box_height, fill=True, stroke=False)
+        c.rect(
+            left + 5, y - box_height,
+            col_width - 10, box_height,
+            fill=True, stroke=False,
+        )
 
         c.setFillColor(HexColor(theme_colors.examples))
         c.setFont(theme.fonts.primary, sizes["small"])
-        c.drawString(MARGIN + 15, y - sizes["small"] - 4, chunk.worked_example.instruction)
+        ex_text = chunk.worked_example.instruction
+        c.drawString(left + 15, y - sizes["small"] - 4, ex_text)
         y -= sizes["small"] + 8
 
         c.setFont(theme.fonts.primary, sizes["body"])
-        c.drawString(MARGIN + 15, y - sizes["body"] - 4, chunk.worked_example.content)
-        y -= sizes["body"] + 12
+        ex_content = chunk.worked_example.content
+        # Wrap example content to column width
+        ex_max = int(col_width / (sizes["body"] * 0.5))
+        for ln in _wrap_text(ex_content, ex_max):
+            c.drawString(left + 15, y - sizes["body"] - 4, ln)
+            y -= sizes["body"] + 4
+        y -= 4
 
     # Activity items
     c.setFillColor(HexColor(theme_colors.text))
     c.setFont(theme.fonts.primary, sizes["body"])
-    max_chars = int(CONTENT_WIDTH / (sizes["body"] * 0.5))
+    max_chars = int(col_width / (sizes["body"] * 0.5))
 
     for item in chunk.items:
         is_chain = item.metadata.get("display") == "chain"
 
         if is_chain:
-            # Word chain: show chain sequence, then write line below
             label = f"  {item.item_id}. "
-            c.drawString(MARGIN + 10, y - sizes["body"], label + item.content)
-            y -= sizes["body"] + 4
-            # Write line for student to practice
-            c.drawString(MARGIN + 30, y - sizes["body"], "Write: ____________________")
+            chain_text = label + item.content
+            for ln in _wrap_text(chain_text, max_chars):
+                c.drawString(left + 10, y - sizes["body"], ln)
+                y -= sizes["body"] + 4
+            c.drawString(
+                left + 30, y - sizes["body"],
+                "Write: ____________________",
+            )
             y -= sizes["body"] + 6
         elif item.response_format == "match":
-            y = _draw_match_item(c, item, theme, sizes, y)
+            y = _draw_match_item(
+                c, item, theme, sizes, y,
+                left, right, asset_manifest,
+            )
         elif item.response_format == "trace":
-            y = _draw_trace_item(c, item, theme, sizes, y)
+            y = _draw_trace_item(c, item, theme, sizes, y, left)
         elif item.response_format == "circle" and item.options:
-            y = _draw_circle_item(c, item, theme, sizes, y)
+            y = _draw_circle_item(
+                c, item, theme, sizes, y, left, right,
+            )
         elif item.response_format == "fill_blank":
-            y = _draw_fill_blank_item(c, item, theme, sizes, y)
+            y = _draw_fill_blank_item(
+                c, item, theme, sizes, y, left, col_width,
+            )
         elif item.response_format == "read_aloud":
-            y = _draw_read_aloud_item(c, item, theme, sizes, y)
+            y = _draw_read_aloud_item(
+                c, item, theme, sizes, y, left, col_width,
+            )
         else:
-            # Regular item — wrap long text across lines
             text = f"  {item.item_id}. {item.content}"
             lines = _wrap_text(text, max_chars)
 
-            for k, line in enumerate(lines):
-                c.drawString(MARGIN + 10, y - sizes["body"], line)
+            for ln in lines:
+                c.drawString(left + 10, y - sizes["body"], ln)
                 y -= sizes["body"] + 4
 
-            # Add response format indicator on a new line
             if item.response_format == "write":
-                c.drawString(MARGIN + 30, y - sizes["body"], "____________________")
+                c.drawString(
+                    left + 30, y - sizes["body"],
+                    "____________________",
+                )
                 y -= sizes["body"] + 4
             elif item.response_format == "circle":
-                c.drawString(MARGIN + 30, y - sizes["body"], "(circle one)")
+                c.drawString(
+                    left + 30, y - sizes["body"], "(circle one)",
+                )
                 y -= sizes["body"] + 4
 
-            y += 4  # offset the last +4, then add spacing
+            y += 4
             y -= 6
 
     # Chunk divider
     y -= 8
     c.setStrokeColor(HexColor(theme_colors.chunk_border))
     c.setLineWidth(0.5)
-    c.line(MARGIN + 20, y, PAGE_WIDTH - MARGIN - 20, y)
+    c.line(left + 20, y, right - 20, y)
     y -= 12
 
     return y
@@ -293,38 +330,64 @@ def _draw_match_item(
     theme: ThemeConfig,
     sizes: dict[str, int],
     y: float,
+    left: float | None = None,
+    right: float | None = None,
+    asset_manifest: AssetManifest | None = None,
 ) -> float:
-    """Draw a word-picture matching item: word on left, picture zone on right."""
+    """Draw a word-picture matching item: word on left, picture on right."""
     body = sizes["body"]
-    # Word label on the left
-    c.setFont(theme.fonts.heading, body + 2)
+    lx = left if left is not None else MARGIN
+    rx = right if right is not None else (PAGE_WIDTH - MARGIN)
+    col_width = rx - lx
+    pic_size = 50  # square picture tile
+
+    # Word label on the left (large, bold)
+    c.setFont(theme.fonts.heading, body + 4)
     c.setFillColor(HexColor(theme.colors.text))
-    c.drawString(MARGIN + 15, y - body - 2, item.content)
+    c.drawString(lx + 15, y - body - 8, item.content)
 
-    # Picture zone placeholder on the right (dashed box)
-    pic_x = MARGIN + CONTENT_WIDTH * 0.5
-    pic_size = body + 16
-    c.setStrokeColor(HexColor(theme.colors.chunk_border))
-    c.setDash(3, 3)
-    c.rect(pic_x, y - pic_size, pic_size, pic_size, fill=False, stroke=True)
-    c.setDash()
+    # Picture tile on the right
+    pic_x = lx + col_width - pic_size - 10
+    pic_y = y - pic_size - 4
 
-    # Picture label inside box
-    c.setFont(theme.fonts.primary, sizes["small"] - 2)
-    c.setFillColor(HexColor(theme.colors.directions))
-    prompt_text = (item.picture_prompt or item.content)[:12]
-    c.drawString(pic_x + 3, y - pic_size + 4, f"[{prompt_text}]")
+    # Try to draw actual word picture from asset manifest
+    word_drawn = False
+    if asset_manifest:
+        pic_path = asset_manifest.word_picture_paths.get(item.content)
+        if pic_path and Path(pic_path).exists():
+            try:
+                c.drawImage(
+                    pic_path, pic_x, pic_y,
+                    width=pic_size, height=pic_size,
+                    preserveAspectRatio=True, mask="auto",
+                )
+                word_drawn = True
+            except Exception as e:
+                logger.warning(f"Failed to draw word pic: {e}")
 
-    # Connecting line stub (dotted)
-    line_start_x = MARGIN + 15 + len(item.content) * (body * 0.6)
-    line_end_x = pic_x - 5
-    line_y = y - body / 2 - 4
+    if not word_drawn:
+        # Fallback: dashed placeholder box
+        c.setStrokeColor(HexColor(theme.colors.chunk_border))
+        c.setDash(3, 3)
+        c.rect(pic_x, pic_y, pic_size, pic_size, fill=False, stroke=True)
+        c.setDash()
+        c.setFont(theme.fonts.primary, 7)
+        c.setFillColor(HexColor(theme.colors.directions))
+        label = (item.picture_prompt or item.content)[:10]
+        c.drawString(pic_x + 3, pic_y + 4, f"[{label}]")
+
+    # Connecting line (dotted) from word to picture
+    word_end = lx + 15 + len(item.content) * (body * 0.65) + 10
+    line_y = y - pic_size / 2 - 4
     c.setStrokeColor(HexColor(theme.colors.chunk_border))
     c.setDash(2, 4)
-    c.line(min(line_start_x, line_end_x - 20), line_y, line_end_x, line_y)
+    c.line(
+        min(word_end, pic_x - 25), line_y,
+        pic_x - 5, line_y,
+    )
     c.setDash()
 
-    y -= pic_size + 8
+    y -= pic_size + 12
     c.setFont(theme.fonts.primary, body)
     return y
 
@@ -335,19 +398,21 @@ def _draw_trace_item(
     theme: ThemeConfig,
     sizes: dict[str, int],
     y: float,
+    left: float | None = None,
 ) -> float:
     """Draw a word in large dotted/gray outline letters for tracing."""
-    trace_size = sizes["heading"] + 6  # Larger for tracing
+    lx = left if left is not None else MARGIN
+    trace_size = sizes["heading"] + 6
     c.setFont(theme.fonts.heading, trace_size)
     c.setFillColor(HexColor("#D1D5DB"))  # Light gray for tracing
-    c.drawString(MARGIN + 20, y - trace_size, item.content)
+    c.drawString(lx + 20, y - trace_size, item.content)
 
-    # Add a solid write line below
+    # Solid write line below
     line_y = y - trace_size - 6
     c.setStrokeColor(HexColor(theme.colors.chunk_border))
     c.setLineWidth(0.5)
     line_width = len(item.content) * trace_size * 0.6
-    c.line(MARGIN + 20, line_y, MARGIN + 20 + max(line_width, 100), line_y)
+    c.line(lx + 20, line_y, lx + 20 + max(line_width, 100), line_y)
 
     y -= trace_size + 14
     c.setFont(theme.fonts.primary, sizes["body"])
@@ -360,35 +425,40 @@ def _draw_circle_item(
     theme: ThemeConfig,
     sizes: dict[str, int],
     y: float,
+    left: float | None = None,
+    right: float | None = None,
 ) -> float:
     """Draw a row of words in bubbles for circling."""
     body = sizes["body"]
+    lx = left if left is not None else MARGIN
+    rx = right if right is not None else (PAGE_WIDTH - MARGIN)
 
     # Instruction text
     c.setFont(theme.fonts.primary, body)
     c.setFillColor(HexColor(theme.colors.text))
-    c.drawString(MARGIN + 10, y - body, f"  {item.item_id}. {item.content}")
+    c.drawString(lx + 10, y - body, f"  {item.item_id}. {item.content}")
     y -= body + 8
 
     # Draw word bubbles in a row
     if item.options:
-        x = MARGIN + 25
+        x = lx + 25
         bubble_padding = 12
         for word in item.options:
             word_width = len(word) * body * 0.55 + bubble_padding * 2
-            # Draw rounded rectangle bubble
             c.setStrokeColor(HexColor(theme.colors.text))
             c.setFillColor(HexColor("#FFFFFF"))
             c.setLineWidth(1)
-            c.roundRect(x, y - body - 4, word_width, body + 8, 6, fill=True, stroke=True)
-            # Word text inside bubble
+            c.roundRect(
+                x, y - body - 4,
+                word_width, body + 8, 6,
+                fill=True, stroke=True,
+            )
             c.setFillColor(HexColor(theme.colors.text))
             c.setFont(theme.fonts.primary, body)
             c.drawString(x + bubble_padding, y - body + 1, word)
             x += word_width + 8
-            # Wrap to next line if needed
-            if x > PAGE_WIDTH - MARGIN - 30:
-                x = MARGIN + 25
+            if x > rx - 30:
+                x = lx + 25
                 y -= body + 14
 
         y -= body + 12
@@ -402,21 +472,29 @@ def _draw_fill_blank_item(
     theme: ThemeConfig,
     sizes: dict[str, int],
     y: float,
+    left: float | None = None,
+    col_width: float | None = None,
 ) -> float:
     """Draw a word/sentence with blank and optional word bank."""
     body = sizes["body"]
+    lx = left if left is not None else MARGIN
+    cw = col_width if col_width is not None else CONTENT_WIDTH
 
     # Content with blank
     c.setFont(theme.fonts.primary, body + 2)
     c.setFillColor(HexColor(theme.colors.text))
-    c.drawString(MARGIN + 15, y - body - 2, f"{item.item_id}. {item.content}")
-    y -= body + 10
+    max_ch = int(cw / (body * 0.5))
+    item_text = f"{item.item_id}. {item.content}"
+    for ln in _wrap_text(item_text, max_ch):
+        c.drawString(lx + 15, y - body - 2, ln)
+        y -= body + 4
+    y -= 4
 
     # Word bank (options) in a shaded box
     if item.options:
         bank_height = body + 12
-        bx = MARGIN + 25
-        bw = CONTENT_WIDTH - 50
+        bx = lx + 25
+        bw = cw - 50
         c.setFillColor(HexColor("#F9FAFB"))
         c.rect(bx, y - bank_height, bw, bank_height, fill=True, stroke=False)
         c.setStrokeColor(HexColor(theme.colors.chunk_border))
@@ -425,7 +503,7 @@ def _draw_fill_blank_item(
         c.setFillColor(HexColor(theme.colors.directions))
         c.setFont(theme.fonts.primary, sizes["small"])
         bank_text = "Word bank: " + "   ".join(item.options)
-        c.drawString(MARGIN + 35, y - body - 2, bank_text)
+        c.drawString(bx + 10, y - body - 2, bank_text)
         y -= bank_height + 6
 
     c.setFont(theme.fonts.primary, body)
@@ -438,37 +516,38 @@ def _draw_read_aloud_item(
     theme: ThemeConfig,
     sizes: dict[str, int],
     y: float,
+    left: float | None = None,
+    col_width: float | None = None,
 ) -> float:
     """Draw a passage in a styled reading box with read-aloud icon."""
     body = sizes["body"]
-    max_chars = int((CONTENT_WIDTH - 40) / (body * 0.5))
+    lx = left if left is not None else MARGIN
+    cw = col_width if col_width is not None else CONTENT_WIDTH
+    max_chars = int((cw - 40) / (body * 0.5))
     lines = _wrap_text(item.content, max_chars)
 
     box_height = len(lines) * (body + 4) + 20
-    # Ensure enough space
     if y - box_height < CONTENT_BOTTOM:
         box_height = y - CONTENT_BOTTOM - 10
 
     # Light blue reading box
-    rx, rw = MARGIN + 10, CONTENT_WIDTH - 20
+    rx, rw = lx + 10, cw - 20
     c.setFillColor(HexColor("#EFF6FF"))
     c.roundRect(rx, y - box_height, rw, box_height, 8, fill=True, stroke=False)
     c.setStrokeColor(HexColor("#BFDBFE"))
     c.roundRect(rx, y - box_height, rw, box_height, 8, fill=False, stroke=True)
 
-    # Read aloud icon indicator
     c.setFont(theme.fonts.heading, sizes["small"])
     c.setFillColor(HexColor(theme.colors.directions))
-    c.drawString(MARGIN + 20, y - sizes["small"] - 6, "Read Aloud:")
+    c.drawString(lx + 20, y - sizes["small"] - 6, "Read Aloud:")
     inner_y = y - sizes["small"] - 14
 
-    # Story text
     c.setFont(theme.fonts.primary, body)
     c.setFillColor(HexColor(theme.colors.text))
     for line in lines:
         if inner_y < y - box_height + 8:
             break
-        c.drawString(MARGIN + 20, inner_y - body, line)
+        c.drawString(lx + 20, inner_y - body, line)
         inner_y -= body + 4
 
     y -= box_height + 8
@@ -525,28 +604,35 @@ def _draw_chunk_with_scene(
     asset_manifest: AssetManifest,
     chunk_idx: int,
 ) -> float:
-    """Draw chunk with two-column layout: content (60%) + scene illustration (40%).
+    """Draw chunk with two-column layout: content (60%) + scene (40%).
 
     Alternates scene position left/right between chunks.
+    Text is constrained to the content column so it never overlaps the scene.
     Falls back to standard layout if no scene asset available.
     """
     scene_path = asset_manifest.scene_paths.get(chunk.chunk_id)
 
     if not scene_path or not Path(scene_path).exists():
-        return _draw_chunk(c, chunk, adapted, theme, sizes, colors, y)
+        return _draw_chunk(
+            c, chunk, adapted, theme, sizes, colors, y,
+            asset_manifest=asset_manifest,
+        )
 
-    # Determine layout: even chunks = scene right, odd = scene left
+    # Layout: even chunks = scene right, odd = scene left
     scene_right = chunk_idx % 2 == 0
+    gap = 10  # gap between content and scene columns
 
-    # Scene dimensions
-    scene_width = CONTENT_WIDTH * 0.35
-    scene_height = 120  # Fixed height for scenes
-    content_width = CONTENT_WIDTH * 0.60
+    scene_width = CONTENT_WIDTH * 0.32
+    scene_height = 120
 
     if scene_right:
-        scene_x = MARGIN + content_width + 10
+        content_left = MARGIN
+        content_right = PAGE_WIDTH - MARGIN - scene_width - gap
+        scene_x = content_right + gap
     else:
         scene_x = MARGIN
+        content_left = MARGIN + scene_width + gap
+        content_right = PAGE_WIDTH - MARGIN
 
     # Draw scene image
     try:
@@ -556,12 +642,17 @@ def _draw_chunk_with_scene(
             preserveAspectRatio=True, mask="auto",
         )
     except Exception as e:
-        logger.warning(f"Failed to draw scene for chunk {chunk.chunk_id}: {e}")
+        logger.warning(
+            f"Failed to draw scene for chunk {chunk.chunk_id}: {e}"
+        )
 
-    # Draw content in the remaining column (using standard chunk drawing
-    # but constrained to the content column width)
-    # For now, draw standard chunk — the scene is purely additive
-    y_after = _draw_chunk(c, chunk, adapted, theme, sizes, colors, y)
+    # Draw content constrained to the content column
+    y_after = _draw_chunk(
+        c, chunk, adapted, theme, sizes, colors, y,
+        content_left=content_left,
+        content_right=content_right,
+        asset_manifest=asset_manifest,
+    )
 
     # Ensure we move past the scene height
     y_after = min(y_after, y - scene_height - 8)

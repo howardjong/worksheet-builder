@@ -412,3 +412,14 @@ extract/adapter.py → Checkpoint 5.1 (post-launch)
 - `validate/adhd_compliance.py` — Added format variety check (Check 11) and worksheet time limit (Check 12)
 - 20 new tests (12 adapt + 8 render), all 214 pass, lint clean, types clean
 - **Fully backward compatible** — `adapt_activity()` and single-worksheet themes work unchanged
+
+### Session 15 — 2026-03-09 (Rendering Quality Fixes + Word Picture Embedding)
+**Participants:** User + Claude Opus 4.6
+**What happened:**
+- Fixed `render/asset_gen.py` — migrated from deprecated `google.generativeai` SDK with unsupported `response_mime_type="image/png"` to `google.genai` SDK with `response_modalities=["TEXT", "IMAGE"]`, matching the working pattern in `companion/generate_overlays.py`. Uses reference character (`rainbow_roblox.png`) for scene consistency.
+- Fixed text-image overlap in `render/pdf.py` — `_draw_chunk_with_scene()` now constrains text to a 60% content column via `content_left`/`content_right` parameters passed through `_draw_chunk()` and all item renderers. Scene images occupy 32% column on alternating sides with a gap. Text never enters the scene column.
+- Embedded word pictures in match items — `_draw_match_item()` now accepts `asset_manifest` and renders actual AI-generated images (e.g., running dog for "chase", playground slide for "slide") instead of placeholder dashed boxes. Falls back to dashed placeholder when no manifest.
+- All item renderers (`_draw_trace_item`, `_draw_circle_item`, `_draw_fill_blank_item`, `_draw_read_aloud_item`) now accept column bounds for constrained rendering.
+- Added rendering quality check — `validate/print_checks.py` Check 6 uses PyMuPDF to detect text blocks overlapping with image bounding boxes (flags when >20% of text block area intersects an image). Runs automatically in pipeline.
+- E2E tested: 11 AI images generated (7 character scenes + 4 word pictures), 0 text-image overlaps across all 3 worksheets, all validations pass
+- All 214 tests pass, lint clean

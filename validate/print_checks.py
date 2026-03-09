@@ -97,5 +97,61 @@ def validate_print_quality(pdf_path: str) -> ValidationResult:
             message="PDF contains no extractable text — text may be rasterized",
         )
 
+    # Check 6: Text-image overlap detection
+    result.checks_run += 1
+    for i in range(doc.page_count):
+        page = doc[i]
+        overlaps = _check_text_image_overlap(page)
+        for overlap in overlaps:
+            result.add_violation(
+                check="text_image_overlap",
+                message=(
+                    f"Page {i + 1}: text overlaps image at "
+                    f"({overlap[0]:.0f}, {overlap[1]:.0f})"
+                ),
+                severity="warning",
+            )
+
     doc.close()
     return result
+
+
+def _check_text_image_overlap(page: fitz.Page) -> list[tuple[float, float]]:
+    """Detect text blocks that overlap with image bounding boxes.
+
+    Returns list of (x, y) points where overlap was detected.
+    """
+    overlaps: list[tuple[float, float]] = []
+
+    # Get image bounding boxes
+    image_rects: list[fitz.Rect] = []
+    for img in page.get_image_info():
+        bbox = img.get("bbox")
+        if bbox:
+            image_rects.append(fitz.Rect(bbox))
+
+    if not image_rects:
+        return overlaps
+
+    # Get text blocks and check for overlap with images
+    text_blocks = page.get_text("blocks")
+    for block in text_blocks:
+        if block[6] != 0:  # skip image blocks
+            continue
+        text_rect = fitz.Rect(block[:4])
+        text_content = str(block[4]).strip()
+        if not text_content:
+            continue
+
+        for img_rect in image_rects:
+            # Check if text rect overlaps image rect significantly
+            intersection = text_rect & img_rect
+            if intersection.is_empty:
+                continue
+            # Only flag if overlap area is > 20% of the text block
+            overlap_area = intersection.width * intersection.height
+            text_area = text_rect.width * text_rect.height
+            if text_area > 0 and overlap_area / text_area > 0.2:
+                overlaps.append((text_rect.x0, text_rect.y0))
+
+    return overlaps
