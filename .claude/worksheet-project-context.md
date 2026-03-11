@@ -8,10 +8,10 @@
 
 ## Current State
 
-**Status:** All 5 milestones + multi-sensory activities + batch processing complete. Full pipeline + companion + AI assist + multi-worksheet mode + batch CLI. CI passing (lint + typecheck + tests). 239 tests passing.
-**Branch:** `main`
-**Plan version:** 1.5.0
-**Last Updated:** 2026-03-09
+**Status:** Core product milestones remain complete. New Gemini Embedding 2 RAG workstream is now in progress with Phases 1-6 implemented (RAG package + adaptation consumption + transform integration). CI checks passing locally (`ruff`, `mypy`, `pytest`). 247 tests passing (plus 3 skipped).
+**Branch:** `codex/feature-gemini-embedding-2-rag`
+**Plan version:** 1.5.0 + `gemini-embedding-2-rag-plan.md` (v2)
+**Last Updated:** 2026-03-11
 
 ### Milestone Progress
 
@@ -22,6 +22,23 @@
 | M3: Theme + Render + Validate + E2E | **Complete** | ~~3.1~~, ~~3.2~~, ~~3.3~~, ~~4.4~~ | All done |
 | M4: Companion + Avatar | **Complete** | ~~4.1~~, ~~4.2~~, ~~4.3~~ | All done |
 | M5: AI Assist + Generative | **Complete** | ~~5.1~~, ~~5.2~~, ~~5.3~~ | OpenAI + Gemini + Claude |
+
+### Active Workstream: Gemini Embedding 2 RAG (2026-03-11)
+- Plan file: `gemini-embedding-2-rag-plan.md`
+- **Completed in branch**:
+  - RAG package created: `rag/client.py`, `rag/embeddings.py`, `rag/store.py`, `rag/retrieval.py`, `rag/indexer.py`
+  - Adaptation consumption path added in `adapt/engine.py` (`rag_prior_adaptations`, distractor blacklist, format mix rotation)
+  - Transform pipeline integration in `transform.py` (`RunArtifacts`, optional retrieval before adapt, optional indexing after run)
+  - Config/deps updates: `requirements.txt` (`chromadb>=0.5`), `.gitignore` (`vector_store/`), `pyproject.toml` mypy override for `chromadb.*`
+  - New tests: `tests/test_rag_embeddings.py`, `tests/test_rag_store.py`, `tests/test_rag_retrieval.py`, `tests/test_rag_indexer.py`, `tests/test_rag_adapt.py`
+- **Validated locally**:
+  - `.venv/bin/ruff check .`
+  - `.venv/bin/mypy .`
+  - `.venv/bin/pytest tests -v --ignore=tests/test_e2e.py` → `247 passed, 3 skipped`
+- **Pending from RAG plan**:
+  - Phase 7 (`rag/backfill.py`, `rag/eval.py`)
+  - Optional batch main-thread indexing strategy from Phase 14
+  - Optional docs updates (`README.md`, `CLAUDE.md`)
 
 ### What Exists Now
 - `worksheet-builder-consolidated-plan.md` — full implementation plan (v1.4.0, 15 checkpoints)
@@ -83,12 +100,17 @@
 - `extract/vision.py` — Gemini vision fallback: sends image to Gemini when OCR quality is poor (>80 fragments or <0.5 avg confidence)
 - `.env` — API keys (gitignored): OPENAI_API_KEY, GEMINI_API_KEY
 - `README.md` — project documentation
+- `gemini-embedding-2-rag-plan.md` — Gemini Embedding 2 RAG architecture and implementation plan (v2)
+- `rag/` — new RAG package (Vertex AI client, embedding service, vector store, retrieval, indexer)
 - `batch.py` — batch processing CLI: multi-threaded orchestration with rate limiting, retry, graceful shutdown, manifest-based skip detection
 - `batch_utils.py` — batch utilities: FileResult, RateLimiter (token-bucket), ProgressTracker, file collection, manifest I/O, report generation
 - `tests/test_batch.py` — 25 tests (file collection, rate limiter, progress tracker, manifest, process_single_file, CLI dry-run)
+- `tests/test_rag_*.py` + `tests/test_rag_adapt.py` — RAG unit tests and retrieval-to-adaptation tests
 
 ### What's Next
-**All milestones + multi-sensory activities + batch processing complete. Real-world tested on UFLI Lesson 59.** Remaining work:
+**All original milestones remain complete. Active remaining work includes RAG completion and broader production hardening:**
+- Implement RAG Phase 7 modules (`rag/backfill.py`, `rag/eval.py`)
+- Decide on and implement RAG batch indexing flow (main-thread indexing strategy)
 - Test batch processing on full folder of UFLI lessons
 - Test multi-worksheet output on more UFLI lessons
 - AI asset generation end-to-end (requires Gemini API key with image gen capability)
@@ -480,3 +502,72 @@ extract/adapter.py → Checkpoint 5.1 (post-launch)
   - Changed `_validate_format_variety(list[object])` → `Sequence[AdaptedActivityModel]` in `transform.py`
   - Added `# type: ignore` for Gemini SDK incomplete type stubs (`generate_content` arg-type, `putdata` arg-type)
 - All 239 tests still pass, lint clean, typecheck clean
+
+### Session 19 — 2026-03-11 (Gemini Embedding 2 RAG Phases 1-6)
+**Participants:** User + Codex (GPT-5)
+**What happened:**
+- Created feature branch `codex/feature-gemini-embedding-2-rag` before implementation.
+- Implemented RAG core package:
+  - `rag/client.py` — Vertex AI client (`vertexai=True`) + `rag_available()` + model availability startup check.
+  - `rag/embeddings.py` — `embed_text`, `embed_image`, `embed_pdf`, `embed_multimodal` with configurable dimensionality and task type.
+  - `rag/store.py` — ChromaDB persistent store wrapper + collection helpers + query helper.
+  - `rag/retrieval.py` — staged hybrid retrieval (skill-primary, content-secondary), grade filtering, dedup by `source_hash`.
+  - `rag/indexer.py` — run artifact indexing for worksheets, skills, adaptations, exemplars; learner-name redaction before indexing text.
+- Integrated retrieval-to-adaptation path in `adapt/engine.py`:
+  - Added optional `rag_prior_adaptations` parameter to `adapt_activity()` and `adapt_lesson()` (backward-compatible defaults).
+  - `_generate_distractors()` now supports blacklist from prior adaptations.
+  - Added `_suggest_format_mix()` and `_extract_distractor_blacklist()` helpers.
+  - Word Discovery format order can rotate when prior runs used same format mix.
+- Integrated RAG in `transform.py` with non-blocking behavior:
+  - Added `RunArtifacts` model for branch-agnostic indexing payload.
+  - Added optional retrieval step before adaptation.
+  - Added optional indexing step after single/multi branch completion.
+  - Preserved `run_pipeline()` return type (`str` PDF path) for caller compatibility.
+- Added tests:
+  - `tests/test_rag_embeddings.py`
+  - `tests/test_rag_store.py`
+  - `tests/test_rag_retrieval.py`
+  - `tests/test_rag_indexer.py`
+  - `tests/test_rag_adapt.py`
+- Updated config/deps:
+  - `requirements.txt` adds `chromadb>=0.5`
+  - `.gitignore` adds `vector_store/`
+  - `pyproject.toml` adds mypy ignore for `chromadb.*`
+- Validation status:
+  - `ruff check .` ✅
+  - `mypy .` ✅
+  - `pytest tests -v --ignore=tests/test_e2e.py` ✅ (`247 passed, 3 skipped`)
+
+**What's next:**
+- Implement RAG Phase 7 modules: `rag/backfill.py` and `rag/eval.py`.
+- Decide and implement batch main-thread indexing strategy from RAG plan phase 14.
+- Optional docs pass for RAG usage/setup in `README.md` and `CLAUDE.md`.
+
+### Session 20 — 2026-03-11 (GCP Project + Vertex Auth Setup for RAG)
+**Participants:** User + Codex (GPT-5)
+**What happened:**
+- Switched gcloud auth context to `howiejong@gmail.com` (user-provided account for project access).
+- Verified target project exists and is active:
+  - `ws-builder-rag` (`projectNumber: 715442045755`)
+- Confirmed billing is linked (`billingEnabled: true`).
+- Enabled required APIs on `ws-builder-rag`:
+  - `aiplatform.googleapis.com`
+  - `serviceusage.googleapis.com`
+  - `iam.googleapis.com`
+  - `iamcredentials.googleapis.com`
+- Created runtime service account:
+  - `worksheet-rag-runtime@ws-builder-rag.iam.gserviceaccount.com`
+- Granted IAM bindings:
+  - Service account → `roles/aiplatform.user`
+  - Service account → `roles/serviceusage.serviceUsageConsumer`
+  - User `howiejong@gmail.com` → `roles/serviceusage.serviceUsageConsumer` (for ADC quota project usage)
+  - User `howiejong@gmail.com` on SA → `roles/iam.serviceAccountTokenCreator`
+- Re-authenticated ADC as `howiejong@gmail.com` and set ADC quota project to `ws-builder-rag`.
+- Updated local `.env` GCP setting:
+  - `GOOGLE_CLOUD_PROJECT=ws-builder-rag`
+- Verified live Vertex model availability check succeeded for:
+  - `GEMINI_EMBEDDING_MODEL=gemini-embedding-2-preview`
+
+**Current status:**
+- Local machine is configured for Vertex-backed RAG embeddings against `ws-builder-rag`.
+- Existing non-RAG Gemini paths in repo remain API-key based (auth migration still separate from RAG workstream).

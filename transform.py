@@ -5,10 +5,12 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import re
 from collections.abc import Sequence
 from pathlib import Path
 
 import click
+from pydantic import BaseModel
 
 # Load .env before anything else
 try:
@@ -35,6 +37,26 @@ from validate.print_checks import validate_print_quality
 from validate.skill_parity import validate_age_band, validate_skill_parity
 
 logger = logging.getLogger(__name__)
+
+
+class RunArtifacts(BaseModel):
+    """Collected artifacts from a pipeline run, used for optional RAG indexing."""
+
+    source_image_path: str
+    source_image_hash: str
+    extracted_text: str
+    template_type: str
+    ocr_engine: str
+    region_count: int
+    skill_domain: str
+    skill_name: str
+    grade_level: str
+    theme_id: str
+    worksheet_mode: str
+    adapted_summaries: list[dict[str, str | int | float | bool]]
+    pdf_paths: list[str]
+    validation_results: dict[str, bool]
+    profile_name: str | None = None
 
 
 @click.command()
@@ -64,6 +86,15 @@ def transform(
     )
 
 
+def rag_available() -> bool:
+    """Check if RAG is configured (Vertex AI project set)."""
+    try:
+        from rag.client import rag_available as _rag_available
+    except ImportError:
+        return False
+    return _rag_available()
+
+
 def run_pipeline(
     input_path: str,
     profile_path: str,
@@ -71,19 +102,7 @@ def run_pipeline(
     output_dir: str,
     artifacts_dir: str,
 ) -> str:
-    """Run the full transformation pipeline. Returns path to the output PDF.
-
-    Stages:
-    1. Preprocess image → clean page
-    2. Store master image
-    3. OCR → SourceWorksheetModel
-    4. Extract skill → LiteracySkillModel
-    5. Adapt for ADHD → AdaptedActivityModel
-    6. Apply theme → ThemedModel
-    7. Render → PDF
-    8. Validate → skill-parity, ADHD compliance, print quality
-    9. Persist all artifacts
-    """
+    """Run the full transformation pipeline. Returns path to the output PDF."""
     output = Path(output_dir)
     artifacts = Path(artifacts_dir)
     output.mkdir(parents=True, exist_ok=True)
@@ -104,21 +123,22 @@ def run_pipeline(
     logger.info("Stage 3: Extracting source content...")
     source_model = None
 
-    # Try AI vision first (much faster and more accurate on phone photos)
     vision_model = extract_with_vision(preprocessed_path, master.image_hash)
     if vision_model is not None:
         source_model = vision_model
         logger.info("  Using AI vision extraction")
     else:
-        # Fall back to OCR if no AI API key available
         logger.info("  AI vision unavailable — falling back to OCR...")
         ocr_result = extract_text_with_fallback(preprocessed_path)
         source_model = map_to_source_model(ocr_result, master.image_hash)
 
-    # Persist source model
     source_json = artifacts / "source_model.json"
     source_json.write_text(source_model.model_dump_json(indent=2))
-    logger.info(f"  Template: {source_model.template_type}, Regions: {len(source_model.regions)}")
+    logger.info(
+        "  Template: %s, Regions: %s",
+        source_model.template_type,
+        len(source_model.regions),
+    )
 
     # Stage 4: Skill extraction
     logger.info("Stage 4: Extracting literacy skill...")
@@ -126,27 +146,98 @@ def run_pipeline(
 
     skill_json = artifacts / "skill_model.json"
     skill_json.write_text(skill_model.model_dump_json(indent=2))
-    logger.info(f"  Domain: {skill_model.domain}, Skill: {skill_model.specific_skill}")
+    logger.info("  Domain: %s, Skill: %s", skill_model.domain, skill_model.specific_skill)
 
     # Stage 5: ADHD adaptation
     logger.info("Stage 5: Adapting for ADHD...")
     profile = load_profile(profile_path)
 
-    # Stage 6: Load theme (needed before deciding single vs multi)
+    # Stage 6: Load theme
     logger.info("Stage 6: Loading theme...")
     theme = load_theme(theme_id)
 
-    # Determine single vs multi-worksheet mode
+    # Stage 4b: Optional RAG retrieval (skill + content)
+    rag_prior_adaptations: list[dict[str, object]] | None = None
+    if rag_available():
+        try:
+            from rag.retrieval import retrieve_context
+
+            skill_desc = f"{skill_model.domain}: {skill_model.specific_skill}"
+            rag_context = retrieve_context(
+                skill_description=skill_desc,
+                extracted_text=source_model.raw_text,
+                grade_level=skill_model.grade_level,
+            )
+            if rag_context.prior_adaptations:
+                rag_prior_adaptations = [
+                    {key: value for key, value in result.metadata.items()}
+                    for result in rag_context.prior_adaptations
+                ]
+                logger.info("  RAG: %s prior adaptations found", len(rag_prior_adaptations))
+        except Exception as exc:
+            logger.warning("  RAG retrieval skipped: %s", exc)
+
+    # Branch into single or multi worksheet pipeline
     if theme.multi_worksheet:
-        return _run_multi_worksheet_pipeline(
-            skill_model, profile, theme, theme_id,
-            master.image_hash, output, artifacts,
+        run_artifacts = _run_multi_worksheet_pipeline(
+            skill_model=skill_model,
+            profile=profile,
+            theme=theme,
+            theme_id=theme_id,
+            source_image_path=preprocessed_path,
+            source_image_hash=master.image_hash,
+            extracted_text=source_model.raw_text,
+            template_type=source_model.template_type,
+            ocr_engine=source_model.ocr_engine,
+            region_count=len(source_model.regions),
+            output=output,
+            artifacts=artifacts,
+            rag_prior_adaptations=rag_prior_adaptations,
         )
     else:
-        return _run_single_worksheet_pipeline(
-            skill_model, profile, theme, theme_id,
-            master.image_hash, output, artifacts, profile_path,
+        run_artifacts = _run_single_worksheet_pipeline(
+            skill_model=skill_model,
+            profile=profile,
+            theme=theme,
+            theme_id=theme_id,
+            source_image_path=preprocessed_path,
+            source_image_hash=master.image_hash,
+            extracted_text=source_model.raw_text,
+            template_type=source_model.template_type,
+            ocr_engine=source_model.ocr_engine,
+            region_count=len(source_model.regions),
+            output=output,
+            artifacts=artifacts,
+            rag_prior_adaptations=rag_prior_adaptations,
         )
+
+    # Stage 9: Optional RAG indexing
+    if rag_available():
+        try:
+            from rag.indexer import index_run
+
+            index_run(
+                source_image_path=run_artifacts.source_image_path,
+                source_image_hash=run_artifacts.source_image_hash,
+                extracted_text=run_artifacts.extracted_text,
+                template_type=run_artifacts.template_type,
+                ocr_engine=run_artifacts.ocr_engine,
+                region_count=run_artifacts.region_count,
+                skill_domain=run_artifacts.skill_domain,
+                skill_name=run_artifacts.skill_name,
+                grade_level=run_artifacts.grade_level,
+                adapted_summaries=run_artifacts.adapted_summaries,
+                pdf_paths=run_artifacts.pdf_paths,
+                theme_id=run_artifacts.theme_id,
+                validation_results=run_artifacts.validation_results,
+                worksheet_mode=run_artifacts.worksheet_mode,
+                profile_name=run_artifacts.profile_name,
+            )
+            logger.info("Stage 9: Indexed run artifacts into RAG store")
+        except Exception as exc:
+            logger.warning("  RAG indexing skipped: %s", exc)
+
+    return run_artifacts.pdf_paths[0] if run_artifacts.pdf_paths else ""
 
 
 def _run_single_worksheet_pipeline(
@@ -154,12 +245,17 @@ def _run_single_worksheet_pipeline(
     profile: object,
     theme: object,
     theme_id: str,
-    image_hash: str,
+    source_image_path: str,
+    source_image_hash: str,
+    extracted_text: str,
+    template_type: str,
+    ocr_engine: str,
+    region_count: int,
     output: Path,
     artifacts: Path,
-    profile_path: str,
-) -> str:
-    """Original single-worksheet pipeline (backward compatible)."""
+    rag_prior_adaptations: list[dict[str, object]] | None,
+) -> RunArtifacts:
+    """Single-worksheet pipeline."""
     from companion.avatar import compose_avatar
     from companion.schema import LearnerProfile
     from skill.schema import LiteracySkillModel
@@ -169,60 +265,82 @@ def _run_single_worksheet_pipeline(
     assert isinstance(profile, LearnerProfile)
     assert isinstance(theme, ThemeConfig)
 
-    adapted = adapt_activity(skill_model, profile, theme_id=theme_id)
+    adapted = adapt_activity(
+        skill_model,
+        profile,
+        theme_id=theme_id,
+        rag_prior_adaptations=rag_prior_adaptations,
+    )
 
     adapted_json = artifacts / "adapted_model.json"
     adapted_json.write_text(adapted.model_dump_json(indent=2))
-    logger.info(f"  Chunks: {len(adapted.chunks)}, Grade: {adapted.grade_level}")
+    logger.info("  Chunks: %s, Grade: %s", len(adapted.chunks), adapted.grade_level)
 
     # Stage 5b: AI quality review (iterative)
     logger.info("Stage 5b: AI quality review...")
     adapted, reviews = review_adapted_worksheet(adapted)
 
-    # Persist review results
     review_data = [r.to_dict() for r in reviews]
     review_json = artifacts / "ai_review.json"
     review_json.write_text(json.dumps(review_data, indent=2))
 
+    ai_review_passed = True
     if reviews and reviews[-1].passed:
         logger.info("  AI quality review: PASSED")
     elif reviews:
+        ai_review_passed = False
         logger.warning(
-            f"  AI quality review: {len(reviews[-1].issues)} issues remaining "
-            f"after {len(reviews)} iterations"
+            "  AI quality review: %s issues remaining after %s iterations",
+            len(reviews[-1].issues),
+            len(reviews),
         )
 
-    # Re-persist adapted model (may have been modified by AI review)
     adapted_json.write_text(adapted.model_dump_json(indent=2))
 
-    # Apply theme
     apply_theme(adapted, theme)
 
-    # Compose avatar
     avatar_path: str | None = None
     if profile.avatar:
         logger.info("Stage 6b: Composing avatar...")
         avatar_result = compose_avatar(profile, size="companion", theme_id=theme_id)
         if avatar_result:
             avatar_path = str(avatar_result)
-            logger.info(f"  Avatar: {profile.avatar.base_character} -> {avatar_path}")
+            logger.info("  Avatar: %s -> %s", profile.avatar.base_character, avatar_path)
 
-    # Stage 7: Render PDF
     logger.info("Stage 7: Rendering PDF...")
     content_hash = hashlib.sha256(
-        f"{image_hash}:{profile.name}:{theme_id}".encode()
+        f"{source_image_hash}:{profile.name}:{theme_id}".encode()
     ).hexdigest()[:12]
     pdf_filename = f"worksheet_{content_hash}.pdf"
     pdf_path = str(output / pdf_filename)
     render_worksheet(adapted, theme, pdf_path, avatar_image=avatar_path)
-    logger.info(f"  Output: {pdf_path}")
+    logger.info("  Output: %s", pdf_path)
 
-    # Stage 8: Validate
     logger.info("Stage 8: Running validation...")
-    _validate_and_report(skill_model, adapted, profile, pdf_path, artifacts)
+    validation_results = _validate_and_report(skill_model, adapted, profile, pdf_path, artifacts)
+    validation_results["ai_review_passed"] = ai_review_passed
+    validation_results["all_validators_passed"] = (
+        validation_results.get("all_validators_passed", False) and ai_review_passed
+    )
 
-    logger.info(f"Done! PDF saved to: {pdf_path}")
-    return pdf_path
+    logger.info("Done! PDF saved to: %s", pdf_path)
+    return RunArtifacts(
+        source_image_path=source_image_path,
+        source_image_hash=source_image_hash,
+        extracted_text=extracted_text,
+        template_type=template_type,
+        ocr_engine=ocr_engine,
+        region_count=region_count,
+        skill_domain=skill_model.domain,
+        skill_name=skill_model.specific_skill,
+        grade_level=skill_model.grade_level,
+        theme_id=theme_id,
+        worksheet_mode="single",
+        adapted_summaries=[_build_adapted_summary(adapted)],
+        pdf_paths=[pdf_path],
+        validation_results=validation_results,
+        profile_name=profile.name,
+    )
 
 
 def _run_multi_worksheet_pipeline(
@@ -230,16 +348,19 @@ def _run_multi_worksheet_pipeline(
     profile: object,
     theme: object,
     theme_id: str,
-    image_hash: str,
+    source_image_path: str,
+    source_image_hash: str,
+    extracted_text: str,
+    template_type: str,
+    ocr_engine: str,
+    region_count: int,
     output: Path,
     artifacts: Path,
-) -> str:
+    rag_prior_adaptations: list[dict[str, object]] | None,
+) -> RunArtifacts:
     """Multi-worksheet pipeline — produces 2-3 mini-worksheets per lesson."""
     from companion.schema import LearnerProfile
-    from render.asset_gen import (
-        compute_worksheet_hash,
-        generate_worksheet_assets,
-    )
+    from render.asset_gen import compute_worksheet_hash, generate_worksheet_assets
     from render.pose_planner import plan_scenes, plan_word_pictures
     from skill.schema import LiteracySkillModel
     from theme.schema import ThemeConfig
@@ -248,57 +369,83 @@ def _run_multi_worksheet_pipeline(
     assert isinstance(profile, LearnerProfile)
     assert isinstance(theme, ThemeConfig)
 
-    worksheets = adapt_lesson(skill_model, profile, theme_id=theme_id)
-    logger.info(f"  Generated {len(worksheets)} mini-worksheets")
+    worksheets = adapt_lesson(
+        skill_model,
+        profile,
+        theme_id=theme_id,
+        rag_prior_adaptations=rag_prior_adaptations,
+    )
+    logger.info("  Generated %s mini-worksheets", len(worksheets))
 
     pdf_paths: list[str] = []
+    adapted_summaries: list[dict[str, str | int | float | bool]] = []
+    validation_runs: list[dict[str, bool]] = []
     content_hash = hashlib.sha256(
-        f"{image_hash}:{profile.name}:{theme_id}".encode()
+        f"{source_image_hash}:{profile.name}:{theme_id}".encode()
     ).hexdigest()[:12]
 
-    for i, adapted in enumerate(worksheets):
-        ws_num = i + 1
+    for i, adapted in enumerate(worksheets, start=1):
         ws_title = adapted.worksheet_title or "Untitled"
-        logger.info(
-            f"  Processing worksheet {ws_num}/{len(worksheets)}: "
-            f"{ws_title}"
-        )
+        logger.info("  Processing worksheet %s/%s: %s", i, len(worksheets), ws_title)
 
-        # Persist adapted model
-        adapted_json = artifacts / f"adapted_model_{ws_num}.json"
+        adapted_json = artifacts / f"adapted_model_{i}.json"
         adapted_json.write_text(adapted.model_dump_json(indent=2))
 
-        # Apply theme
         apply_theme(adapted, theme)
 
-        # Stage 6c: Generate AI assets (scenes + word pictures)
         asset_manifest = None
         try:
             scenes = plan_scenes(adapted)
             word_prompts = plan_word_pictures(adapted)
-            ws_hash = compute_worksheet_hash(adapted.source_hash, ws_num, theme_id)
+            ws_hash = compute_worksheet_hash(adapted.source_hash, i, theme_id)
             asset_manifest = generate_worksheet_assets(scenes, word_prompts, ws_hash)
-        except Exception as e:
-            logger.warning(f"  Asset generation skipped: {e}")
+        except Exception as exc:
+            logger.warning("  Asset generation skipped: %s", exc)
 
-        # Stage 7: Render PDF
-        pdf_filename = f"worksheet_{content_hash}_{ws_num}of{len(worksheets)}.pdf"
+        pdf_filename = f"worksheet_{content_hash}_{i}of{len(worksheets)}.pdf"
         pdf_path = str(output / pdf_filename)
         render_worksheet(adapted, theme, pdf_path, asset_manifest=asset_manifest)
         pdf_paths.append(pdf_path)
-        logger.info(f"  Output: {pdf_path}")
+        logger.info("  Output: %s", pdf_path)
 
-        # Stage 8: Validate each worksheet
-        _validate_and_report(
-            skill_model, adapted, profile,
-            pdf_path, artifacts, suffix=f"_{ws_num}",
+        ws_validation = _validate_and_report(
+            skill_model,
+            adapted,
+            profile,
+            pdf_path,
+            artifacts,
+            suffix=f"_{i}",
         )
+        validation_runs.append(ws_validation)
+        adapted_summaries.append(_build_adapted_summary(adapted))
 
-    # Validate format variety across the set
     _validate_format_variety(worksheets)
 
-    logger.info(f"Done! {len(pdf_paths)} PDFs saved to: {output}")
-    return pdf_paths[0] if pdf_paths else ""
+    validation_results = _aggregate_validation_results(validation_runs)
+    validation_results["ai_review_passed"] = True
+    validation_results["all_validators_passed"] = validation_results.get(
+        "all_validators_passed",
+        False,
+    )
+
+    logger.info("Done! %s PDFs saved to: %s", len(pdf_paths), output)
+    return RunArtifacts(
+        source_image_path=source_image_path,
+        source_image_hash=source_image_hash,
+        extracted_text=extracted_text,
+        template_type=template_type,
+        ocr_engine=ocr_engine,
+        region_count=region_count,
+        skill_domain=skill_model.domain,
+        skill_name=skill_model.specific_skill,
+        grade_level=skill_model.grade_level,
+        theme_id=theme_id,
+        worksheet_mode="multi",
+        adapted_summaries=adapted_summaries,
+        pdf_paths=pdf_paths,
+        validation_results=validation_results,
+        profile_name=profile.name,
+    )
 
 
 def _validate_and_report(
@@ -308,8 +455,8 @@ def _validate_and_report(
     pdf_path: str,
     artifacts: Path,
     suffix: str = "",
-) -> None:
-    """Run validation checks and persist results."""
+) -> dict[str, bool]:
+    """Run validation checks, persist results, and return pass/fail flags."""
     from adapt.schema import AdaptedActivityModel
     from companion.schema import LearnerProfile
     from skill.schema import LiteracySkillModel
@@ -340,41 +487,130 @@ def _validate_and_report(
     ])
 
     if all_passed:
-        logger.info(f"  All validations passed{suffix}!")
+        logger.info("  All validations passed%s!", suffix)
     else:
-        for name, res in [
+        for name, result in [
             ("Skill parity", parity_result),
             ("Age band", age_result),
             ("ADHD compliance", adhd_result),
             ("Print quality", print_result),
         ]:
-            if not res.passed:
-                for v in res.violations:
-                    if v.severity == "error":
-                        logger.error(f"  {name}{suffix}: {v.message}")
+            if not result.passed:
+                for violation in result.violations:
+                    if violation.severity == "error":
+                        logger.error("  %s%s: %s", name, suffix, violation.message)
 
-    for name, res in [
+    for name, result in [
         ("Skill parity", parity_result),
         ("Age band", age_result),
         ("ADHD compliance", adhd_result),
         ("Print quality", print_result),
     ]:
-        for v in res.violations:
-            if v.severity == "warning":
-                logger.warning(f"  {name}{suffix}: {v.message}")
+        for violation in result.violations:
+            if violation.severity == "warning":
+                logger.warning("  %s%s: %s", name, suffix, violation.message)
+
+    return {
+        "skill_parity_passed": parity_result.passed,
+        "age_band_passed": age_result.passed,
+        "adhd_compliance_passed": adhd_result.passed,
+        "print_quality_passed": print_result.passed,
+        "all_validators_passed": all_passed,
+    }
+
+
+def _aggregate_validation_results(
+    validations: Sequence[dict[str, bool]],
+) -> dict[str, bool]:
+    """Aggregate per-worksheet validation flags across a run."""
+    if not validations:
+        return {
+            "skill_parity_passed": False,
+            "age_band_passed": False,
+            "adhd_compliance_passed": False,
+            "print_quality_passed": False,
+            "all_validators_passed": False,
+        }
+
+    keys: set[str] = set()
+    for run in validations:
+        keys.update(run.keys())
+
+    return {
+        key: all(run.get(key, False) for run in validations)
+        for key in keys
+    }
+
+
+def _build_adapted_summary(
+    adapted: AdaptedActivityModel,
+) -> dict[str, str | int | float | bool]:
+    """Build a compact adaptation summary for RAG indexing metadata."""
+    total_items = sum(len(chunk.items) for chunk in adapted.chunks)
+    response_formats = sorted({chunk.response_format for chunk in adapted.chunks})
+    estimated_minutes = sum(
+        _extract_estimated_minutes(chunk.time_estimate)
+        for chunk in adapted.chunks
+    )
+    distractors = sorted(_extract_distractor_words(adapted))
+
+    return {
+        "worksheet_title": adapted.worksheet_title or "Untitled",
+        "worksheet_number": adapted.worksheet_number,
+        "chunk_count": len(adapted.chunks),
+        "total_items": total_items,
+        "response_formats": ",".join(response_formats),
+        "estimated_minutes": estimated_minutes,
+        "distractor_words": ",".join(distractors),
+    }
+
+
+def _extract_estimated_minutes(time_estimate: str) -> int:
+    """Parse minute count from chunk time estimate text."""
+    match = re.search(r"(\d+)", time_estimate)
+    if not match:
+        return 0
+    return int(match.group(1))
+
+
+def _extract_distractor_words(adapted: AdaptedActivityModel) -> set[str]:
+    """Extract distractor options used in circle-format items."""
+    distractors: set[str] = set()
+
+    for chunk in adapted.chunks:
+        for item in chunk.items:
+            if item.response_format != "circle" or not item.options:
+                continue
+
+            answers: set[str] = set()
+            if item.answer:
+                answers = {
+                    answer.strip().lower()
+                    for answer in item.answer.split(",")
+                    if answer.strip()
+                }
+
+            for option in item.options:
+                normalized = option.strip().lower()
+                if normalized and normalized not in answers:
+                    distractors.add(normalized)
+
+    return distractors
 
 
 def _validate_format_variety(worksheets: Sequence[AdaptedActivityModel]) -> None:
     """Check that the multi-worksheet set has response format variety."""
     all_formats: set[str] = set()
-    for ws in worksheets:
-        for chunk in ws.chunks:
+    for worksheet in worksheets:
+        for chunk in worksheet.chunks:
             all_formats.add(chunk.response_format)
 
     if len(all_formats) < 2:
         logger.warning(
-            f"  Format variety: only {len(all_formats)} format(s) used across "
-            f"{len(worksheets)} worksheets. Recommend at least 2 different formats."
+            "  Format variety: only %s format(s) used across %s worksheets. "
+            "Recommend at least 2 different formats.",
+            len(all_formats),
+            len(worksheets),
         )
 
 

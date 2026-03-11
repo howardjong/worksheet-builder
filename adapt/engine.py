@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 
 from adapt.rules import (
     BRAIN_BREAK_PROMPTS,
@@ -21,12 +22,15 @@ from adapt.schema import (
 from companion.schema import LearnerProfile
 from skill.schema import LiteracySkillModel
 
+logger = logging.getLogger(__name__)
+
 
 def adapt_activity(
     skill: LiteracySkillModel,
     profile: LearnerProfile,
     theme_id: str = "default",
     rules: AccommodationRules | None = None,
+    rag_prior_adaptations: list[dict[str, object]] | None = None,
 ) -> AdaptedActivityModel:
     """Transform a skill model into ADHD-optimized activity chunks.
 
@@ -79,6 +83,7 @@ def adapt_lesson(
     profile: LearnerProfile,
     theme_id: str = "default",
     rules: AccommodationRules | None = None,
+    rag_prior_adaptations: list[dict[str, object]] | None = None,
 ) -> list[AdaptedActivityModel]:
     """Transform a skill model into 2-3 ADHD-optimized mini-worksheets.
 
@@ -91,6 +96,20 @@ def adapt_lesson(
     """
     if rules is None:
         rules = build_rules(profile)
+
+    prior_adaptations = rag_prior_adaptations or []
+    distractor_blacklist = _extract_distractor_blacklist(prior_adaptations)
+    discovery_formats = _suggest_format_mix(prior_adaptations, ["match", "trace", "circle"])
+    if prior_adaptations:
+        prior_sources = [
+            str(adapt.get("source_hash", "unknown"))
+            for adapt in prior_adaptations[:3]
+        ]
+        logger.info(
+            "RAG context influencing adaptation: prior_adaptations=%s sources=%s",
+            len(prior_adaptations),
+            ",".join(prior_sources),
+        )
 
     # Categorize source items by type
     word_items: list[str] = []
@@ -130,7 +149,13 @@ def adapt_lesson(
     # Worksheet 1: Word Discovery (if we have word items or target words)
     discovery_words = word_items or skill.target_words[:6]
     if discovery_words:
-        chunks = _build_discovery_chunks(discovery_words, skill, rules)
+        chunks = _build_discovery_chunks(
+            discovery_words,
+            skill,
+            rules,
+            distractor_blacklist=distractor_blacklist,
+            format_order=discovery_formats,
+        )
         worksheets.append(AdaptedActivityModel(
             source_hash=base_hash,
             skill_model_hash=skill_hash,
@@ -207,7 +232,13 @@ def adapt_lesson(
 
     # Fallback: if nothing produced, return single worksheet via existing path
     if not worksheets:
-        single = adapt_activity(skill, profile, theme_id=theme_id, rules=rules)
+        single = adapt_activity(
+            skill,
+            profile,
+            theme_id=theme_id,
+            rules=rules,
+            rag_prior_adaptations=rag_prior_adaptations,
+        )
         return [single]
 
     return worksheets
@@ -217,93 +248,114 @@ def _build_discovery_chunks(
     words: list[str],
     skill: LiteracySkillModel,
     rules: AccommodationRules,
+    distractor_blacklist: set[str] | None = None,
+    format_order: list[str] | None = None,
 ) -> list[ActivityChunk]:
     """Build Word Discovery chunks: match + trace + circle activities."""
     chunks: list[ActivityChunk] = []
     item_id = 0
 
-    # Chunk 1: Word-picture matching (up to 4 words)
-    match_words = words[:4]
-    if match_words:
-        items: list[ActivityItem] = []
-        for w in match_words:
-            item_id += 1
-            items.append(ActivityItem(
-                item_id=item_id,
-                content=w,
-                response_format="match",
-                picture_prompt=_word_to_picture_prompt(w),
-                options=[w],  # renderer will add picture tiles
-            ))
-        chunks.append(ActivityChunk(
-            chunk_id=1,
-            micro_goal=f"Match {len(match_words)} words to their pictures",
-            instructions=[
-                Step(number=1, text="Look at each picture."),
-                Step(number=2, text="Draw a line to the matching word."),
-            ],
-            worked_example=Example(
-                instruction="Watch how I do the first one:",
-                content=(
-                    f'The picture of a '
-                    f'{_word_to_picture_prompt(match_words[0]).split(",")[0].replace("a ", "")}'
-                    f' matches "{match_words[0]}"!'
+    default_order = ["match", "trace", "circle"]
+    ordered_formats: list[str] = []
+    seen_formats: set[str] = set()
+    for fmt in format_order or default_order:
+        if fmt in default_order and fmt not in seen_formats:
+            ordered_formats.append(fmt)
+            seen_formats.add(fmt)
+    for fmt in default_order:
+        if fmt not in seen_formats:
+            ordered_formats.append(fmt)
+
+    for fmt in ordered_formats:
+        chunk_id = len(chunks) + 1
+        if fmt == "match":
+            match_words = words[:4]
+            if not match_words:
+                continue
+            items: list[ActivityItem] = []
+            for word in match_words:
+                item_id += 1
+                items.append(ActivityItem(
+                    item_id=item_id,
+                    content=word,
+                    response_format="match",
+                    picture_prompt=_word_to_picture_prompt(word),
+                    options=[word],  # renderer will add picture tiles
+                ))
+            chunks.append(ActivityChunk(
+                chunk_id=chunk_id,
+                micro_goal=f"Match {len(match_words)} words to their pictures",
+                instructions=[
+                    Step(number=1, text="Look at each picture."),
+                    Step(number=2, text="Draw a line to the matching word."),
+                ],
+                worked_example=Example(
+                    instruction="Watch how I do the first one:",
+                    content=(
+                        f'The picture of a '
+                        f'{_word_to_picture_prompt(match_words[0]).split(",")[0].replace("a ", "")}'
+                        f' matches "{match_words[0]}"!'
+                    ),
                 ),
-            ),
-            items=items,
-            response_format="match",
-            time_estimate="About 2 minutes",
-        ))
-
-    # Chunk 2: Read & trace (up to 4 words)
-    trace_words = words[:4]
-    if trace_words:
-        items = []
-        for w in trace_words:
-            item_id += 1
-            items.append(ActivityItem(
-                item_id=item_id,
-                content=w,
-                response_format="trace",
+                items=items,
+                response_format="match",
+                time_estimate="About 2 minutes",
             ))
-        chunks.append(ActivityChunk(
-            chunk_id=2,
-            micro_goal=f"Trace {len(trace_words)} words",
-            instructions=[
-                Step(number=1, text="Say each word out loud."),
-                Step(number=2, text="Trace the dotted letters."),
-            ],
-            worked_example=None,
-            items=items,
-            response_format="trace",
-            time_estimate="About 2 minutes",
-        ))
 
-    # Chunk 3: Circle the CVCe words (mix target + distractors)
-    if words:
-        distractors = _generate_distractors(words, min(4, len(words)))
-        all_options = words[:4] + distractors
-        items = []
-        item_id += 1
-        items.append(ActivityItem(
-            item_id=item_id,
-            content="Circle all the words that follow the pattern.",
-            response_format="circle",
-            options=all_options,
-            answer=",".join(words[:4]),
-        ))
-        chunks.append(ActivityChunk(
-            chunk_id=3,
-            micro_goal="Find the pattern words",
-            instructions=[
-                Step(number=1, text="Look at each word."),
-                Step(number=2, text="Circle the words that match the pattern."),
-            ],
-            worked_example=None,
-            items=items,
-            response_format="circle",
-            time_estimate="About 1 minute",
-        ))
+        if fmt == "trace":
+            trace_words = words[:4]
+            if not trace_words:
+                continue
+            items = []
+            for word in trace_words:
+                item_id += 1
+                items.append(ActivityItem(
+                    item_id=item_id,
+                    content=word,
+                    response_format="trace",
+                ))
+            chunks.append(ActivityChunk(
+                chunk_id=chunk_id,
+                micro_goal=f"Trace {len(trace_words)} words",
+                instructions=[
+                    Step(number=1, text="Say each word out loud."),
+                    Step(number=2, text="Trace the dotted letters."),
+                ],
+                worked_example=None,
+                items=items,
+                response_format="trace",
+                time_estimate="About 2 minutes",
+            ))
+
+        if fmt == "circle":
+            if not words:
+                continue
+            distractors = _generate_distractors(
+                words,
+                min(4, len(words)),
+                blacklist=distractor_blacklist,
+            )
+            all_options = words[:4] + distractors
+            item_id += 1
+            item = ActivityItem(
+                item_id=item_id,
+                content="Circle all the words that follow the pattern.",
+                response_format="circle",
+                options=all_options,
+                answer=",".join(words[:4]),
+            )
+            chunks.append(ActivityChunk(
+                chunk_id=chunk_id,
+                micro_goal="Find the pattern words",
+                instructions=[
+                    Step(number=1, text="Look at each word."),
+                    Step(number=2, text="Circle the words that match the pattern."),
+                ],
+                worked_example=None,
+                items=[item],
+                response_format="circle",
+                time_estimate="About 1 minute",
+            ))
 
     return chunks
 
@@ -505,15 +557,63 @@ def _build_story_chunks(
     return chunks
 
 
-def _generate_distractors(target_words: list[str], count: int) -> list[str]:
+def _generate_distractors(
+    target_words: list[str],
+    count: int,
+    blacklist: set[str] | None = None,
+) -> list[str]:
     """Generate plausible non-pattern words as distractors for circle activities."""
     common_distractors = [
         "the", "and", "cat", "dog", "big", "run", "sit", "hat",
         "pen", "cup", "red", "hop", "fun", "bus", "map", "net",
     ]
-    # Filter out any that are in target_words
-    available = [d for d in common_distractors if d not in target_words]
+    exclude = {word.lower() for word in target_words}
+    if blacklist:
+        exclude |= {word.lower() for word in blacklist}
+    available = [d for d in common_distractors if d.lower() not in exclude]
     return available[:count]
+
+
+def _extract_distractor_blacklist(
+    prior_adaptations: list[dict[str, object]],
+) -> set[str]:
+    """Extract distractor words used in prior adaptations for blacklist reuse."""
+    blacklist: set[str] = set()
+    for adaptation in prior_adaptations:
+        raw = adaptation.get("distractor_words")
+        if not raw:
+            continue
+        if isinstance(raw, str):
+            words = [word.strip().lower() for word in raw.split(",") if word.strip()]
+            blacklist.update(words)
+    return blacklist
+
+
+def _suggest_format_mix(
+    prior_adaptations: list[dict[str, object]],
+    default_formats: list[str],
+) -> list[str]:
+    """Suggest response formats that differ from prior runs for the same skill."""
+    if not prior_adaptations:
+        return default_formats
+
+    recent_formats: set[str] | None = None
+    for adaptation in prior_adaptations:
+        raw_formats = adaptation.get("response_formats")
+        if isinstance(raw_formats, str) and raw_formats.strip():
+            recent_formats = {fmt.strip() for fmt in raw_formats.split(",") if fmt.strip()}
+            break
+
+    if not recent_formats:
+        return default_formats
+
+    default_set = {fmt.strip() for fmt in default_formats if fmt.strip()}
+    if default_set == recent_formats and len(default_formats) >= 2:
+        rotated = default_formats.copy()
+        rotated[0], rotated[1] = rotated[1], rotated[0]
+        return rotated
+
+    return default_formats
 
 
 def _generate_fill_blank(word: str) -> tuple[str, str]:

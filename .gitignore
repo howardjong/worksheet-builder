@@ -3,6 +3,7 @@ profiles/
 masters/
 artifacts/
 asset_cache/
+vector_store/
 
 # Sample inputs (UFLI copyrighted — private, local only)
 samples/input/

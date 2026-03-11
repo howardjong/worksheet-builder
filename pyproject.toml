@@ -29,6 +29,7 @@ module = [
     "openai.*",
     "google.*",
     "google.genai.*",
+    "chromadb.*",
 ]
 ignore_missing_imports = true
 
