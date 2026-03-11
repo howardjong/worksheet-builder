@@ -571,3 +571,59 @@ extract/adapter.py → Checkpoint 5.1 (post-launch)
 **Current status:**
 - Local machine is configured for Vertex-backed RAG embeddings against `ws-builder-rag`.
 - Existing non-RAG Gemini paths in repo remain API-key based (auth migration still separate from RAG workstream).
+
+### Session 21 — 2026-03-11 (A/B Evaluation Harness + RAG Context Quality Gating)
+**Participants:** User + Codex (GPT-5)
+**What happened:**
+- Implemented quality-first RAG context selection in `transform.py`:
+  - Added `_select_rag_adaptation_context()` helper.
+  - Adaptation now prefers `curated_exemplars` over generic `prior_adaptations`.
+  - Curated exemplar retrieval is now deduped by `source_hash` (to avoid over-weighting one source).
+  - Selected RAG metadata now includes `_rag_score` and `_rag_doc_id`.
+  - Added `artifacts/rag_context.json` output for every run (selected source/count/avg score or retrieval error).
+- Improved exemplar indexing in `rag/indexer.py`:
+  - Exemplar metadata now includes primitive adaptation summary fields (e.g. `response_formats`, `estimated_minutes`, `distractor_words`) when available.
+  - This allows curated exemplar retrieval to influence adaptation heuristics directly.
+- Added deterministic paired A/B runner `ab_eval.py`:
+  - Freezes Stage 1-4 per holdout target (`source_model.json` + `skill_model.json`).
+  - Seeds vector store from non-target inputs.
+  - Runs `A_no_rag` and `B_with_rag` from identical frozen artifacts.
+  - Produces `scorecard.md` + `scorecard.json` and per-variant `rag_context.json`.
+  - Supports `--clean-db`, `--seed`, and `--images/--no-images`.
+- Updated docs:
+  - `README.md` now includes A/B evaluation usage for `ab_eval.py`.
+- Added/updated tests:
+  - New `tests/test_transform_rag_context.py` for curated-vs-prior context selection behavior.
+  - Updated `tests/test_rag_indexer.py` to assert exemplar metadata carries adaptation summary fields.
+  - Updated `tests/test_rag_retrieval.py` to assert curated exemplar deduplication by `source_hash`.
+- Validation run:
+  - `.venv/bin/ruff check ...` on touched files ✅
+  - `.venv/bin/mypy ...` on touched files ✅
+  - `.venv/bin/pytest -q tests/test_transform_rag_context.py tests/test_rag_indexer.py tests/test_rag_retrieval.py` ✅ (13 passed)
+
+**What's next:**
+- Run `ab_eval.py` on a multi-target holdout set (not just `IMG_0004.JPG`) and review `scorecard.md`.
+- Consider tightening retrieval filters further (domain/skill match in addition to grade) if B quality remains flat.
+- Add learner-facing effectiveness rubric scoring (manual or evaluator-assisted) to complement validator flags.
+
+### Session 22 — 2026-03-11 (A/B Harness Smoke Validation + Current Working State)
+**Participants:** User + Codex (GPT-5)
+**What happened:**
+- Ran end-to-end smoke test of `ab_eval.py`:
+  - Command used (no seed): holdout `IMG_0004.JPG`, theme `roblox_obby`, `--no-images`.
+  - Output root: `samples/output/ab_eval_smoke/20260311_170208`
+  - Scorecard generated successfully:
+    - `B selected source`: `curated_exemplars`
+    - `B selected count`: `3`
+    - Aggregate result: tie (`Delta score = 0`) for this single holdout.
+- Verified run provenance files are emitted as designed:
+  - Per variant `artifacts/rag_context.json`
+  - Frozen artifacts under `frozen/artifacts/` (`source_model.json`, `skill_model.json`)
+- Additional retrieval quality fix validated:
+  - Curated exemplar retrieval deduplicates by `source_hash`.
+  - Test coverage updated and passing.
+
+**Current status (ready to run):**
+- `ab_eval.py` is operational for deterministic paired A/B.
+- RAG adaptation context now quality-gated (curated-first + deduped).
+- Recommended next run is multi-target holdouts with seeding enabled to produce aggregate evidence.

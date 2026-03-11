@@ -218,6 +218,30 @@ python batch.py --input-dir ./photos/ --profile profiles/ian.yaml --theme space 
 
 **Graceful shutdown:** Press Ctrl+C during a batch run. Running workers finish their current file, pending work is cancelled, and a partial report is generated.
 
+### A/B evaluation (RAG vs no RAG)
+
+Run paired A/B experiments with Stage 1-4 frozen (capture/extraction/skill),
+so differences come from adaptation + retrieval instead of OCR/vision drift:
+
+```bash
+# Example: hold out IMG_0004.JPG, seed store from other IMG_* files
+python ab_eval.py \
+  --input-dir ./samples/input \
+  --include "IMG_*" \
+  --target IMG_0004.JPG \
+  --profile profiles/ian.yaml \
+  --theme roblox_obby \
+  --output-root ./samples/output/ab_eval \
+  --db-path vector_store \
+  --seed \
+  --no-images
+```
+
+Outputs include:
+- `scorecard.md` and `scorecard.json` with per-target A/B deltas
+- Per-variant `artifacts/rag_context.json` showing retrieval provenance
+- Frozen `source_model.json` + `skill_model.json` for reproducible reruns
+
 ## Companion layer
 
 Beyond worksheet transformation, the companion layer provides:

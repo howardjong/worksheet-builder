@@ -183,6 +183,12 @@ def test_enriched_metadata_stored(
     assert metadata["estimated_minutes"] == 5
     assert metadata["all_validators_passed"] is True
 
+    exemplar_collection = get_or_create_collection(store, EXEMPLARS)
+    exemplar = exemplar_collection.get(ids=["exemplar_abc123_space_1"])
+    exemplar_meta = exemplar["metadatas"][0]
+    assert exemplar_meta["response_formats"] == "match,trace,circle"
+    assert exemplar_meta["estimated_minutes"] == 5
+
 
 def test_indexer_failures_dont_raise(
     tmp_path: Path,

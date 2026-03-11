@@ -71,7 +71,10 @@ def retrieve_context(
                 n_results=n_results,
                 where=where_filter,
             )
-            context.curated_exemplars = _parse_results(exemplar_results)
+            context.curated_exemplars = _deduplicate_by_source(
+                _parse_results(exemplar_results),
+                limit=n_results,
+            )
 
         adapt_col = get_or_create_collection(store, ADAPTATIONS)
         if int(adapt_col.count()) > 0:

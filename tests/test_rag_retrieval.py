@@ -155,6 +155,56 @@ def test_exemplars_only_include_validated_and_grade_filter(
     assert context.curated_exemplars[0].doc_id == "e1"
 
 
+def test_exemplars_deduplicate_by_source_hash(
+    tmp_path: Path,
+    fake_embed: None,
+) -> None:
+    del fake_embed
+    store = get_store(str(tmp_path / "vector_store"))
+    exemplar_col = get_or_create_collection(store, EXEMPLARS)
+
+    add_document(
+        exemplar_col,
+        doc_id="e1",
+        embedding=[1.0, 0.0, 0.0],
+        metadata={
+            "source_hash": "same",
+            "all_validators_passed": True,
+            "grade_level": "1",
+        },
+    )
+    add_document(
+        exemplar_col,
+        doc_id="e2",
+        embedding=[1.0, 0.0, 0.0],
+        metadata={
+            "source_hash": "same",
+            "all_validators_passed": True,
+            "grade_level": "1",
+        },
+    )
+    add_document(
+        exemplar_col,
+        doc_id="e3",
+        embedding=[1.0, 0.0, 0.0],
+        metadata={
+            "source_hash": "different",
+            "all_validators_passed": True,
+            "grade_level": "1",
+        },
+    )
+
+    context = retrieve_context(
+        skill_description="phonics: cvce",
+        grade_level="1",
+        n_results=2,
+        db_path=str(tmp_path / "vector_store"),
+    )
+    hashes = [result.metadata.get("source_hash") for result in context.curated_exemplars]
+    assert len(hashes) == 2
+    assert len(set(hashes)) == 2
+
+
 def test_hybrid_stages_populate_skill_and_content_results(
     tmp_path: Path,
     fake_embed: None,

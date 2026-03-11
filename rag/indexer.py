@@ -123,22 +123,27 @@ def index_run(
         try:
             pdf_emb = embed_pdf(pdf_path)
             doc_id = f"exemplar_{source_image_hash}_{theme_id}_{idx}"
+            exemplar_summary: dict[str, Any] = {}
+            if idx - 1 < len(adapted_summaries):
+                exemplar_summary = adapted_summaries[idx - 1]
+            metadata = {
+                "pdf_path": pdf_path,
+                "source_hash": source_image_hash,
+                "domain": skill_domain,
+                "specific_skill": skill_name,
+                "grade_level": grade_level,
+                "theme_id": theme_id,
+                "worksheet_mode": worksheet_mode,
+                "all_validators_passed": True,
+                "educator_approved": False,
+                "created_at": now,
+            }
+            metadata.update(_primitive_metadata(exemplar_summary))
             add_document(
                 exemplar_collection,
                 doc_id=doc_id,
                 embedding=pdf_emb.values,
-                metadata={
-                    "pdf_path": pdf_path,
-                    "source_hash": source_image_hash,
-                    "domain": skill_domain,
-                    "specific_skill": skill_name,
-                    "grade_level": grade_level,
-                    "theme_id": theme_id,
-                    "worksheet_mode": worksheet_mode,
-                    "all_validators_passed": True,
-                    "educator_approved": False,
-                    "created_at": now,
-                },
+                metadata=metadata,
             )
         except Exception as exc:
             logger.warning("Failed to index exemplar %s: %s", idx, exc)

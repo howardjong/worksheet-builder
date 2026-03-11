@@ -158,6 +158,7 @@ def run_pipeline(
 
     # Stage 4b: Optional RAG retrieval (skill + content)
     rag_prior_adaptations: list[dict[str, object]] | None = None
+    rag_debug: dict[str, object] = {"enabled": rag_available()}
     if rag_available():
         try:
             from rag.retrieval import retrieve_context
@@ -168,14 +169,20 @@ def run_pipeline(
                 extracted_text=source_model.raw_text,
                 grade_level=skill_model.grade_level,
             )
-            if rag_context.prior_adaptations:
-                rag_prior_adaptations = [
-                    {key: value for key, value in result.metadata.items()}
-                    for result in rag_context.prior_adaptations
-                ]
-                logger.info("  RAG: %s prior adaptations found", len(rag_prior_adaptations))
+            rag_prior_adaptations, rag_debug = _select_rag_adaptation_context(rag_context)
+            if rag_prior_adaptations:
+                selected_source = str(rag_debug.get("selected_source", "unknown"))
+                logger.info(
+                    "  RAG: %s contexts selected from %s",
+                    len(rag_prior_adaptations),
+                    selected_source,
+                )
         except Exception as exc:
+            rag_debug = {"enabled": True, "error": str(exc)}
             logger.warning("  RAG retrieval skipped: %s", exc)
+
+    rag_json = artifacts / "rag_context.json"
+    rag_json.write_text(json.dumps(rag_debug, indent=2))
 
     # Branch into single or multi worksheet pipeline
     if theme.multi_worksheet:
@@ -612,6 +619,54 @@ def _validate_format_variety(worksheets: Sequence[AdaptedActivityModel]) -> None
             len(all_formats),
             len(worksheets),
         )
+
+
+def _select_rag_adaptation_context(
+    rag_context: object,
+) -> tuple[list[dict[str, object]] | None, dict[str, object]]:
+    """Choose RAG context for adaptation with quality-first preference."""
+    try:
+        from rag.retrieval import RAGContext
+    except ImportError:
+        return None, {"enabled": False, "selected_source": "none"}
+
+    if not isinstance(rag_context, RAGContext):
+        return None, {"enabled": False, "selected_source": "none"}
+
+    selected_source = "none"
+    selected_results = rag_context.curated_exemplars
+    if selected_results:
+        selected_source = "curated_exemplars"
+    elif rag_context.prior_adaptations:
+        selected_results = rag_context.prior_adaptations
+        selected_source = "prior_adaptations"
+
+    selected_metadata: list[dict[str, object]] = []
+    for result in selected_results:
+        metadata = {key: value for key, value in result.metadata.items()}
+        metadata["_rag_score"] = float(result.score)
+        metadata["_rag_doc_id"] = result.doc_id
+        selected_metadata.append(metadata)
+
+    scores = [float(result.score) for result in selected_results]
+    avg_score = (sum(scores) / len(scores)) if scores else None
+    diagnostics: dict[str, object] = {
+        "enabled": True,
+        "selected_source": selected_source,
+        "selected_count": len(selected_results),
+        "selected_avg_score": avg_score,
+        "counts": {
+            "similar_worksheets": len(rag_context.similar_worksheets),
+            "similar_skills": len(rag_context.similar_skills),
+            "prior_adaptations": len(rag_context.prior_adaptations),
+            "curated_exemplars": len(rag_context.curated_exemplars),
+        },
+        "selected_doc_ids": [result.doc_id for result in selected_results],
+    }
+
+    if not selected_metadata:
+        return None, diagnostics
+    return selected_metadata, diagnostics
 
 
 if __name__ == "__main__":

@@ -1,0 +1,456 @@
+"""Run paired A/B evaluation with extraction/skill freezing for RAG experiments."""
+
+from __future__ import annotations
+
+import json
+import logging
+import os
+import shutil
+from contextlib import contextmanager
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+import click
+
+from capture.preprocess import preprocess_page
+from capture.store import store_master
+from companion.schema import load_profile
+from extract.heuristics import map_to_source_model
+from extract.ocr import extract_text_with_fallback
+from extract.schema import SourceWorksheetModel
+from extract.vision import extract_with_vision
+from skill.extractor import extract_skill
+from skill.schema import LiteracySkillModel
+from theme.engine import load_theme
+from transform import (
+    _run_multi_worksheet_pipeline,
+    _run_single_worksheet_pipeline,
+    _select_rag_adaptation_context,
+    rag_available,
+    run_pipeline,
+)
+
+logger = logging.getLogger(__name__)
+
+
+@click.command()
+@click.option("--input-dir", required=True, help="Input image directory")
+@click.option("--profile", "profile_path", required=True, help="Learner profile YAML")
+@click.option("--theme", "theme_id", default="roblox_obby", help="Theme name")
+@click.option("--output-root", default="./samples/output/ab_eval", help="Root output dir")
+@click.option("--include", "include_pattern", default="IMG_*", help="Glob pattern in input dir")
+@click.option(
+    "--target",
+    "targets",
+    multiple=True,
+    help="Holdout target image(s), basename or absolute path. Repeatable.",
+)
+@click.option("--db-path", default="vector_store", help="Vector store path")
+@click.option("--seed/--no-seed", default=True, help="Seed store with non-target inputs")
+@click.option("--images/--no-images", default=False, help="Enable AI image generation")
+@click.option(
+    "--clean-db",
+    is_flag=True,
+    default=False,
+    help="Delete vector store before seeding (destructive)",
+)
+def main(
+    input_dir: str,
+    profile_path: str,
+    theme_id: str,
+    output_root: str,
+    include_pattern: str,
+    targets: tuple[str, ...],
+    db_path: str,
+    seed: bool,
+    images: bool,
+    clean_db: bool,
+) -> None:
+    """Run A/B with frozen extraction+skill and output a scorecard."""
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+
+    in_dir = Path(input_dir)
+    files = sorted(in_dir.glob(include_pattern))
+    if not files:
+        raise click.ClickException(f"No files matched {include_pattern} in {in_dir}")
+
+    target_paths = _resolve_targets(files, targets)
+    if not target_paths:
+        raise click.ClickException("No target files resolved for A/B run")
+
+    run_root = Path(output_root) / datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_root.mkdir(parents=True, exist_ok=True)
+    logger.info("A/B output root: %s", run_root)
+
+    if clean_db:
+        db = Path(db_path)
+        if db.exists():
+            shutil.rmtree(db)
+            logger.info("Deleted vector store: %s", db)
+
+    seed_inputs = [path for path in files if path not in target_paths]
+    if seed:
+        if not rag_available():
+            logger.warning("RAG unavailable (GOOGLE_CLOUD_PROJECT not set) — skipping seed")
+        elif seed_inputs:
+            _seed_store(seed_inputs, profile_path, theme_id, run_root / "seed_runs", images)
+        else:
+            logger.info("No seed inputs (all matched files are targets)")
+
+    profile = load_profile(profile_path)
+    theme = load_theme(theme_id)
+    if not theme.multi_worksheet:
+        logger.warning(
+            "Theme %s is single-worksheet mode; AI review in prod path can add variability.",
+            theme_id,
+        )
+
+    comparisons: list[dict[str, Any]] = []
+    for target in target_paths:
+        logger.info("Evaluating holdout target: %s", target.name)
+        case_dir = run_root / target.stem
+        frozen = _freeze_source_and_skill(target, case_dir / "frozen")
+        result_a = _run_variant_from_frozen(
+            variant="A_no_rag",
+            case_dir=case_dir,
+            frozen=frozen,
+            profile=profile,
+            theme=theme,
+            theme_id=theme_id,
+            use_rag=False,
+            images=images,
+        )
+        result_b = _run_variant_from_frozen(
+            variant="B_with_rag",
+            case_dir=case_dir,
+            frozen=frozen,
+            profile=profile,
+            theme=theme,
+            theme_id=theme_id,
+            use_rag=True,
+            images=images,
+        )
+        comparisons.append(_build_pair_summary(target.name, result_a, result_b))
+
+    report = _build_scorecard(
+        run_root=run_root,
+        input_dir=in_dir,
+        include_pattern=include_pattern,
+        targets=target_paths,
+        seed_count=len(seed_inputs) if seed else 0,
+        images=images,
+        db_path=db_path,
+        comparisons=comparisons,
+    )
+    report_path = run_root / "scorecard.md"
+    report_path.write_text(report)
+    (run_root / "scorecard.json").write_text(json.dumps(comparisons, indent=2))
+    logger.info("Scorecard: %s", report_path)
+
+
+def _resolve_targets(files: list[Path], targets: tuple[str, ...]) -> list[Path]:
+    if targets:
+        by_name = {path.name: path for path in files}
+        selected: list[Path] = []
+        for value in targets:
+            candidate = Path(value)
+            if candidate.exists():
+                selected.append(candidate.resolve())
+                continue
+            if value in by_name:
+                selected.append(by_name[value])
+                continue
+            raise click.ClickException(f"Target not found in matched files: {value}")
+        return sorted(set(selected))
+
+    default = [path for path in files if path.name == "IMG_0004.JPG"]
+    if default:
+        return default
+    return [files[0]]
+
+
+def _seed_store(
+    seed_inputs: list[Path],
+    profile_path: str,
+    theme_id: str,
+    seed_root: Path,
+    images: bool,
+) -> None:
+    seed_root.mkdir(parents=True, exist_ok=True)
+    logger.info("Seeding vector store from %s input(s)...", len(seed_inputs))
+    with _asset_generation(images):
+        for path in seed_inputs:
+            file_root = seed_root / path.stem
+            file_root.mkdir(parents=True, exist_ok=True)
+            run_pipeline(
+                input_path=str(path),
+                profile_path=profile_path,
+                theme_id=theme_id,
+                output_dir=str(file_root / "output"),
+                artifacts_dir=str(file_root / "artifacts"),
+            )
+
+
+def _freeze_source_and_skill(
+    input_path: Path,
+    freeze_dir: Path,
+) -> dict[str, Any]:
+    freeze_dir.mkdir(parents=True, exist_ok=True)
+    artifacts = freeze_dir / "artifacts"
+    artifacts.mkdir(parents=True, exist_ok=True)
+    masters = freeze_dir / "masters"
+    masters.mkdir(parents=True, exist_ok=True)
+
+    preprocessed_path = artifacts / "preprocessed.png"
+    preprocess_page(str(input_path), str(preprocessed_path))
+    master = store_master(str(preprocessed_path), str(masters))
+
+    source_model = extract_with_vision(str(preprocessed_path), master.image_hash)
+    if source_model is None:
+        ocr_result = extract_text_with_fallback(str(preprocessed_path))
+        source_model = map_to_source_model(ocr_result, master.image_hash)
+
+    skill_model = extract_skill(source_model)
+
+    (artifacts / "source_model.json").write_text(source_model.model_dump_json(indent=2))
+    (artifacts / "skill_model.json").write_text(skill_model.model_dump_json(indent=2))
+
+    return {
+        "input_path": str(input_path),
+        "preprocessed_path": str(preprocessed_path),
+        "source_image_hash": master.image_hash,
+        "source_model": source_model,
+        "skill_model": skill_model,
+    }
+
+
+def _run_variant_from_frozen(
+    variant: str,
+    case_dir: Path,
+    frozen: dict[str, Any],
+    profile: object,
+    theme: object,
+    theme_id: str,
+    use_rag: bool,
+    images: bool,
+) -> dict[str, Any]:
+    variant_dir = case_dir / variant
+    output = variant_dir / "output"
+    artifacts = variant_dir / "artifacts"
+    output.mkdir(parents=True, exist_ok=True)
+    artifacts.mkdir(parents=True, exist_ok=True)
+
+    source_model = frozen["source_model"]
+    skill_model = frozen["skill_model"]
+    source_hash = str(frozen["source_image_hash"])
+    preprocessed = str(frozen["preprocessed_path"])
+
+    rag_prior_adaptations: list[dict[str, object]] | None = None
+    rag_debug: dict[str, object] = {"enabled": use_rag}
+    if use_rag and rag_available():
+        try:
+            from rag.retrieval import retrieve_context
+
+            assert isinstance(source_model, SourceWorksheetModel)
+            assert isinstance(skill_model, LiteracySkillModel)
+            skill_desc = f"{skill_model.domain}: {skill_model.specific_skill}"
+            context = retrieve_context(
+                skill_description=skill_desc,
+                extracted_text=source_model.raw_text,
+                grade_level=skill_model.grade_level,
+            )
+            rag_prior_adaptations, rag_debug = _select_rag_adaptation_context(context)
+        except Exception as exc:
+            rag_debug = {"enabled": True, "error": str(exc)}
+    (artifacts / "rag_context.json").write_text(json.dumps(rag_debug, indent=2))
+
+    with _asset_generation(images):
+        if getattr(theme, "multi_worksheet", False):
+            run_artifacts = _run_multi_worksheet_pipeline(
+                skill_model=skill_model,
+                profile=profile,
+                theme=theme,
+                theme_id=theme_id,
+                source_image_path=preprocessed,
+                source_image_hash=source_hash,
+                extracted_text=source_model.raw_text,
+                template_type=source_model.template_type,
+                ocr_engine=source_model.ocr_engine,
+                region_count=len(source_model.regions),
+                output=output,
+                artifacts=artifacts,
+                rag_prior_adaptations=rag_prior_adaptations,
+            )
+        else:
+            run_artifacts = _run_single_worksheet_pipeline(
+                skill_model=skill_model,
+                profile=profile,
+                theme=theme,
+                theme_id=theme_id,
+                source_image_path=preprocessed,
+                source_image_hash=source_hash,
+                extracted_text=source_model.raw_text,
+                template_type=source_model.template_type,
+                ocr_engine=source_model.ocr_engine,
+                region_count=len(source_model.regions),
+                output=output,
+                artifacts=artifacts,
+                rag_prior_adaptations=rag_prior_adaptations,
+            )
+
+    response_formats: set[str] = set()
+    total_chunks = 0
+    total_items = 0
+    for summary in run_artifacts.adapted_summaries:
+        formats = str(summary.get("response_formats", "")).split(",")
+        response_formats.update(fmt for fmt in formats if fmt)
+        total_chunks += int(summary.get("chunk_count", 0))
+        total_items += int(summary.get("total_items", 0))
+
+    return {
+        "variant": variant,
+        "output_dir": str(output),
+        "pdf_paths": run_artifacts.pdf_paths,
+        "validation": run_artifacts.validation_results,
+        "all_validators_passed": bool(
+            run_artifacts.validation_results.get("all_validators_passed", False),
+        ),
+        "response_formats": sorted(response_formats),
+        "response_format_count": len(response_formats),
+        "total_chunks": total_chunks,
+        "total_items": total_items,
+        "rag_debug": rag_debug,
+    }
+
+
+def _build_pair_summary(
+    target_name: str,
+    result_a: dict[str, Any],
+    result_b: dict[str, Any],
+) -> dict[str, Any]:
+    a_validation = result_a["validation"]
+    b_validation = result_b["validation"]
+    a_score = _variant_score(result_a)
+    b_score = _variant_score(result_b)
+
+    return {
+        "target": target_name,
+        "A_no_rag": result_a,
+        "B_with_rag": result_b,
+        "delta": {
+            "score": b_score - a_score,
+            "all_validators_passed": int(bool(result_b["all_validators_passed"]))
+            - int(bool(result_a["all_validators_passed"])),
+            "response_format_count": int(result_b["response_format_count"])
+            - int(result_a["response_format_count"]),
+            "skill_parity_passed": int(bool(b_validation.get("skill_parity_passed", False)))
+            - int(bool(a_validation.get("skill_parity_passed", False))),
+            "adhd_compliance_passed": int(bool(b_validation.get("adhd_compliance_passed", False)))
+            - int(bool(a_validation.get("adhd_compliance_passed", False))),
+        },
+    }
+
+
+def _variant_score(result: dict[str, Any]) -> int:
+    validation = result["validation"]
+    pass_flags = [
+        "skill_parity_passed",
+        "age_band_passed",
+        "adhd_compliance_passed",
+        "print_quality_passed",
+    ]
+    pass_score = sum(1 for key in pass_flags if bool(validation.get(key, False)))
+    return pass_score * 10 + int(result["response_format_count"])
+
+
+def _build_scorecard(
+    run_root: Path,
+    input_dir: Path,
+    include_pattern: str,
+    targets: list[Path],
+    seed_count: int,
+    images: bool,
+    db_path: str,
+    comparisons: list[dict[str, Any]],
+) -> str:
+    b_better = sum(1 for row in comparisons if int(row["delta"]["score"]) > 0)
+    ties = sum(1 for row in comparisons if int(row["delta"]["score"]) == 0)
+    a_better = sum(1 for row in comparisons if int(row["delta"]["score"]) < 0)
+
+    lines = [
+        "# A/B Scorecard",
+        "",
+        f"- Run root: `{run_root}`",
+        f"- Input dir: `{input_dir}` (pattern `{include_pattern}`)",
+        f"- Targets: {', '.join(path.name for path in targets)}",
+        f"- Seed inputs indexed: {seed_count}",
+        f"- Image generation enabled: {images}",
+        f"- Vector store path: `{db_path}`",
+        "",
+        "## Aggregate",
+        "",
+        f"- B score better: {b_better}",
+        f"- Tie: {ties}",
+        f"- A score better: {a_better}",
+        "",
+        "## Per Target",
+        "",
+        (
+            "| Target | A all pass | B all pass | A formats | B formats | "
+            "B selected source | B selected count | Delta score |"
+        ),
+        "|---|---:|---:|---:|---:|---|---:|---:|",
+    ]
+
+    for row in comparisons:
+        a = row["A_no_rag"]
+        b = row["B_with_rag"]
+        b_debug = b.get("rag_debug", {})
+        row_fmt = (
+            "| {target} | {a_pass} | {b_pass} | {a_fmt} | {b_fmt} | "
+            "{source} | {count} | {delta} |"
+        )
+        lines.append(
+            row_fmt.format(
+                target=row["target"],
+                a_pass=int(bool(a["all_validators_passed"])),
+                b_pass=int(bool(b["all_validators_passed"])),
+                a_fmt=int(a["response_format_count"]),
+                b_fmt=int(b["response_format_count"]),
+                source=b_debug.get("selected_source", "none"),
+                count=int(b_debug.get("selected_count", 0) or 0),
+                delta=int(row["delta"]["score"]),
+            ),
+        )
+
+    lines.extend([
+        "",
+        "## Notes",
+        "",
+        "- This protocol freezes Stage 1-4 (capture/extraction/skill) once per target.",
+        "- A/B differences should come from adaptation + retrieval, not extraction drift.",
+        "- Inspect each variant's `artifacts/rag_context.json` for retrieval provenance.",
+    ])
+    return "\n".join(lines) + "\n"
+
+
+@contextmanager
+def _asset_generation(images: bool) -> Any:
+    key = "WORKSHEET_SKIP_ASSET_GEN"
+    old_value = os.environ.get(key)
+    if images:
+        os.environ.pop(key, None)
+    else:
+        os.environ[key] = "1"
+    try:
+        yield
+    finally:
+        if old_value is None:
+            os.environ.pop(key, None)
+        else:
+            os.environ[key] = old_value
+
+
+if __name__ == "__main__":
+    main()
