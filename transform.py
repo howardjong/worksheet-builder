@@ -158,6 +158,7 @@ def run_pipeline(
 
     # Stage 4b: Optional RAG retrieval (skill + content)
     rag_prior_adaptations: list[dict[str, object]] | None = None
+    rag_curriculum_references: list[dict[str, object]] | None = None
     rag_debug: dict[str, object] = {"enabled": rag_available()}
     if rag_available():
         try:
@@ -170,12 +171,18 @@ def run_pipeline(
                 grade_level=skill_model.grade_level,
             )
             rag_prior_adaptations, rag_debug = _select_rag_adaptation_context(rag_context)
+            rag_curriculum_references = _select_rag_curriculum_context(rag_context)
             if rag_prior_adaptations:
                 selected_source = str(rag_debug.get("selected_source", "unknown"))
                 logger.info(
                     "  RAG: %s contexts selected from %s",
                     len(rag_prior_adaptations),
                     selected_source,
+                )
+            if rag_curriculum_references:
+                logger.info(
+                    "  RAG: %s curriculum references available",
+                    len(rag_curriculum_references),
                 )
         except Exception as exc:
             rag_debug = {"enabled": True, "error": str(exc)}
@@ -200,6 +207,7 @@ def run_pipeline(
             output=output,
             artifacts=artifacts,
             rag_prior_adaptations=rag_prior_adaptations,
+            rag_curriculum_references=rag_curriculum_references,
         )
     else:
         run_artifacts = _run_single_worksheet_pipeline(
@@ -216,6 +224,7 @@ def run_pipeline(
             output=output,
             artifacts=artifacts,
             rag_prior_adaptations=rag_prior_adaptations,
+            rag_curriculum_references=rag_curriculum_references,
         )
 
     # Stage 9: Optional RAG indexing
@@ -261,6 +270,7 @@ def _run_single_worksheet_pipeline(
     output: Path,
     artifacts: Path,
     rag_prior_adaptations: list[dict[str, object]] | None,
+    rag_curriculum_references: list[dict[str, object]] | None,
 ) -> RunArtifacts:
     """Single-worksheet pipeline."""
     from companion.avatar import compose_avatar
@@ -277,6 +287,7 @@ def _run_single_worksheet_pipeline(
         profile,
         theme_id=theme_id,
         rag_prior_adaptations=rag_prior_adaptations,
+        rag_curriculum_references=rag_curriculum_references,
     )
 
     adapted_json = artifacts / "adapted_model.json"
@@ -364,6 +375,7 @@ def _run_multi_worksheet_pipeline(
     output: Path,
     artifacts: Path,
     rag_prior_adaptations: list[dict[str, object]] | None,
+    rag_curriculum_references: list[dict[str, object]] | None,
 ) -> RunArtifacts:
     """Multi-worksheet pipeline — produces 2-3 mini-worksheets per lesson."""
     from companion.schema import LearnerProfile
@@ -381,6 +393,7 @@ def _run_multi_worksheet_pipeline(
         profile,
         theme_id=theme_id,
         rag_prior_adaptations=rag_prior_adaptations,
+        rag_curriculum_references=rag_curriculum_references,
     )
     logger.info("  Generated %s mini-worksheets", len(worksheets))
 
@@ -643,10 +656,7 @@ def _select_rag_adaptation_context(
 
     selected_metadata: list[dict[str, object]] = []
     for result in selected_results:
-        metadata = {key: value for key, value in result.metadata.items()}
-        metadata["_rag_score"] = float(result.score)
-        metadata["_rag_doc_id"] = result.doc_id
-        selected_metadata.append(metadata)
+        selected_metadata.append(_rag_result_to_metadata(result))
 
     scores = [float(result.score) for result in selected_results]
     avg_score = (sum(scores) / len(scores)) if scores else None
@@ -660,6 +670,7 @@ def _select_rag_adaptation_context(
             "similar_skills": len(rag_context.similar_skills),
             "prior_adaptations": len(rag_context.prior_adaptations),
             "curated_exemplars": len(rag_context.curated_exemplars),
+            "curriculum_references": len(rag_context.curriculum_references),
         },
         "selected_doc_ids": [result.doc_id for result in selected_results],
     }
@@ -667,6 +678,42 @@ def _select_rag_adaptation_context(
     if not selected_metadata:
         return None, diagnostics
     return selected_metadata, diagnostics
+
+
+def _select_rag_curriculum_context(
+    rag_context: object,
+) -> list[dict[str, object]] | None:
+    """Return curriculum references with metadata and document text preserved."""
+    try:
+        from rag.retrieval import RAGContext
+    except ImportError:
+        return None
+
+    if not isinstance(rag_context, RAGContext):
+        return None
+
+    if not rag_context.curriculum_references:
+        return None
+
+    return [_rag_result_to_metadata(result) for result in rag_context.curriculum_references]
+
+
+def _rag_result_to_metadata(result: object) -> dict[str, object]:
+    """Flatten retrieval metadata for downstream adaptation hooks."""
+    try:
+        from rag.retrieval import RetrievalResult
+    except ImportError:
+        return {}
+
+    if not isinstance(result, RetrievalResult):
+        return {}
+
+    metadata = {key: value for key, value in result.metadata.items()}
+    metadata["_rag_score"] = float(result.score)
+    metadata["_rag_doc_id"] = result.doc_id
+    if result.document:
+        metadata["_rag_document"] = result.document
+    return metadata
 
 
 if __name__ == "__main__":

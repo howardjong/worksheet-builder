@@ -27,6 +27,7 @@ from transform import (
     _run_multi_worksheet_pipeline,
     _run_single_worksheet_pipeline,
     _select_rag_adaptation_context,
+    _select_rag_curriculum_context,
     rag_available,
     run_pipeline,
 )
@@ -247,6 +248,7 @@ def _run_variant_from_frozen(
     preprocessed = str(frozen["preprocessed_path"])
 
     rag_prior_adaptations: list[dict[str, object]] | None = None
+    rag_curriculum_references: list[dict[str, object]] | None = None
     rag_debug: dict[str, object] = {"enabled": use_rag}
     if use_rag and rag_available():
         try:
@@ -261,6 +263,7 @@ def _run_variant_from_frozen(
                 grade_level=skill_model.grade_level,
             )
             rag_prior_adaptations, rag_debug = _select_rag_adaptation_context(context)
+            rag_curriculum_references = _select_rag_curriculum_context(context)
         except Exception as exc:
             rag_debug = {"enabled": True, "error": str(exc)}
     (artifacts / "rag_context.json").write_text(json.dumps(rag_debug, indent=2))
@@ -281,6 +284,7 @@ def _run_variant_from_frozen(
                 output=output,
                 artifacts=artifacts,
                 rag_prior_adaptations=rag_prior_adaptations,
+                rag_curriculum_references=rag_curriculum_references,
             )
         else:
             run_artifacts = _run_single_worksheet_pipeline(
@@ -297,6 +301,7 @@ def _run_variant_from_frozen(
                 output=output,
                 artifacts=artifacts,
                 rag_prior_adaptations=rag_prior_adaptations,
+                rag_curriculum_references=rag_curriculum_references,
             )
 
     response_formats: set[str] = set()

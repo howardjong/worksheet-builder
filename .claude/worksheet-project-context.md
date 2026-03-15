@@ -8,10 +8,10 @@
 
 ## Current State
 
-**Status:** Core product milestones remain complete. New Gemini Embedding 2 RAG workstream is now in progress with Phases 1-6 implemented (RAG package + adaptation consumption + transform integration). CI checks passing locally (`ruff`, `mypy`, `pytest`). 247 tests passing (plus 3 skipped).
+**Status:** Core product milestones remain complete. Gemini Embedding 2 RAG Phase 7 is implemented and the curriculum-aware adaptation follow-up is now wired through `adapt/engine.py`. UFLI corpus pipeline is fully executed: crawl complete (148 lessons), acquire complete (539 files), extract complete (148 normalized), index complete (148 curriculum records in `vector_store/`). RAG client now supports API-key or Vertex backends plus embedding-model fallback (`gemini-embedding-exp-03-07` -> `gemini-embedding-2-preview` -> `text-embedding-005`). Curriculum retrieval now flows through `transform.py` and `ab_eval.py` into adaptation so word choices can be steered toward exact UFLI lesson content when overlap is strong enough. Validation for this follow-up passed: focused `ruff`/`mypy` on touched files and full repo suite green (`285 passed`).
 **Branch:** `codex/feature-gemini-embedding-2-rag`
 **Plan version:** 1.5.0 + `gemini-embedding-2-rag-plan.md` (v2)
-**Last Updated:** 2026-03-11
+**Last Updated:** 2026-03-14
 
 ### Milestone Progress
 
@@ -23,20 +23,46 @@
 | M4: Companion + Avatar | **Complete** | ~~4.1~~, ~~4.2~~, ~~4.3~~ | All done |
 | M5: AI Assist + Generative | **Complete** | ~~5.1~~, ~~5.2~~, ~~5.3~~ | OpenAI + Gemini + Claude |
 
-### Active Workstream: Gemini Embedding 2 RAG (2026-03-11)
-- Plan file: `gemini-embedding-2-rag-plan.md`
+### Active Workstream: Gemini Embedding 2 RAG + UFLI Corpus (2026-03-14)
+- **Plan files:**
+  - `gemini-embedding-2-rag-plan.md` — RAG architecture and phases (Phases 1-7 code implemented; curriculum-aware adaptation follow-up now complete)
+  - `.claude/plans/reactive-mixing-riddle.md` — UFLI corpus ingestion plan (auto-loaded by Claude Code). Covers crawl/acquire/extract/ingest phases, file inventory, and verification steps
+  - `worksheet-builder-consolidated-plan.md` — original product plan (v1.4.0, all 15 checkpoints complete)
 - **Completed in branch**:
   - RAG package created: `rag/client.py`, `rag/embeddings.py`, `rag/store.py`, `rag/retrieval.py`, `rag/indexer.py`
+  - RAG backend hardening: `rag/client.py` now supports `RAG_GEMINI_BACKEND=auto|api_key|vertex`, `rag/embeddings.py` retries across fallback embedding models, `corpus/ufli/ingest.py` loads `.env` for direct CLI runs
+  - Phase 7 modules added: `rag/backfill.py` (artifact-to-index CLI) and `rag/eval.py` (retrieval/adaptation evaluation harness with JSON + Markdown reports)
   - Adaptation consumption path added in `adapt/engine.py` (`rag_prior_adaptations`, distractor blacklist, format mix rotation)
+  - Curriculum-aware adaptation added in `adapt/engine.py`: optional `rag_curriculum_references` flows into both `adapt_activity()` and `adapt_lesson()`, builds a deterministic curriculum word bank from retrieved UFLI lesson text, prefers curriculum-backed target words when at least two exact matches are present, and annotates supported items with `curriculum_supported` metadata for auditability
   - Transform pipeline integration in `transform.py` (`RunArtifacts`, optional retrieval before adapt, optional indexing after run)
-  - Config/deps updates: `requirements.txt` (`chromadb>=0.5`), `.gitignore` (`vector_store/`), `pyproject.toml` mypy override for `chromadb.*`
-  - New tests: `tests/test_rag_embeddings.py`, `tests/test_rag_store.py`, `tests/test_rag_retrieval.py`, `tests/test_rag_indexer.py`, `tests/test_rag_adapt.py`
+  - `transform.py` + `ab_eval.py` now preserve curriculum retrieval documents via `_select_rag_curriculum_context()` and pass them into the adaptation stage alongside exemplar/prior-adaptation metadata
+  - Config/deps updates: `requirements.txt` (`chromadb>=0.5`, `python-pptx>=0.6.21`, `playwright>=1.40`), `.gitignore` (`vector_store/`, `data/ufli/raw/`, `data/ufli/normalized.jsonl`), `pyproject.toml` mypy override for `chromadb.*`, `playwright.*`, `pptx.*`
+  - New RAG tests: `tests/test_rag_embeddings.py`, `tests/test_rag_store.py`, `tests/test_rag_retrieval.py`, `tests/test_rag_indexer.py`, `tests/test_rag_adapt.py`
+  - New curriculum steering tests: `tests/test_rag_adapt.py` covers curriculum-backed target-word prioritization and the minimum-match guardrail; `tests/test_transform_rag_context.py` covers curriculum document preservation in transform-side RAG selection
+  - **UFLI corpus ingestion pipeline** (new):
+    - `corpus/__init__.py`, `corpus/ufli/__init__.py` — package structure
+    - `corpus/ufli/crawl.py` — Playwright crawler for UFLI Toolbox (15 lesson group pages, ~148 lessons). Verified against live site. Features: retries with exponential backoff, incremental writes, malformed manifest recovery, browser cleanup via try/finally, realistic User-Agent/headers, rate limiting with jitter, SafeLinks URL unwrapping, A-J vs 1-128 page structure handling
+    - `corpus/ufli/acquire.py` — Download PPTX/PDF resources from manifest. Features: retries with backoff, 60s socket timeout, partial file cleanup, resumable, prefers direct PPTX over Google Slides export
+    - `corpus/ufli/extract.py` — Text extraction from PPTX (python-pptx) and PDF (PyMuPDF). Outputs `normalized.jsonl`
+    - `corpus/ufli/ingest.py` — Embed with Gemini, index into ChromaDB `curriculum` collection. Click CLI with commands: `crawl`, `acquire`, `extract`, `index`, `run-all`
+    - `rag/store.py` — Added `CURRICULUM = "curriculum"` collection constant
+    - `rag/retrieval.py` — Added `curriculum_references` field to `RAGContext`, curriculum collection query in `retrieve_context()` (reuses existing skill embedding, no extra API call)
+    - `transform.py` — Added `curriculum_references` count to RAG diagnostics
+    - New tests: `tests/test_corpus_extract.py` (3), `tests/test_corpus_ingest.py` (4), `tests/test_retrieval_curriculum.py` (3) — 10 total
 - **Validated locally**:
-  - `.venv/bin/ruff check .`
-  - `.venv/bin/mypy .`
-  - `.venv/bin/pytest tests -v --ignore=tests/test_e2e.py` → `247 passed, 3 skipped`
+  - `.venv/bin/ruff check adapt/engine.py transform.py ab_eval.py tests/test_rag_adapt.py tests/test_transform_rag_context.py` — clean
+  - `.venv/bin/mypy adapt/engine.py transform.py ab_eval.py tests/test_rag_adapt.py tests/test_transform_rag_context.py` — clean
+  - `.venv/bin/pytest -q tests/test_rag_adapt.py tests/test_transform_rag_context.py` → `8 passed`
+  - `.venv/bin/pytest -q tests/test_adapt.py tests/test_rag_adapt.py tests/test_transform_rag_context.py` → `48 passed`
+  - `.venv/bin/pytest -q tests` → `285 passed`
+- **Executed** (2026-03-14):
+  - `playwright install chromium` — done
+  - **Crawl**: 148 lessons across 15 pages, zero errors, manifest at `data/ufli/manifest.jsonl`
+  - **Acquire**: 539 files downloaded (148 PPTX + 131 decodable PDFs + 134 home practice PDFs + 126 additional PDFs). Required SSL fix: added `certifi` + `ssl.create_default_context(cafile=certifi.where())` to `acquire.py` (macOS Python 3.13 has no default CA bundle). All 148 lessons status: `acquired`
+  - **Extract**: 148 lessons extracted to `data/ufli/normalized.jsonl` via python-pptx + PyMuPDF
+  - **Index**: Completed after backend hardening. Live run used API-key backend auto-selection and `gemini-embedding-2-preview`; 148 lessons indexed into `vector_store/`
 - **Pending from RAG plan**:
-  - Phase 7 (`rag/backfill.py`, `rag/eval.py`)
+  - Decide whether `rag/eval.py`, `ab_eval.py`, or both should be the primary experiment harness and run a real eval pass on `samples/input/`
   - Optional batch main-thread indexing strategy from Phase 14
   - Optional docs updates (`README.md`, `CLAUDE.md`)
 
@@ -106,11 +132,34 @@
 - `batch_utils.py` — batch utilities: FileResult, RateLimiter (token-bucket), ProgressTracker, file collection, manifest I/O, report generation
 - `tests/test_batch.py` — 25 tests (file collection, rate limiter, progress tracker, manifest, process_single_file, CLI dry-run)
 - `tests/test_rag_*.py` + `tests/test_rag_adapt.py` — RAG unit tests and retrieval-to-adaptation tests
+- `corpus/ufli/crawl.py` — Playwright crawler for UFLI Toolbox (15 page groups, ~148 lessons)
+- `corpus/ufli/acquire.py` — Resource downloader (PPTX + PDF) with retries
+- `corpus/ufli/extract.py` — Text extraction from PPTX (python-pptx) and PDF (PyMuPDF)
+- `corpus/ufli/ingest.py` — Embed + index into ChromaDB curriculum collection; Click CLI
+- `tests/test_corpus_extract.py` — 3 tests (PPTX/PDF extraction with fixtures)
+- `tests/test_corpus_ingest.py` — 4 tests (ingestion, idempotency, grade derivation)
+- `tests/test_retrieval_curriculum.py` — 3 tests (curriculum retrieval, grade filtering, empty collection)
 
 ### What's Next
-**All original milestones remain complete. Active remaining work includes RAG completion and broader production hardening:**
-- Implement RAG Phase 7 modules (`rag/backfill.py`, `rag/eval.py`)
+**All original milestones remain complete. UFLI crawl/acquire/extract/index are done. Active remaining work is now RAG evaluation workflow decisions, experiment execution, and production hardening.**
+
+### Handoff Start Here
+- **Current ready state**: `vector_store/` contains 148 indexed UFLI curriculum records, transform/eval code now passes curriculum hits into adaptation, and curriculum-backed word steering is covered by tests.
+- **Current code state**: `rag/backfill.py` and `rag/eval.py` are implemented; curriculum-aware adaptation is now complete in `adapt/engine.py`; full repo suite is green after the change (`285 passed`).
+- **First task next session**: decide whether to use `rag/eval.py`, `ab_eval.py`, or both as the primary experiment harness and then run a real evaluation pass on `samples/input/`.
+- **Second task after that**: decide whether the batch flow should index on the main thread (Phase 14 follow-up) or stay optional/manual.
+- **Primary files to open first**: `rag/eval.py`, `ab_eval.py`, `transform.py`, `gemini-embedding-2-rag-plan.md`
+- **Useful verification commands**:
+  - `.venv/bin/pytest -q tests/test_rag_backfill.py tests/test_rag_eval.py tests/test_rag_client.py tests/test_rag_embeddings.py tests/test_rag_retrieval.py tests/test_corpus_ingest.py tests/test_retrieval_curriculum.py`
+  - `.venv/bin/python -c 'from rag.store import CURRICULUM, get_or_create_collection, get_store; print(get_or_create_collection(get_store("vector_store"), CURRICULUM).count())'`
+- **Environment note**: live Gemini embedding currently works via API-key auto-selection from `.env`. Vertex fallback remains supported in code but was not needed after backend hardening.
+
+**Priority 1: Remaining RAG work** (see `gemini-embedding-2-rag-plan.md`)
+- Decide how `rag/eval.py` and `ab_eval.py` should coexist or converge
+- Run a real evaluation pass on `samples/input/` now that curriculum-aware steering is in place
 - Decide on and implement RAG batch indexing flow (main-thread indexing strategy)
+
+**Priority 2: Testing and polish**
 - Test batch processing on full folder of UFLI lessons
 - Test multi-worksheet output on more UFLI lessons
 - AI asset generation end-to-end (requires Gemini API key with image gen capability)
@@ -146,6 +195,9 @@
 | D20 | google.genai SDK, not google.generativeai | Old SDK deprecated; new google.genai has different API (Client-based) | 2026-03-07 |
 | D21 | Auto-detection: OpenAI > Gemini > Claude | Priority based on available API keys; NoOp baseline when no keys | 2026-03-07 |
 | D22 | Gemini vision as OCR fallback, not replacement | OCR runs first; if >80 fragments or <0.5 avg confidence, send image to Gemini for structured extraction. Keeps deterministic path working without API keys | 2026-03-07 |
+| D23 | UFLI corpus as 5th ChromaDB collection (`curriculum`) | Gives RAG system canonical lesson content (concepts, target words, teaching sequences) for retrieval during worksheet generation | 2026-03-13 |
+| D24 | Playwright for UFLI crawl, not HTTP fetch | UFLI Toolbox is JS-rendered (Divi/WordPress); static fetch returns only framework code | 2026-03-13 |
+| D25 | Incremental manifest writes in crawler | Write after each page, not batched at end — crash on page 14 preserves pages 1-13 | 2026-03-13 |
 
 ---
 
@@ -185,6 +237,24 @@ render/     → Checkpoint 3.2
 transform.py + tests/test_e2e.py → Checkpoint 4.4 (in Milestone 3)
 companion/  → Checkpoints 4.1, 4.2, 4.3 (post-core)
 extract/adapter.py → Checkpoint 5.1 (post-launch)
+rag/        → RAG Phases 1-6 (embeddings, store, retrieval, indexer)
+corpus/     → UFLI corpus pipeline (crawl, acquire, extract, ingest)
+```
+
+### UFLI Corpus Pipeline
+```
+CLI: python -m corpus.ufli.ingest <command> --data-dir ./data/ufli
+
+crawl    → Playwright crawl → data/ufli/manifest.jsonl    ✅ DONE (148 lessons)
+acquire  → Download PPTX/PDF → data/ufli/raw/{lesson_id}/ ✅ DONE (539 files)
+extract  → python-pptx + PyMuPDF → data/ufli/normalized.jsonl ✅ DONE (148 records)
+index    → Gemini embed + ChromaDB → vector_store/         ❌ BLOCKED (Vertex AI 403)
+run-all  → All 4 steps in sequence
+
+ChromaDB collections: worksheets, skills, adaptations, exemplars, curriculum
+
+Note: acquire.py was patched to use certifi SSL context (macOS Python 3.13 fix).
+Note: index step requires GOOGLE_CLOUD_PROJECT=ws-builder-rag env var.
 ```
 
 ### Key Files (once created)
@@ -237,6 +307,11 @@ extract/adapter.py → Checkpoint 5.1 (post-launch)
 | G4 | "All source target words must appear" is too strict | Blocks valid adaptations for phonics, morphology, fluency | Changed to instructional-intent preservation |
 | G5 | GitHub PAT needs `workflow` scope to push CI files | `.github/workflows/ci.yml` push rejected without it | User needs to update PAT or push CI file via web UI |
 | G6 | google.generativeai deprecated | FutureWarning on import | Migrated to google.genai SDK |
+| G7 | UFLI Toolbox A-J page has different table structure | 2 columns (Lesson + Slide Deck) vs 6 columns (1-128 pages); row headers say "Getting Ready A" not "A" | Structural detection (link presence in first cell) + `_normalize_lesson_id()` |
+| G8 | Some UFLI Google Slides URLs wrapped in Outlook SafeLinks | `nam10.safelinks.protection.outlook.com` URL wrapping on A-J page | `_extract_gslides_id()` unwraps via `urllib.parse.parse_qs` |
+| G9 | UFLI Toolbox has 15 lesson group pages, not 5 | Original assumption was 5 slugs; actual site has 15 slug pages | Verified via Playwright MCP, hardcoded all 15 slugs |
+| G10 | macOS Python 3.13 has no default SSL CA bundle | `urllib.request.urlretrieve` fails with `SSL: CERTIFICATE_VERIFY_FAILED` | Added `certifi` package + `ssl.create_default_context(cafile=certifi.where())` to `acquire.py`; replaced `urlretrieve` with `urlopen` + chunked write (urlretrieve doesn't accept SSL context) |
+| G11 | Vertex AI ADC permissions for embedding model | `gemini-embedding-exp-03-07` returns 403 `PERMISSION_DENIED` even with `GOOGLE_CLOUD_PROJECT` set and quota project configured. ADC user needs `aiplatform.endpoints.predict` permission | Re-authenticated ADC with quota project (`gcloud auth application-default login --project=ws-builder-rag`); still blocked. May need service account key or different auth approach |
 | G7 | GPT-5.4 uses max_completion_tokens not max_tokens | 400 error with max_tokens param | Changed to max_completion_tokens |
 | G8 | gpt-image-1.5 doesn't support response_format param | 400 error; returns b64_json by default | Removed response_format param |
 
@@ -627,3 +702,77 @@ extract/adapter.py → Checkpoint 5.1 (post-launch)
 - `ab_eval.py` is operational for deterministic paired A/B.
 - RAG adaptation context now quality-gated (curated-first + deduped).
 - Recommended next run is multi-target holdouts with seeding enabled to produce aggregate evidence.
+
+### Session 23 — 2026-03-14 (UFLI Corpus Pipeline Execution)
+**Participants:** User + Claude Opus 4.6
+**What happened:**
+- Executed the UFLI corpus pipeline (crawl → acquire → extract → index):
+  - **Crawl**: Successfully crawled all 15 UFLI Toolbox lesson group pages, captured 148 lessons into `data/ufli/manifest.jsonl`. Zero errors, ~60 seconds total with polite rate limiting.
+  - **Acquire**: Downloaded 539 resource files across all 148 lesson directories. Hit macOS Python 3.13 SSL issue — `urllib.request.urlretrieve` fails because Python 3.13 ships without a default CA bundle. Fixed by adding `certifi` package and replacing `urlretrieve` with `urlopen(req, context=ssl_ctx)` + chunked file write. All 148 lessons marked `acquired`.
+    - Resource breakdown: 148 PPTX slide decks, 131 decodable passage PDFs, 134 home practice PDFs, 126 additional activity PDFs
+  - **Extract**: Successfully extracted text from all 148 lessons into `data/ufli/normalized.jsonl` using python-pptx (PPTX) and PyMuPDF (PDF).
+  - **Index**: BLOCKED by Vertex AI permissions. The ADC user account gets 403 `PERMISSION_DENIED` on `aiplatform.endpoints.predict` for model `gemini-embedding-exp-03-07`. Re-authenticated ADC with `--project=ws-builder-rag` and quota project was accepted, but embedding calls still fail. Possible causes: (1) user IAM role missing `aiplatform.user`, (2) experimental model may need allowlist, (3) need service account key instead of user ADC.
+- **Code changes**:
+  - `corpus/ufli/acquire.py` — Added `certifi`, `ssl` imports; created `_SSL_CTX` with certifi CA bundle; replaced `urlretrieve` with `urlopen` + chunked write for SSL compatibility
+- **Data on disk**:
+  - `data/ufli/manifest.jsonl` — 148 records, all status `acquired`
+  - `data/ufli/raw/` — 148 directories, 539 files (PPTX + PDF)
+  - `data/ufli/normalized.jsonl` — 148 extracted lesson records
+  - `vector_store/` — empty (indexing not yet completed)
+
+**What's next:**
+- Fix Vertex AI auth to unblock `ingest index` step. Options: (1) grant `roles/aiplatform.user` to `howiejong@gmail.com` on `ws-builder-rag`, (2) use service account key file, (3) try `GEMINI_EMBEDDING_MODEL=text-embedding-005` (GA model, not experimental), (4) switch to API key auth (`GOOGLE_API_KEY`) with non-Vertex client
+- Once indexing works: `GOOGLE_CLOUD_PROJECT=ws-builder-rag python -m corpus.ufli.ingest index --data-dir ./data/ufli`
+- The ingestion is idempotent — re-running is safe
+
+### Session 24 — 2026-03-14 (RAG Backend Fallback Hardening + Successful Corpus Index)
+**Participants:** User + Codex (GPT-5)
+**What happened:**
+- Hardened the RAG embedding path to reduce dependence on the failing Vertex ADC setup:
+  - `rag/client.py` now supports `RAG_GEMINI_BACKEND=auto|api_key|vertex`
+  - Auto mode prefers `GOOGLE_API_KEY` / `GEMINI_API_KEY` when present, otherwise falls back to Vertex via `GOOGLE_CLOUD_PROJECT`
+  - `rag/embeddings.py` now retries embedding requests across model candidates in order: configured model, `gemini-embedding-2-preview`, `text-embedding-005`
+  - `corpus/ufli/ingest.py` now loads `.env`, so `python -m corpus.ufli.ingest ...` sees the same key/project config as `transform.py`
+- Added regression coverage:
+  - `tests/test_rag_client.py` — backend selection for api-key and Vertex modes
+  - `tests/test_rag_embeddings.py` — fallback-to-next-model behavior
+- Re-ran the live corpus index outside the sandbox after a sandbox DNS failure:
+  - `python -m corpus.ufli.ingest index --data-dir ./data/ufli`
+  - Auto-selected API-key backend from `.env`
+  - Successfully embedded against `gemini-embedding-2-preview`
+  - Indexed all 148 lessons into the `curriculum` collection in `vector_store/`
+  - Verified local Chroma count: `148`
+- Validation run:
+  - `.venv/bin/pytest -q tests/test_rag_client.py tests/test_rag_embeddings.py tests/test_corpus_ingest.py` → `14 passed`
+  - `.venv/bin/ruff check rag/client.py rag/embeddings.py corpus/ufli/ingest.py tests/test_rag_client.py tests/test_rag_embeddings.py` → clean
+  - `.venv/bin/mypy rag/client.py rag/embeddings.py corpus/ufli/ingest.py tests/test_rag_client.py tests/test_rag_embeddings.py` → clean
+
+**What's next:**
+- Completed in Session 25: RAG Phase 7 module implementation (`rag/backfill.py`, `rag/eval.py`)
+- Next remaining follow-up: consume `curriculum_references` in `adapt/engine.py` for curriculum-aware target-word validation
+
+### Session 25 — 2026-03-14 (Phase 7 Modules: Backfill + Eval)
+**Participants:** User + Codex (GPT-5)
+**What happened:**
+- Implemented `rag/backfill.py`:
+  - Scans artifact directories for `source_model.json`, `skill_model.json`, `adapted_model*.json`, `validation*.json`, and matching PDFs
+  - Reconstructs `index_run()` payloads from saved artifacts rather than requiring a fresh pipeline run
+  - Aggregates per-worksheet validation files for multi-worksheet runs
+  - Resolves nested `artifacts/` directories back to their corresponding PDF output directories
+- Implemented `rag/eval.py`:
+  - Freezes extraction + skill per input using the existing A/B helper path
+  - Computes retrieval@3 using current `RAGContext`
+  - Runs baseline vs RAG variants and reports validator pass rate, format-change rate, unique RAG format sets, and distractor novelty
+  - Writes both `report.json` and `report.md`
+- Added focused tests:
+  - `tests/test_rag_backfill.py`
+  - `tests/test_rag_eval.py`
+- Validation run:
+  - `.venv/bin/pytest -q tests/test_rag_backfill.py tests/test_rag_eval.py tests/test_rag_client.py tests/test_rag_embeddings.py tests/test_rag_retrieval.py tests/test_corpus_ingest.py tests/test_retrieval_curriculum.py` → `25 passed`
+  - `.venv/bin/ruff check rag/backfill.py rag/eval.py rag/__init__.py tests/test_rag_backfill.py tests/test_rag_eval.py` → clean
+  - `.venv/bin/mypy rag/backfill.py rag/eval.py rag/__init__.py tests/test_rag_backfill.py tests/test_rag_eval.py` → clean
+
+**What's next:**
+- Integrate `curriculum_references` into `adapt/engine.py`
+- Decide whether `rag/eval.py` should replace or complement `ab_eval.py`
+- Run a real evaluation pass and, if useful, a live `rag.backfill` smoke run against saved outputs

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
+from dataclasses import dataclass
 
 from adapt.rules import (
     BRAIN_BREAK_PROMPTS,
@@ -25,12 +27,22 @@ from skill.schema import LiteracySkillModel
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True)
+class _CurriculumWordBank:
+    """Retrieved curriculum references normalized for deterministic word checks."""
+
+    lesson_ids: tuple[str, ...]
+    concepts: tuple[str, ...]
+    documents: tuple[str, ...]
+
+
 def adapt_activity(
     skill: LiteracySkillModel,
     profile: LearnerProfile,
     theme_id: str = "default",
     rules: AccommodationRules | None = None,
     rag_prior_adaptations: list[dict[str, object]] | None = None,
+    rag_curriculum_references: list[dict[str, object]] | None = None,
 ) -> AdaptedActivityModel:
     """Transform a skill model into ADHD-optimized activity chunks.
 
@@ -46,8 +58,18 @@ def adapt_activity(
     if rules is None:
         rules = build_rules(profile)
 
+    curriculum = _build_curriculum_word_bank(rag_curriculum_references)
+    if curriculum:
+        _, matched_targets = _prioritize_words_by_curriculum(skill.target_words, curriculum)
+        if matched_targets:
+            logger.info(
+                "Curriculum context influencing single adaptation: lessons=%s matched_targets=%s",
+                ",".join(curriculum.lesson_ids) or "unknown",
+                ",".join(sorted(matched_targets)),
+            )
+
     # Split items into chunks
-    chunks = _build_chunks(skill, rules)
+    chunks = _build_chunks(skill, rules, curriculum=curriculum)
 
     # Apply scaffolding (worked example fades after first chunk)
     scaffolding = ScaffoldConfig(
@@ -84,6 +106,7 @@ def adapt_lesson(
     theme_id: str = "default",
     rules: AccommodationRules | None = None,
     rag_prior_adaptations: list[dict[str, object]] | None = None,
+    rag_curriculum_references: list[dict[str, object]] | None = None,
 ) -> list[AdaptedActivityModel]:
     """Transform a skill model into 2-3 ADHD-optimized mini-worksheets.
 
@@ -100,6 +123,7 @@ def adapt_lesson(
     prior_adaptations = rag_prior_adaptations or []
     distractor_blacklist = _extract_distractor_blacklist(prior_adaptations)
     discovery_formats = _suggest_format_mix(prior_adaptations, ["match", "trace", "circle"])
+    curriculum = _build_curriculum_word_bank(rag_curriculum_references)
     if prior_adaptations:
         prior_sources = [
             str(adapt.get("source_hash", "unknown"))
@@ -141,13 +165,27 @@ def adapt_lesson(
         elif si.item_type == "passage":
             passages.append(si.content)
 
+    prioritized_targets, matched_targets = _prioritize_words_by_curriculum(
+        skill.target_words,
+        curriculum,
+    )
+    word_items, matched_word_items = _prioritize_words_by_curriculum(word_items, curriculum)
+    sight_words, matched_sight_words = _prioritize_words_by_curriculum(sight_words, curriculum)
+    curriculum_supported_words = matched_targets | matched_word_items | matched_sight_words
+    if curriculum and curriculum_supported_words:
+        logger.info(
+            "Curriculum context influencing lesson adaptation: lessons=%s matched_words=%s",
+            ",".join(curriculum.lesson_ids) or "unknown",
+            ",".join(sorted(curriculum_supported_words)),
+        )
+
     worksheets: list[AdaptedActivityModel] = []
     base_hash = _hash_str(skill.template_type + str(skill.target_words))
     skill_hash = _hash_str(skill.model_dump_json())
     profile_hash = _hash_str(profile.model_dump_json())
 
     # Worksheet 1: Word Discovery (if we have word items or target words)
-    discovery_words = word_items or skill.target_words[:6]
+    discovery_words = word_items or prioritized_targets[:6]
     if discovery_words:
         chunks = _build_discovery_chunks(
             discovery_words,
@@ -155,6 +193,8 @@ def adapt_lesson(
             rules,
             distractor_blacklist=distractor_blacklist,
             format_order=discovery_formats,
+            curriculum_supported_words=curriculum_supported_words,
+            curriculum_lesson_ids=curriculum.lesson_ids if curriculum else (),
         )
         worksheets.append(AdaptedActivityModel(
             source_hash=base_hash,
@@ -179,8 +219,10 @@ def adapt_lesson(
     # Worksheet 2: Word Builder (chains + fill_blank + sight words)
     if chain_items or word_items or sight_words:
         chunks = _build_builder_chunks(
-            chain_items, word_items or skill.target_words[:6],
+            chain_items, word_items or prioritized_targets[:6],
             sight_words, skill, rules,
+            curriculum_supported_words=curriculum_supported_words,
+            curriculum_lesson_ids=curriculum.lesson_ids if curriculum else (),
         )
         worksheets.append(AdaptedActivityModel(
             source_hash=base_hash,
@@ -204,7 +246,15 @@ def adapt_lesson(
 
     # Worksheet 3: Story Time (sentences + passage + comprehension)
     if sentences or passages:
-        chunks = _build_story_chunks(sentences, passages, skill, rules)
+        chunks = _build_story_chunks(
+            sentences,
+            passages,
+            prioritized_targets,
+            skill,
+            rules,
+            curriculum_supported_words=curriculum_supported_words,
+            curriculum_lesson_ids=curriculum.lesson_ids if curriculum else (),
+        )
         worksheets.append(AdaptedActivityModel(
             source_hash=base_hash,
             skill_model_hash=skill_hash,
@@ -238,6 +288,7 @@ def adapt_lesson(
             theme_id=theme_id,
             rules=rules,
             rag_prior_adaptations=rag_prior_adaptations,
+            rag_curriculum_references=rag_curriculum_references,
         )
         return [single]
 
@@ -250,6 +301,8 @@ def _build_discovery_chunks(
     rules: AccommodationRules,
     distractor_blacklist: set[str] | None = None,
     format_order: list[str] | None = None,
+    curriculum_supported_words: set[str] | None = None,
+    curriculum_lesson_ids: tuple[str, ...] = (),
 ) -> list[ActivityChunk]:
     """Build Word Discovery chunks: match + trace + circle activities."""
     chunks: list[ActivityChunk] = []
@@ -279,6 +332,11 @@ def _build_discovery_chunks(
                     item_id=item_id,
                     content=word,
                     response_format="match",
+                    metadata=_curriculum_item_metadata(
+                        word,
+                        curriculum_supported_words,
+                        curriculum_lesson_ids,
+                    ),
                     picture_prompt=_word_to_picture_prompt(word),
                     options=[word],  # renderer will add picture tiles
                 ))
@@ -313,6 +371,11 @@ def _build_discovery_chunks(
                     item_id=item_id,
                     content=word,
                     response_format="trace",
+                    metadata=_curriculum_item_metadata(
+                        word,
+                        curriculum_supported_words,
+                        curriculum_lesson_ids,
+                    ),
                 ))
             chunks.append(ActivityChunk(
                 chunk_id=chunk_id,
@@ -366,6 +429,8 @@ def _build_builder_chunks(
     sight_words_list: list[str],
     skill: LiteracySkillModel,
     rules: AccommodationRules,
+    curriculum_supported_words: set[str] | None = None,
+    curriculum_lesson_ids: tuple[str, ...] = (),
 ) -> list[ActivityChunk]:
     """Build Word Builder chunks: chains + fill-blank + sight words."""
     chunks: list[ActivityChunk] = []
@@ -410,6 +475,11 @@ def _build_builder_chunks(
                     item_id=item_id,
                     content=blank_content,
                     response_format="fill_blank",
+                    metadata=_curriculum_item_metadata(
+                        w,
+                        curriculum_supported_words,
+                        curriculum_lesson_ids,
+                    ),
                     answer=answer_letter,
                     options=["a", "e", "i", "o", "u"],
                 ))
@@ -436,7 +506,14 @@ def _build_builder_chunks(
                 item_id=item_id,
                 content=sw,
                 response_format="write",
-                metadata={"sight_word": True},
+                metadata={
+                    "sight_word": True,
+                    **_curriculum_item_metadata(
+                        sw,
+                        curriculum_supported_words,
+                        curriculum_lesson_ids,
+                    ),
+                },
             ))
         chunks.append(ActivityChunk(
             chunk_id=len(chunks) + 1,
@@ -457,8 +534,11 @@ def _build_builder_chunks(
 def _build_story_chunks(
     sentences: list[str],
     passages: list[str],
+    target_words: list[str],
     skill: LiteracySkillModel,
     rules: AccommodationRules,
+    curriculum_supported_words: set[str] | None = None,
+    curriculum_lesson_ids: tuple[str, ...] = (),
 ) -> list[ActivityChunk]:
     """Build Story Time chunks: sentence completion + read-aloud + comprehension."""
     chunks: list[ActivityChunk] = []
@@ -469,14 +549,19 @@ def _build_story_chunks(
         items: list[ActivityItem] = []
         for sent in sentences:
             item_id += 1
-            blank_sent, removed_word = _sentence_to_fill_blank(sent, skill.target_words)
+            blank_sent, removed_word = _sentence_to_fill_blank(sent, target_words)
             if blank_sent and removed_word:
                 # Create word bank from target words + the answer
-                bank = list(set([removed_word] + skill.target_words[:3]))
+                bank = list(set([removed_word] + target_words[:3]))
                 items.append(ActivityItem(
                     item_id=item_id,
                     content=blank_sent,
                     response_format="fill_blank",
+                    metadata=_curriculum_item_metadata(
+                        removed_word,
+                        curriculum_supported_words,
+                        curriculum_lesson_ids,
+                    ),
                     answer=removed_word,
                     options=bank,
                 ))
@@ -529,7 +614,7 @@ def _build_story_chunks(
 
     # Chunk 3: Story comprehension (circle format)
     if passages:
-        comp_questions = _generate_comprehension_questions(passages, skill.target_words)
+        comp_questions = _generate_comprehension_questions(passages, target_words)
         if comp_questions:
             items = []
             for q, opts, ans in comp_questions:
@@ -737,14 +822,15 @@ def _word_to_picture_prompt(word: str) -> str:
 def _build_chunks(
     skill: LiteracySkillModel,
     rules: AccommodationRules,
+    curriculum: _CurriculumWordBank | None = None,
 ) -> list[ActivityChunk]:
     """Split source items into ADHD-friendly chunks."""
     # Gather all practice items from source
-    raw_items = _source_items_to_activity_items(skill, rules)
+    raw_items = _source_items_to_activity_items(skill, rules, curriculum=curriculum)
 
     if not raw_items:
         # If no source items, create items from target words
-        raw_items = _words_to_activity_items(skill, rules)
+        raw_items = _words_to_activity_items(skill, rules, curriculum=curriculum)
 
     # Split into chunks
     max_per_chunk = rules.max_items_per_chunk
@@ -810,6 +896,7 @@ def _build_chunks(
 def _source_items_to_activity_items(
     skill: LiteracySkillModel,
     rules: AccommodationRules,
+    curriculum: _CurriculumWordBank | None = None,
 ) -> list[ActivityItem]:
     """Convert SourceItems to ActivityItems with appropriate response formats."""
     items: list[ActivityItem] = []
@@ -825,6 +912,7 @@ def _source_items_to_activity_items(
         if source_item.item_type == "word_list":
             # Split word lists into individual items
             words = [w.strip() for w in source_item.content.replace(",", " ").split() if w.strip()]
+            words, supported_words = _prioritize_words_by_curriculum(words, curriculum)
             for word in words:
                 if not word.isalpha():
                     continue
@@ -834,6 +922,11 @@ def _source_items_to_activity_items(
                         item_id=item_id,
                         content=word,
                         response_format=response_format,
+                        metadata=_curriculum_item_metadata(
+                            word,
+                            supported_words,
+                            curriculum.lesson_ids if curriculum else (),
+                        ),
                     )
                 )
 
@@ -880,6 +973,7 @@ def _source_items_to_activity_items(
 
         elif source_item.item_type == "sight_words":
             words = [w.strip() for w in source_item.content.replace(",", " ").split() if w.strip()]
+            words, supported_words = _prioritize_words_by_curriculum(words, curriculum)
             for word in words:
                 cleaned = word.strip("*♥❤")
                 if not cleaned.isalpha():
@@ -890,7 +984,14 @@ def _source_items_to_activity_items(
                         item_id=item_id,
                         content=cleaned,
                         response_format=response_format,
-                        metadata={"sight_word": True},
+                        metadata={
+                            "sight_word": True,
+                            **_curriculum_item_metadata(
+                                cleaned,
+                                supported_words,
+                                curriculum.lesson_ids if curriculum else (),
+                            ),
+                        },
                     )
                 )
 
@@ -900,6 +1001,7 @@ def _source_items_to_activity_items(
 def _words_to_activity_items(
     skill: LiteracySkillModel,
     rules: AccommodationRules,
+    curriculum: _CurriculumWordBank | None = None,
 ) -> list[ActivityItem]:
     """Create activity items from target words when no source items available."""
     items: list[ActivityItem] = []
@@ -911,12 +1013,22 @@ def _words_to_activity_items(
         default_format, rules.allowed_response_formats
     )
 
-    for i, word in enumerate(skill.target_words, start=1):
+    target_words, supported_words = _prioritize_words_by_curriculum(
+        skill.target_words,
+        curriculum,
+    )
+
+    for i, word in enumerate(target_words, start=1):
         items.append(
             ActivityItem(
                 item_id=i,
                 content=word,
                 response_format=response_format,
+                metadata=_curriculum_item_metadata(
+                    word,
+                    supported_words,
+                    curriculum.lesson_ids if curriculum else (),
+                ),
             )
         )
 
@@ -943,6 +1055,113 @@ def _split_sentences(text: str) -> list[str]:
     # Fallback: split on sentence-ending punctuation
     parts = re.split(r"(?<=[.!?])\s+", text.strip())
     return [p.strip() for p in parts if p.strip()]
+
+
+def _build_curriculum_word_bank(
+    curriculum_references: list[dict[str, object]] | None,
+) -> _CurriculumWordBank | None:
+    """Normalize retrieved curriculum references into a searchable text corpus."""
+    if not curriculum_references:
+        return None
+
+    lesson_ids: list[str] = []
+    concepts: list[str] = []
+    documents: list[str] = []
+
+    for ref in curriculum_references:
+        lesson_id = str(ref.get("lesson_id", "")).strip()
+        concept = str(ref.get("concept", "")).strip()
+        document = str(
+            ref.get("_rag_document")
+            or ref.get("document")
+            or "",
+        ).strip()
+
+        if lesson_id and lesson_id not in lesson_ids:
+            lesson_ids.append(lesson_id)
+        if concept and concept not in concepts:
+            concepts.append(concept)
+        if document:
+            documents.append(document.lower())
+
+    if not lesson_ids and not concepts and not documents:
+        return None
+
+    return _CurriculumWordBank(
+        lesson_ids=tuple(lesson_ids),
+        concepts=tuple(concepts),
+        documents=tuple(documents),
+    )
+
+
+def _prioritize_words_by_curriculum(
+    words: list[str],
+    curriculum: _CurriculumWordBank | None,
+) -> tuple[list[str], set[str]]:
+    """Prefer curriculum-backed words when multiple exact matches are available."""
+    deduped = _dedupe_words(words)
+    if not deduped or curriculum is None:
+        return deduped, set()
+
+    matched: list[str] = []
+    remaining: list[str] = []
+    matched_normalized: set[str] = set()
+    search_spaces = [*curriculum.documents, *[concept.lower() for concept in curriculum.concepts]]
+
+    for word in deduped:
+        normalized = _normalize_word(word)
+        if not normalized:
+            continue
+        if any(_text_contains_word(space, normalized) for space in search_spaces):
+            matched.append(word)
+            matched_normalized.add(normalized)
+        else:
+            remaining.append(word)
+
+    minimum_matches = min(2, len(deduped))
+    if len(matched) < minimum_matches:
+        return deduped, matched_normalized
+
+    return matched + remaining, matched_normalized
+
+
+def _curriculum_item_metadata(
+    word: str,
+    supported_words: set[str] | None,
+    lesson_ids: tuple[str, ...],
+) -> dict[str, str | int | float | bool]:
+    """Annotate items that are directly supported by retrieved curriculum text."""
+    normalized = _normalize_word(word)
+    if not normalized or not supported_words or normalized not in supported_words:
+        return {}
+
+    metadata: dict[str, str | int | float | bool] = {"curriculum_supported": True}
+    if lesson_ids:
+        metadata["curriculum_lesson_ids"] = ",".join(lesson_ids)
+    return metadata
+
+
+def _dedupe_words(words: list[str]) -> list[str]:
+    """Deduplicate candidate words while preserving order."""
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for word in words:
+        normalized = _normalize_word(word)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        deduped.append(word)
+    return deduped
+
+
+def _normalize_word(word: str) -> str:
+    """Normalize a candidate word for exact curriculum matching."""
+    return "".join(ch for ch in word.lower() if ch.isalpha())
+
+
+def _text_contains_word(text: str, word: str) -> bool:
+    """Check whole-word presence inside retrieved curriculum text."""
+    return bool(re.search(rf"(?<![a-z]){re.escape(word)}(?![a-z])", text))
 
 
 def _split_word_chains(text: str) -> list[str]:
