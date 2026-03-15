@@ -21,6 +21,7 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import click
 
@@ -46,14 +47,14 @@ logger = logging.getLogger(__name__)
 
 
 # Type alias for the pipeline function
-PipelineFn = Callable[..., str]
+PipelineFn = Callable[..., object]
 
 
 def _get_run_pipeline() -> PipelineFn:
-    """Lazy import of run_pipeline to avoid heavy module load at import time."""
-    from transform import run_pipeline
+    """Lazy import of artifact-returning pipeline to avoid heavy module load at import time."""
+    from transform import run_pipeline_collect_artifacts
 
-    return run_pipeline
+    return run_pipeline_collect_artifacts
 
 
 def _process_single_file(
@@ -111,12 +112,31 @@ def _process_single_file(
                     theme_id=theme_id,
                     output_dir=output_dir,
                     artifacts_dir=artifacts_dir,
+                    index_results=False,
                 )
+
+                output_path: str | None = None
+                rag_index_payload: dict[str, Any] | None = None
+                if isinstance(pdf_path, str):
+                    output_path = pdf_path
+                elif hasattr(pdf_path, "model_dump"):
+                    rag_index_payload = dict(pdf_path.model_dump())
+                    pdf_paths = rag_index_payload.get("pdf_paths")
+                    if isinstance(pdf_paths, list) and pdf_paths:
+                        first_path = pdf_paths[0]
+                        if isinstance(first_path, str):
+                            output_path = first_path
+                else:
+                    raise TypeError(
+                        "Pipeline returned unsupported result type: "
+                        f"{type(pdf_path).__name__}"
+                    )
 
                 return FileResult(
                     input_path=str(input_path),
                     status="success",
-                    output_path=pdf_path,
+                    output_path=output_path,
+                    rag_index_payload=rag_index_payload,
                     duration_seconds=time.monotonic() - start,
                     retries=attempt,
                 )
@@ -353,6 +373,8 @@ def batch(
     finally:
         signal.signal(signal.SIGINT, original_handler)
 
+    indexed_count = _index_completed_runs(results)
+
     # 5. Summary report
     batch_duration = time.monotonic() - batch_start
     report = generate_report(results, batch_duration)
@@ -366,6 +388,8 @@ def batch(
         f"{report['failed']} failed, "
         f"{report['skipped']} skipped"
     )
+    if indexed_count:
+        click.echo(f"  {indexed_count} run(s) indexed into RAG store")
     click.echo(f"  Report: {report_path}")
 
     # Save manifest metadata
@@ -380,6 +404,43 @@ def batch(
         manifest_path.write_text(json.dumps(data, indent=2))
 
     sys.exit(1 if report["failed"] > 0 else 0)
+
+
+def _index_completed_runs(results: list[FileResult]) -> int:
+    """Index successful batch runs from the main thread only."""
+    artifacts_to_index = [
+        result.rag_index_payload
+        for result in results
+        if result.status == "success" and result.rag_index_payload
+    ]
+    if not artifacts_to_index:
+        return 0
+
+    try:
+        from transform import rag_available
+    except ImportError:
+        return 0
+
+    if not rag_available():
+        logger.info("Skipping RAG indexing after batch: backend unavailable")
+        return 0
+
+    try:
+        from rag.indexer import index_run
+    except ImportError:
+        logger.warning("Skipping RAG indexing after batch: rag.indexer unavailable")
+        return 0
+
+    logger.info("Indexing %s completed run(s) into RAG store...", len(artifacts_to_index))
+    indexed_count = 0
+    for payload in artifacts_to_index:
+        try:
+            index_run(**payload)
+            indexed_count += 1
+        except Exception as exc:
+            source_hash = payload.get("source_image_hash", "unknown")
+            logger.warning("RAG indexing failed for %s: %s", source_hash, exc)
+    return indexed_count
 
 
 if __name__ == "__main__":

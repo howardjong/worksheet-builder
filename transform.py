@@ -103,6 +103,27 @@ def run_pipeline(
     artifacts_dir: str,
 ) -> str:
     """Run the full transformation pipeline. Returns path to the output PDF."""
+    run_artifacts = run_pipeline_collect_artifacts(
+        input_path=input_path,
+        profile_path=profile_path,
+        theme_id=theme_id,
+        output_dir=output_dir,
+        artifacts_dir=artifacts_dir,
+        index_results=True,
+    )
+    return run_artifacts.pdf_paths[0] if run_artifacts.pdf_paths else ""
+
+
+def run_pipeline_collect_artifacts(
+    input_path: str,
+    profile_path: str,
+    theme_id: str,
+    output_dir: str,
+    artifacts_dir: str,
+    *,
+    index_results: bool,
+) -> RunArtifacts:
+    """Run the full pipeline and return RunArtifacts, optionally indexing them."""
     output = Path(output_dir)
     artifacts = Path(artifacts_dir)
     output.mkdir(parents=True, exist_ok=True)
@@ -228,7 +249,7 @@ def run_pipeline(
         )
 
     # Stage 9: Optional RAG indexing
-    if rag_available():
+    if index_results and rag_available():
         try:
             from rag.indexer import index_run
 
@@ -253,7 +274,7 @@ def run_pipeline(
         except Exception as exc:
             logger.warning("  RAG indexing skipped: %s", exc)
 
-    return run_artifacts.pdf_paths[0] if run_artifacts.pdf_paths else ""
+    return run_artifacts
 
 
 def _run_single_worksheet_pipeline(
@@ -573,6 +594,7 @@ def _build_adapted_summary(
         for chunk in adapted.chunks
     )
     distractors = sorted(_extract_distractor_words(adapted))
+    curriculum_supported_items, curriculum_lesson_ids = _extract_curriculum_support(adapted)
 
     return {
         "worksheet_title": adapted.worksheet_title or "Untitled",
@@ -582,6 +604,8 @@ def _build_adapted_summary(
         "response_formats": ",".join(response_formats),
         "estimated_minutes": estimated_minutes,
         "distractor_words": ",".join(distractors),
+        "curriculum_supported_items": curriculum_supported_items,
+        "curriculum_lesson_ids": ",".join(curriculum_lesson_ids),
     }
 
 
@@ -616,6 +640,26 @@ def _extract_distractor_words(adapted: AdaptedActivityModel) -> set[str]:
                     distractors.add(normalized)
 
     return distractors
+
+
+def _extract_curriculum_support(
+    adapted: AdaptedActivityModel,
+) -> tuple[int, list[str]]:
+    """Extract curriculum-support annotations from adapted item metadata."""
+    supported_items = 0
+    lesson_ids: set[str] = set()
+
+    for chunk in adapted.chunks:
+        for item in chunk.items:
+            if item.metadata.get("curriculum_supported") is True:
+                supported_items += 1
+            raw_lesson_ids = str(item.metadata.get("curriculum_lesson_ids", ""))
+            for lesson_id in raw_lesson_ids.split(","):
+                normalized = lesson_id.strip()
+                if normalized:
+                    lesson_ids.add(normalized)
+
+    return supported_items, sorted(lesson_ids)
 
 
 def _validate_format_variety(worksheets: Sequence[AdaptedActivityModel]) -> None:

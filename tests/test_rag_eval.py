@@ -61,7 +61,7 @@ def test_evaluate_builds_report_with_aggregate_metrics(
 
     monkeypatch.setattr(
         "rag.eval._freeze_source_and_skill",
-        lambda input_path, freeze_dir: {
+        lambda input_path, freeze_dir, extract_mode="vision_only": {
             "input_path": str(input_path),
             "preprocessed_path": str(freeze_dir / "preprocessed.png"),
             "source_image_hash": "hash123",
@@ -111,12 +111,19 @@ def test_evaluate_builds_report_with_aggregate_metrics(
 
     assert report.case_count == 2
     assert report.retrieval_at_3_mean == 2 / 3
+    assert report.retrieval_context_rate == 1.0
+    assert report.curriculum_reference_hit_rate == 0.0
+    assert report.selected_avg_score_mean == pytest.approx(0.85)
     assert report.unique_rag_format_sets == 1
     assert report.format_changed_rate == 1.0
+    assert report.baseline_curriculum_support_rate_mean == 0.0
+    assert report.rag_curriculum_support_rate_mean == 0.5
+    assert report.curriculum_support_delta_mean == 0.5
     assert report.distractor_novelty_mean == 0.5
     assert report.baseline_validator_pass_rate == 1.0
     assert report.rag_validator_pass_rate == 1.0
     assert report.cases[0].rag_selected_source == "curated_exemplars"
+    assert report.cases[0].rag_selected_avg_score == pytest.approx(0.85)
     assert (tmp_path / "eval").exists()
 
 
@@ -180,5 +187,6 @@ def _variant_result(variant: str, case_dir: Path) -> dict[str, object]:
         "all_validators_passed": True,
         "response_formats": ["circle"] if variant == "A_no_rag" else ["circle", "trace"],
         "response_format_count": 1 if variant == "A_no_rag" else 2,
+        "curriculum_support_rate": 0.0 if variant == "A_no_rag" else 0.5,
         "rag_debug": {"selected_source": "curated_exemplars", "selected_count": 2},
     }

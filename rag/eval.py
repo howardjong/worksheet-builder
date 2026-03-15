@@ -1,10 +1,11 @@
-"""RAG evaluation harness for retrieval quality and adaptation impact."""
+"""Primary RAG experiment harness for retrieval quality and downstream impact."""
 
 from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
 from pathlib import Path
+from time import perf_counter
 from typing import Any, cast
 
 import click
@@ -17,7 +18,7 @@ try:
 except ImportError:
     pass
 
-from ab_eval import _freeze_source_and_skill, _run_variant_from_frozen
+from ab_eval import ExtractionMode, _freeze_source_and_skill, _run_variant_from_frozen
 from adapt.schema import AdaptedActivityModel
 from companion.schema import load_profile
 from rag.retrieval import RAGContext, RetrievalResult, retrieve_context
@@ -34,16 +35,26 @@ class EvalCaseResult(BaseModel):
     skill_domain: str
     specific_skill: str
     retrieval_at_3: float
+    retrieval_latency_ms: float
     baseline_all_validators_passed: bool
     rag_all_validators_passed: bool
     baseline_formats: list[str]
     rag_formats: list[str]
     format_diversity_delta: int
     format_changed: bool
+    baseline_curriculum_support_rate: float = 0.0
+    rag_curriculum_support_rate: float = 0.0
+    curriculum_support_delta: float = 0.0
+    curriculum_reference_count: int = 0
+    retrieval_context_found: bool = False
     distractor_novelty: float | None = None
     rag_selected_source: str = "none"
     rag_selected_count: int = 0
+    rag_selected_avg_score: float | None = None
     rag_selected_doc_ids: list[str] = Field(default_factory=list)
+    baseline_runtime_s: float = 0.0
+    rag_runtime_s: float = 0.0
+    rag_runtime_delta_s: float = 0.0
 
 
 class EvalReport(BaseModel):
@@ -53,12 +64,20 @@ class EvalReport(BaseModel):
     db_path: str
     case_count: int
     retrieval_at_3_mean: float
+    retrieval_latency_ms_mean: float
+    retrieval_context_rate: float
+    curriculum_reference_hit_rate: float
+    selected_avg_score_mean: float | None = None
     unique_rag_format_sets: int
     format_changed_rate: float
     distractor_novelty_mean: float | None = None
     baseline_validator_pass_rate: float
     rag_validator_pass_rate: float
     validator_pass_rate_delta: float
+    baseline_curriculum_support_rate_mean: float = 0.0
+    rag_curriculum_support_rate_mean: float = 0.0
+    curriculum_support_delta_mean: float = 0.0
+    rag_runtime_delta_mean_s: float = 0.0
     cases: list[EvalCaseResult]
 
 
@@ -70,6 +89,7 @@ def evaluate(
     include_pattern: str = "*",
     output_root: str = "./samples/output/rag_eval",
     images: bool = False,
+    extract_mode: ExtractionMode = "vision_only",
 ) -> EvalReport:
     """Evaluate retrieval quality and adaptation impact over a test set."""
     input_dir = Path(test_dir)
@@ -87,18 +107,25 @@ def evaluate(
     for input_path in files:
         logger.info("Evaluating %s", input_path.name)
         case_dir = run_root / input_path.stem
-        frozen = _freeze_source_and_skill(input_path, case_dir / "frozen")
+        frozen = _freeze_source_and_skill(
+            input_path,
+            case_dir / "frozen",
+            extract_mode=extract_mode,
+        )
         source_model = frozen["source_model"]
         skill_model = frozen["skill_model"]
         skill_desc = f"{skill_model.domain}: {skill_model.specific_skill}"
 
+        retrieval_started = perf_counter()
         rag_context = retrieve_context(
             skill_description=skill_desc,
             extracted_text=source_model.raw_text,
             grade_level=skill_model.grade_level,
             db_path=db_path,
         )
+        retrieval_latency_ms = (perf_counter() - retrieval_started) * 1000.0
         selected_metadata, rag_debug = _select_rag_adaptation_context(rag_context)
+        baseline_started = perf_counter()
         baseline = _run_variant_from_frozen(
             variant="A_no_rag",
             case_dir=case_dir,
@@ -109,6 +136,8 @@ def evaluate(
             use_rag=False,
             images=images,
         )
+        baseline_runtime_s = perf_counter() - baseline_started
+        rag_started = perf_counter()
         rag_result = _run_variant_from_frozen(
             variant="B_with_rag",
             case_dir=case_dir,
@@ -119,6 +148,7 @@ def evaluate(
             use_rag=True,
             images=images,
         )
+        rag_runtime_s = perf_counter() - rag_started
 
         cases.append(
             EvalCaseResult(
@@ -126,6 +156,7 @@ def evaluate(
                 skill_domain=skill_model.domain,
                 specific_skill=skill_model.specific_skill,
                 retrieval_at_3=_retrieval_at_k(rag_context, skill_model.domain, k=3),
+                retrieval_latency_ms=retrieval_latency_ms,
                 baseline_all_validators_passed=bool(
                     baseline.get("all_validators_passed", False)
                 ),
@@ -138,12 +169,23 @@ def evaluate(
                     [str(x) for x in baseline.get("response_formats", [])]
                 )
                 != _format_set([str(x) for x in rag_result.get("response_formats", [])]),
+                baseline_curriculum_support_rate=float(
+                    baseline.get("curriculum_support_rate", 0.0)
+                ),
+                rag_curriculum_support_rate=float(rag_result.get("curriculum_support_rate", 0.0)),
+                curriculum_support_delta=float(rag_result.get("curriculum_support_rate", 0.0))
+                - float(baseline.get("curriculum_support_rate", 0.0)),
+                curriculum_reference_count=len(rag_context.curriculum_references),
+                retrieval_context_found=(
+                    int(cast(int | str, rag_debug.get("selected_count", 0) or 0)) > 0
+                ),
                 distractor_novelty=_distractor_novelty(
                     _extract_distractors_from_variant(rag_result),
                     selected_metadata or [],
                 ),
                 rag_selected_source=str(rag_debug.get("selected_source", "none")),
                 rag_selected_count=int(cast(int | str, rag_debug.get("selected_count", 0) or 0)),
+                rag_selected_avg_score=cast(float | None, rag_debug.get("selected_avg_score")),
                 rag_selected_doc_ids=[
                     str(doc_id)
                     for doc_id in cast(
@@ -151,6 +193,9 @@ def evaluate(
                         rag_debug.get("selected_doc_ids", []),
                     )
                 ],
+                baseline_runtime_s=baseline_runtime_s,
+                rag_runtime_s=rag_runtime_s,
+                rag_runtime_delta_s=rag_runtime_s - baseline_runtime_s,
             )
         )
 
@@ -166,8 +211,12 @@ def evaluate(
 def _build_report(db_path: str, cases: list[EvalCaseResult]) -> EvalReport:
     unique_rag_format_sets = len({",".join(_format_set(case.rag_formats)) for case in cases})
     retrieval_scores = [case.retrieval_at_3 for case in cases]
+    retrieval_latencies = [case.retrieval_latency_ms for case in cases]
     distractor_scores = [
         case.distractor_novelty for case in cases if case.distractor_novelty is not None
+    ]
+    selected_avg_scores = [
+        case.rag_selected_avg_score for case in cases if case.rag_selected_avg_score is not None
     ]
 
     baseline_pass_rate = _mean(
@@ -180,12 +229,28 @@ def _build_report(db_path: str, cases: list[EvalCaseResult]) -> EvalReport:
         db_path=db_path,
         case_count=len(cases),
         retrieval_at_3_mean=_mean(retrieval_scores),
+        retrieval_latency_ms_mean=_mean(retrieval_latencies),
+        retrieval_context_rate=_mean(
+            [1.0 if case.retrieval_context_found else 0.0 for case in cases]
+        ),
+        curriculum_reference_hit_rate=_mean(
+            [1.0 if case.curriculum_reference_count > 0 else 0.0 for case in cases]
+        ),
+        selected_avg_score_mean=_mean(selected_avg_scores) if selected_avg_scores else None,
         unique_rag_format_sets=unique_rag_format_sets,
         format_changed_rate=_mean([1.0 if case.format_changed else 0.0 for case in cases]),
         distractor_novelty_mean=_mean(distractor_scores) if distractor_scores else None,
         baseline_validator_pass_rate=baseline_pass_rate,
         rag_validator_pass_rate=rag_pass_rate,
         validator_pass_rate_delta=rag_pass_rate - baseline_pass_rate,
+        baseline_curriculum_support_rate_mean=_mean(
+            [case.baseline_curriculum_support_rate for case in cases]
+        ),
+        rag_curriculum_support_rate_mean=_mean(
+            [case.rag_curriculum_support_rate for case in cases]
+        ),
+        curriculum_support_delta_mean=_mean([case.curriculum_support_delta for case in cases]),
+        rag_runtime_delta_mean_s=_mean([case.rag_runtime_delta_s for case in cases]),
         cases=cases,
     )
 
@@ -294,8 +359,17 @@ def _render_markdown_report(
         "",
         "## Aggregate",
         "",
+        "- `rag/eval.py` is the primary experiment harness.",
         f"- Cases: {report.case_count}",
         f"- retrieval@3 mean: {report.retrieval_at_3_mean:.2f}",
+        f"- Retrieval latency mean (ms): {report.retrieval_latency_ms_mean:.1f}",
+        f"- Retrieval context rate: {report.retrieval_context_rate:.2f}",
+        f"- Curriculum reference hit rate: {report.curriculum_reference_hit_rate:.2f}",
+        (
+            f"- Selected context avg score mean: {report.selected_avg_score_mean:.2f}"
+            if report.selected_avg_score_mean is not None
+            else "- Selected context avg score mean: n/a"
+        ),
         f"- Unique RAG format sets: {report.unique_rag_format_sets}",
         f"- Format changed rate: {report.format_changed_rate:.2f}",
         (
@@ -306,27 +380,34 @@ def _render_markdown_report(
         f"- Baseline validator pass rate: {report.baseline_validator_pass_rate:.2f}",
         f"- RAG validator pass rate: {report.rag_validator_pass_rate:.2f}",
         f"- Validator pass rate delta: {report.validator_pass_rate_delta:.2f}",
+        (
+            f"- Curriculum support delta mean: {report.curriculum_support_delta_mean:.2f}"
+        ),
+        f"- Mean RAG runtime overhead (s): {report.rag_runtime_delta_mean_s:.2f}",
         "",
         "## Per Case",
         "",
         (
-            "| Input | retrieval@3 | Baseline pass | RAG pass | "
-            "Baseline formats | RAG formats | Selected source | Novelty |"
+            "| Input | retrieval@3 | latency ms | Baseline pass | RAG pass | "
+            "Curriculum delta | Selected source | Selected avg | Novelty |"
         ),
-        "|---|---:|---:|---:|---|---|---|---:|",
+        "|---|---:|---:|---:|---:|---:|---|---:|---:|",
     ]
 
     for case in report.cases:
         novelty = "n/a"
         if case.distractor_novelty is not None:
             novelty = f"{case.distractor_novelty:.2f}"
+        selected_avg = "n/a"
+        if case.rag_selected_avg_score is not None:
+            selected_avg = f"{case.rag_selected_avg_score:.2f}"
         lines.append(
             f"| {case.input_name} | {case.retrieval_at_3:.2f} | "
+            f"{case.retrieval_latency_ms:.1f} | "
             f"{int(case.baseline_all_validators_passed)} | "
             f"{int(case.rag_all_validators_passed)} | "
-            f"{','.join(case.baseline_formats)} | "
-            f"{','.join(case.rag_formats)} | "
-            f"{case.rag_selected_source} | {novelty} |"
+            f"{case.curriculum_support_delta:.2f} | "
+            f"{case.rag_selected_source} | {selected_avg} | {novelty} |"
         )
 
     return "\n".join(lines) + "\n"
@@ -344,6 +425,17 @@ def _render_markdown_report(
     help="Directory where evaluation reports should be written.",
 )
 @click.option("--images/--no-images", default=False, help="Enable AI image generation.")
+@click.option(
+    "--extract-mode",
+    type=click.Choice(["vision_only", "auto", "paddle", "tesseract"], case_sensitive=False),
+    default="vision_only",
+    show_default=True,
+    help=(
+        "Extraction backend for frozen eval inputs. "
+        "'vision_only' fails fast if Gemini vision is unavailable; "
+        "'auto' restores OCR fallback."
+    ),
+)
 @click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging.")
 def main(
     test_dir: str,
@@ -353,9 +445,10 @@ def main(
     include_pattern: str,
     output_root: str,
     images: bool,
+    extract_mode: str,
     verbose: bool,
 ) -> None:
-    """Run the Phase 7 RAG evaluation harness."""
+    """Run the primary RAG experiment harness."""
     level = logging.DEBUG if verbose else logging.INFO
     logging.basicConfig(level=level, format="%(levelname)s: %(message)s")
     report = evaluate(
@@ -366,6 +459,7 @@ def main(
         include_pattern=include_pattern,
         output_root=output_root,
         images=images,
+        extract_mode=cast(ExtractionMode, extract_mode.lower()),
     )
     click.echo(
         f"Evaluated {report.case_count} case(s); "

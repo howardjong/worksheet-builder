@@ -8,7 +8,7 @@
 
 ## Current State
 
-**Status:** Core product milestones remain complete. Gemini Embedding 2 RAG Phase 7 is implemented and the curriculum-aware adaptation follow-up is now wired through `adapt/engine.py`. UFLI corpus pipeline is fully executed: crawl complete (148 lessons), acquire complete (539 files), extract complete (148 normalized), index complete (148 curriculum records in `vector_store/`). RAG client now supports API-key or Vertex backends plus embedding-model fallback (`gemini-embedding-exp-03-07` -> `gemini-embedding-2-preview` -> `text-embedding-005`). Curriculum retrieval now flows through `transform.py` and `ab_eval.py` into adaptation so word choices can be steered toward exact UFLI lesson content when overlap is strong enough. Validation for this follow-up passed: focused `ruff`/`mypy` on touched files and full repo suite green (`285 passed`). Gemini access investigation on 2026-03-15 confirmed `.env` config is present and direct Gemini API access works outside the sandbox; prior live eval failures were caused by sandbox DNS/network restrictions, not missing credentials.
+**Status:** Core product milestones remain complete. Gemini Embedding 2 RAG Phase 7 is implemented and the curriculum-aware adaptation follow-up is now wired through `adapt/engine.py`. UFLI corpus pipeline is fully executed: crawl complete (148 lessons), acquire complete (539 files), extract complete (148 normalized), index complete (148 curriculum records in `vector_store/`). RAG client now supports API-key or Vertex backends plus embedding-model fallback (`gemini-embedding-exp-03-07` -> `gemini-embedding-2-preview` -> `text-embedding-005`). Curriculum retrieval now flows through `transform.py` and `ab_eval.py` into adaptation so word choices can be steered toward exact UFLI lesson content when overlap is strong enough. Validation for this follow-up passed: focused `ruff`/`mypy` on touched files and full repo suite green (`294 passed`). Gemini access investigation on 2026-03-15 confirmed `.env` config is present and direct Gemini API access works outside the sandbox; prior live eval failures were caused by sandbox DNS/network restrictions, not missing credentials. OCR crash investigation on 2026-03-15 found the remaining stability risk is local PaddleOCR fallback on macOS/Python 3.13, not the RAG code itself: one `PaddleOCR(lang="en")` init raised RSS from ~163 MB to ~862 MB, and one real OCR pass on `samples/input/IMG_0004.JPG` peaked at `ru_maxrss=10432413696` (~10.4 GB on macOS) while processing only the first image. Eval hardening is now implemented enough for safe live runs: `ab_eval.py` and `rag/eval.py` default to `--extract-mode vision_only` so live evals fail fast instead of silently falling back to Paddle, `ab_eval.py` now requires explicit `--seed --extract-mode auto` for the old seed-and-fallback flow, and `extract/ocr.py` reuses a single PaddleOCR instance per process. Phase 14 batch indexing is now implemented too: batch workers return `RunArtifacts` payloads and the main thread performs sequential RAG indexing after worker completion. Harness split is now explicit: `rag/eval.py` is the primary experiment harness with retrieval-health and efficiency metrics, while `ab_eval.py` is the narrower causal check for whether retrieval beats no-RAG and an intentionally weak retrieval control.
 **Branch:** `codex/feature-gemini-embedding-2-rag`
 **Plan version:** 1.5.0 + `gemini-embedding-2-rag-plan.md` (v2)
 **Last Updated:** 2026-03-15
@@ -38,6 +38,12 @@
   - Transform pipeline integration in `transform.py` (`RunArtifacts`, optional retrieval before adapt, optional indexing after run)
   - `transform.py` + `ab_eval.py` now preserve curriculum retrieval documents via `_select_rag_curriculum_context()` and pass them into the adaptation stage alongside exemplar/prior-adaptation metadata
   - Gemini access hardening (2026-03-15): `ab_eval.py` now loads `.env` directly instead of relying on `transform.py` import side effects; `extract/vision.py` now accepts either `GEMINI_API_KEY` or `GOOGLE_API_KEY`, matching the RAG client
+  - Eval/runtime hardening (2026-03-15): `ab_eval.py` and `rag/eval.py` gained `--extract-mode vision_only|auto|paddle|tesseract` with safe default `vision_only`; `ab_eval.py` now defaults `--no-seed` and refuses `--seed` unless `--extract-mode auto`; `extract/ocr.py` now caches one PaddleOCR instance per process to avoid repeated model loads
+  - Phase 14 batch indexing strategy implemented (2026-03-15): `transform.py` now exposes `run_pipeline_collect_artifacts(..., index_results=...)`; `batch.py` workers call it with `index_results=False`, collect `RunArtifacts` payloads, and then index sequentially from the main thread after `ThreadPoolExecutor` completes
+  - Harness split implemented (2026-03-15):
+    - `rag/eval.py` is now the primary experiment harness and reports retrieval latency, retrieval-context rate, curriculum-reference hit rate, selected-context average score, curriculum-support deltas, and mean RAG runtime overhead in addition to the existing retrieval/validator metrics
+    - `ab_eval.py` is now explicitly the causal harness and adds curriculum-support metrics plus an optional `C_bad_rag` negative-control arm (`--negative-control/--no-negative-control`) that routes intentionally weaker retrieval context through adaptation
+    - `transform._build_adapted_summary()` now records `curriculum_supported_items` and `curriculum_lesson_ids`, so both harnesses can score curriculum-backed adaptation behavior from run artifacts
   - Config/deps updates: `requirements.txt` (`chromadb>=0.5`, `python-pptx>=0.6.21`, `playwright>=1.40`), `.gitignore` (`vector_store/`, `data/ufli/raw/`, `data/ufli/normalized.jsonl`), `pyproject.toml` mypy override for `chromadb.*`, `playwright.*`, `pptx.*`
   - New RAG tests: `tests/test_rag_embeddings.py`, `tests/test_rag_store.py`, `tests/test_rag_retrieval.py`, `tests/test_rag_indexer.py`, `tests/test_rag_adapt.py`
   - New curriculum steering tests: `tests/test_rag_adapt.py` covers curriculum-backed target-word prioritization and the minimum-match guardrail; `tests/test_transform_rag_context.py` covers curriculum document preservation in transform-side RAG selection
@@ -58,6 +64,19 @@
   - `.venv/bin/pytest -q tests/test_adapt.py tests/test_rag_adapt.py tests/test_transform_rag_context.py` → `48 passed`
   - `.venv/bin/pytest -q tests` → `285 passed`
   - `.venv/bin/pytest -q tests/test_vision.py tests/test_rag_client.py` → `6 passed`
+  - `.venv/bin/ruff check extract/ocr.py ab_eval.py rag/eval.py tests/test_ab_eval.py tests/test_ocr_runtime.py` — clean
+  - `.venv/bin/mypy extract/ocr.py ab_eval.py rag/eval.py tests/test_ab_eval.py tests/test_ocr_runtime.py tests/test_rag_eval.py` — clean
+  - `.venv/bin/pytest -q tests/test_ab_eval.py tests/test_ocr_runtime.py tests/test_rag_eval.py tests/test_extract.py` → `18 passed`
+  - `.venv/bin/ruff check transform.py batch.py batch_utils.py tests/test_batch.py` — clean
+  - `.venv/bin/mypy transform.py batch.py batch_utils.py tests/test_batch.py` — clean
+  - `.venv/bin/pytest -q tests/test_batch.py` → `27 passed`
+  - `.venv/bin/pytest tests/ -v` → `294 passed`
+  - `.venv/bin/ruff check ab_eval.py rag/eval.py transform.py tests/test_ab_eval.py tests/test_rag_eval.py` — clean
+  - `.venv/bin/mypy ab_eval.py rag/eval.py transform.py tests/test_ab_eval.py tests/test_rag_eval.py` — clean
+  - `.venv/bin/pytest -q tests/test_ab_eval.py tests/test_rag_eval.py tests/test_transform_rag_context.py tests/test_rag_adapt.py` → `14 passed`
+  - Live eval: `source ~/.zshrc && personal-on && export RAG_GEMINI_BACKEND=vertex && PYTHONPATH=. .venv/bin/python -m rag.eval --test-dir samples/input --profile profiles/ian.yaml --db-path vector_store --theme roblox_obby --include 'IMG_0004.JPG' --output-root ./samples/output/rag_eval_live --extract-mode vision_only --no-images`
+    - Output root: `samples/output/rag_eval_live/20260315_185306`
+    - Result: `retrieval@3 mean=0.67`, `baseline_validator_pass_rate=1.0`, `rag_validator_pass_rate=1.0`, `rag_selected_source=curated_exemplars`, `rag_selected_count=2`
 - **Executed** (2026-03-14):
   - `playwright install chromium` — done
   - **Crawl**: 148 lessons across 15 pages, zero errors, manifest at `data/ufli/manifest.jsonl`
@@ -65,9 +84,25 @@
   - **Extract**: 148 lessons extracted to `data/ufli/normalized.jsonl` via python-pptx + PyMuPDF
   - **Index**: Completed after backend hardening. Live run used API-key backend auto-selection and `gemini-embedding-2-preview`; 148 lessons indexed into `vector_store/`
 - **Pending from RAG plan**:
-  - Decide whether `rag/eval.py`, `ab_eval.py`, or both should be the primary experiment harness and run a real eval pass on `samples/input/`
-  - Optional batch main-thread indexing strategy from Phase 14
+  - Run broader live eval coverage now that `rag/eval.py` is the primary harness and `ab_eval.py` is narrowed to causal checks
   - Optional docs updates (`README.md`, `CLAUDE.md`)
+- **OCR eval crash investigation (2026-03-15)**:
+  - Partial run artifacts confirm both live evals died in the first OCR fallback case:
+    - `samples/output/ab_eval_live/20260314_215613/seed_runs/IMG_0003/artifacts/preprocessed_ocr_resized.png`
+    - `samples/output/rag_eval_live/20260315_015613/IMG_0003/frozen/artifacts/preprocessed_ocr_resized.png`
+    - Neither run reached `source_model.json` or a final report, so the failure occurred during Paddle OCR, not later in adaptation/render/RAG scoring.
+  - Root-cause factors:
+    - `extract/vision.py` returns `None` on sandbox DNS/network failures, which silently forces OCR fallback.
+    - `extract/ocr.py` constructs a fresh `PaddleOCR(lang="en")` instance for every OCR call.
+    - `ab_eval.py` seeds multiple non-target inputs before evaluating targets, so one invocation can trigger repeated OCR initializations when Gemini is unavailable.
+    - Running `rag/eval.py` and `ab_eval.py` concurrently duplicates that memory-heavy OCR path in separate processes.
+    - Local fallback safety is weak: `extract_text_with_fallback()` only catches `ImportError`, and local Tesseract is not installed in the current macOS dev environment.
+  - Prevention plan:
+    - Add an explicit OCR backend switch for evals (`auto|vision_only|paddle|tesseract`) and fail fast instead of silently falling back to Paddle when the intended live Gemini path is unavailable.
+    - Cache/reuse a single PaddleOCR instance per process, or isolate OCR in a subprocess with a hard timeout/memory budget so an eval can fall back or abort cleanly instead of crashing the host app.
+    - Default eval harnesses to sequential, low-footprint execution (`--no-seed`, single target, no parallel runs) unless live Gemini access is confirmed.
+    - Add an OCR smoke/benchmark command that records elapsed time and peak RSS on one sample image before launching long evals.
+    - Align the local OCR runtime with the supported matrix before depending on Paddle locally; current dev env is Python 3.13.1 while CI remains Python 3.11.
 - **Future follow-up plan**:
   - `vertex-ai-gemini-migration-plan.md` captures the repo-wide Gemini auth/client migration to Vertex AI as a separate workstream after current evals and RAG hardening
 
@@ -146,24 +181,25 @@
 - `tests/test_retrieval_curriculum.py` — 3 tests (curriculum retrieval, grade filtering, empty collection)
 
 ### What's Next
-**All original milestones remain complete. UFLI crawl/acquire/extract/index are done. Active remaining work is now RAG evaluation workflow decisions, experiment execution, and production hardening.**
+**All original milestones remain complete. UFLI crawl/acquire/extract/index are done. Active remaining work is now experiment-harness consolidation/docs and broader production hardening.**
 
 ### Handoff Start Here
 - **Current ready state**: `vector_store/` contains 148 indexed UFLI curriculum records, transform/eval code now passes curriculum hits into adaptation, and curriculum-backed word steering is covered by tests.
-- **Current code state**: `rag/backfill.py` and `rag/eval.py` are implemented; curriculum-aware adaptation is now complete in `adapt/engine.py`; full repo suite is green after the change (`285 passed`).
-- **First task next session**: decide whether to use `rag/eval.py`, `ab_eval.py`, or both as the primary experiment harness and then run a real evaluation pass on `samples/input/`.
-- **Second task after that**: decide whether the batch flow should index on the main thread (Phase 14 follow-up) or stay optional/manual.
+- **Current code state**: `rag/backfill.py` and `rag/eval.py` are implemented; curriculum-aware adaptation is now complete in `adapt/engine.py`; full repo suite is green after the latest changes (`294 passed`); live `rag/eval.py` has been verified against Vertex on one sample input.
+- **First task next session**: run a wider multi-image live `rag/eval.py` sweep and inspect whether the new retrieval/curriculum metrics show any lift beyond ties in validator outcomes.
+- **Second task after that**: decide whether to add OCR subprocess isolation / memory-budget enforcement for explicit OCR modes (`auto|paddle|tesseract`), since the fail-fast/default path is already in place.
 - **Primary files to open first**: `rag/eval.py`, `ab_eval.py`, `transform.py`, `gemini-embedding-2-rag-plan.md`
 - **Useful verification commands**:
   - `.venv/bin/pytest -q tests/test_rag_backfill.py tests/test_rag_eval.py tests/test_rag_client.py tests/test_rag_embeddings.py tests/test_rag_retrieval.py tests/test_corpus_ingest.py tests/test_retrieval_curriculum.py`
   - `.venv/bin/python -c 'from rag.store import CURRICULUM, get_or_create_collection, get_store; print(get_or_create_collection(get_store("vector_store"), CURRICULUM).count())'`
 - **Environment note**: live Gemini embedding currently works via API-key auto-selection from `.env`. Vertex fallback remains supported in code but was not needed after backend hardening.
 - **Sandbox note (2026-03-15)**: a minimal direct Gemini probe failed inside Codex sandbox with `httpx.ConnectError: [Errno 8] nodename nor servname provided, or not known`, then succeeded immediately when rerun with escalation (`pong`). Use escalated commands for live Gemini evals from Codex, or expect OCR-only fallback behavior.
+- **OCR note (2026-03-15)**: the local macOS dev env currently has PaddleOCR 3.4.0 / Paddle 3.3.0 on Python 3.13.1 and no `tesseract` binary in `PATH`. Treat local Paddle fallback as memory-unsafe until the eval harness is hardened or the runtime is aligned.
+- **Vertex auth note (2026-03-15)**: personal ADC now works for Vertex on `ws-builder-rag` when using `personal-on` (`GOOGLE_APPLICATION_CREDENTIALS=~/.config/gcloud/adc-personal.json`, `GOOGLE_CLOUD_PROJECT=ws-builder-rag`, `GOOGLE_CLOUD_LOCATION=us-central1`). Live repo verification succeeded with `RAG_GEMINI_BACKEND=vertex`; prior failures were caused by ADC authenticating as `hjong@verily.health` instead of `howiejong@gmail.com`.
 
 **Priority 1: Remaining RAG work** (see `gemini-embedding-2-rag-plan.md`)
 - Decide how `rag/eval.py` and `ab_eval.py` should coexist or converge
-- Run a real evaluation pass on `samples/input/` now that curriculum-aware steering is in place
-- Decide on and implement RAG batch indexing flow (main-thread indexing strategy)
+- Expand live eval coverage beyond the verified single-image run if broader evidence is needed
 
 **Priority 2: Testing and polish**
 - Test batch processing on full folder of UFLI lessons
