@@ -8,10 +8,10 @@
 
 ## Current State
 
-**Status:** Core product milestones remain complete. Gemini Embedding 2 RAG Phase 7 is implemented and the curriculum-aware adaptation follow-up is now wired through `adapt/engine.py`. UFLI corpus pipeline is fully executed: crawl complete (148 lessons), acquire complete (539 files), extract complete (148 normalized), index complete (148 curriculum records in `vector_store/`). RAG client now supports API-key or Vertex backends plus embedding-model fallback (`gemini-embedding-exp-03-07` -> `gemini-embedding-2-preview` -> `text-embedding-005`). Curriculum retrieval now flows through `transform.py` and `ab_eval.py` into adaptation so word choices can be steered toward exact UFLI lesson content when overlap is strong enough. Validation for this follow-up passed: focused `ruff`/`mypy` on touched files and full repo suite green (`285 passed`).
+**Status:** Core product milestones remain complete. Gemini Embedding 2 RAG Phase 7 is implemented and the curriculum-aware adaptation follow-up is now wired through `adapt/engine.py`. UFLI corpus pipeline is fully executed: crawl complete (148 lessons), acquire complete (539 files), extract complete (148 normalized), index complete (148 curriculum records in `vector_store/`). RAG client now supports API-key or Vertex backends plus embedding-model fallback (`gemini-embedding-exp-03-07` -> `gemini-embedding-2-preview` -> `text-embedding-005`). Curriculum retrieval now flows through `transform.py` and `ab_eval.py` into adaptation so word choices can be steered toward exact UFLI lesson content when overlap is strong enough. Validation for this follow-up passed: focused `ruff`/`mypy` on touched files and full repo suite green (`285 passed`). Gemini access investigation on 2026-03-15 confirmed `.env` config is present and direct Gemini API access works outside the sandbox; prior live eval failures were caused by sandbox DNS/network restrictions, not missing credentials.
 **Branch:** `codex/feature-gemini-embedding-2-rag`
 **Plan version:** 1.5.0 + `gemini-embedding-2-rag-plan.md` (v2)
-**Last Updated:** 2026-03-14
+**Last Updated:** 2026-03-15
 
 ### Milestone Progress
 
@@ -26,6 +26,7 @@
 ### Active Workstream: Gemini Embedding 2 RAG + UFLI Corpus (2026-03-14)
 - **Plan files:**
   - `gemini-embedding-2-rag-plan.md` — RAG architecture and phases (Phases 1-7 code implemented; curriculum-aware adaptation follow-up now complete)
+  - `vertex-ai-gemini-migration-plan.md` — future repo-wide Gemini-to-Vertex migration plan; not yet implemented
   - `.claude/plans/reactive-mixing-riddle.md` — UFLI corpus ingestion plan (auto-loaded by Claude Code). Covers crawl/acquire/extract/ingest phases, file inventory, and verification steps
   - `worksheet-builder-consolidated-plan.md` — original product plan (v1.4.0, all 15 checkpoints complete)
 - **Completed in branch**:
@@ -36,6 +37,7 @@
   - Curriculum-aware adaptation added in `adapt/engine.py`: optional `rag_curriculum_references` flows into both `adapt_activity()` and `adapt_lesson()`, builds a deterministic curriculum word bank from retrieved UFLI lesson text, prefers curriculum-backed target words when at least two exact matches are present, and annotates supported items with `curriculum_supported` metadata for auditability
   - Transform pipeline integration in `transform.py` (`RunArtifacts`, optional retrieval before adapt, optional indexing after run)
   - `transform.py` + `ab_eval.py` now preserve curriculum retrieval documents via `_select_rag_curriculum_context()` and pass them into the adaptation stage alongside exemplar/prior-adaptation metadata
+  - Gemini access hardening (2026-03-15): `ab_eval.py` now loads `.env` directly instead of relying on `transform.py` import side effects; `extract/vision.py` now accepts either `GEMINI_API_KEY` or `GOOGLE_API_KEY`, matching the RAG client
   - Config/deps updates: `requirements.txt` (`chromadb>=0.5`, `python-pptx>=0.6.21`, `playwright>=1.40`), `.gitignore` (`vector_store/`, `data/ufli/raw/`, `data/ufli/normalized.jsonl`), `pyproject.toml` mypy override for `chromadb.*`, `playwright.*`, `pptx.*`
   - New RAG tests: `tests/test_rag_embeddings.py`, `tests/test_rag_store.py`, `tests/test_rag_retrieval.py`, `tests/test_rag_indexer.py`, `tests/test_rag_adapt.py`
   - New curriculum steering tests: `tests/test_rag_adapt.py` covers curriculum-backed target-word prioritization and the minimum-match guardrail; `tests/test_transform_rag_context.py` covers curriculum document preservation in transform-side RAG selection
@@ -55,6 +57,7 @@
   - `.venv/bin/pytest -q tests/test_rag_adapt.py tests/test_transform_rag_context.py` → `8 passed`
   - `.venv/bin/pytest -q tests/test_adapt.py tests/test_rag_adapt.py tests/test_transform_rag_context.py` → `48 passed`
   - `.venv/bin/pytest -q tests` → `285 passed`
+  - `.venv/bin/pytest -q tests/test_vision.py tests/test_rag_client.py` → `6 passed`
 - **Executed** (2026-03-14):
   - `playwright install chromium` — done
   - **Crawl**: 148 lessons across 15 pages, zero errors, manifest at `data/ufli/manifest.jsonl`
@@ -65,6 +68,8 @@
   - Decide whether `rag/eval.py`, `ab_eval.py`, or both should be the primary experiment harness and run a real eval pass on `samples/input/`
   - Optional batch main-thread indexing strategy from Phase 14
   - Optional docs updates (`README.md`, `CLAUDE.md`)
+- **Future follow-up plan**:
+  - `vertex-ai-gemini-migration-plan.md` captures the repo-wide Gemini auth/client migration to Vertex AI as a separate workstream after current evals and RAG hardening
 
 ### What Exists Now
 - `worksheet-builder-consolidated-plan.md` — full implementation plan (v1.4.0, 15 checkpoints)
@@ -153,6 +158,7 @@
   - `.venv/bin/pytest -q tests/test_rag_backfill.py tests/test_rag_eval.py tests/test_rag_client.py tests/test_rag_embeddings.py tests/test_rag_retrieval.py tests/test_corpus_ingest.py tests/test_retrieval_curriculum.py`
   - `.venv/bin/python -c 'from rag.store import CURRICULUM, get_or_create_collection, get_store; print(get_or_create_collection(get_store("vector_store"), CURRICULUM).count())'`
 - **Environment note**: live Gemini embedding currently works via API-key auto-selection from `.env`. Vertex fallback remains supported in code but was not needed after backend hardening.
+- **Sandbox note (2026-03-15)**: a minimal direct Gemini probe failed inside Codex sandbox with `httpx.ConnectError: [Errno 8] nodename nor servname provided, or not known`, then succeeded immediately when rerun with escalation (`pong`). Use escalated commands for live Gemini evals from Codex, or expect OCR-only fallback behavior.
 
 **Priority 1: Remaining RAG work** (see `gemini-embedding-2-rag-plan.md`)
 - Decide how `rag/eval.py` and `ab_eval.py` should coexist or converge

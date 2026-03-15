@@ -20,6 +20,11 @@ MAX_FRAGMENTS_PER_PAGE = 80  # too many tiny blocks = fragmented OCR
 MIN_AVG_CONFIDENCE = 0.5  # average confidence too low
 
 
+def _configured_api_key() -> str:
+    """Return the configured Gemini API key, supporting both env var names."""
+    return os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or ""
+
+
 def ocr_quality_is_poor(ocr_result: OCRResult, source: SourceWorksheetModel) -> bool:
     """Check if OCR results are too fragmented or low-quality to use."""
     if not ocr_result.blocks:
@@ -51,9 +56,9 @@ def extract_with_vision(
     Sends the image directly to Gemini and asks it to identify the template,
     regions, and content. Returns a SourceWorksheetModel or None if unavailable.
     """
-    api_key = os.environ.get("GEMINI_API_KEY")
+    api_key = _configured_api_key()
     if not api_key:
-        logger.info("No GEMINI_API_KEY — vision fallback unavailable")
+        logger.info("No GEMINI_API_KEY or GOOGLE_API_KEY — vision fallback unavailable")
         return None
 
     try:

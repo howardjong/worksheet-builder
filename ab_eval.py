@@ -13,6 +13,13 @@ from typing import Any
 
 import click
 
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except ImportError:
+    pass
+
 from capture.preprocess import preprocess_page
 from capture.store import store_master
 from companion.schema import load_profile
@@ -93,7 +100,9 @@ def main(
     seed_inputs = [path for path in files if path not in target_paths]
     if seed:
         if not rag_available():
-            logger.warning("RAG unavailable (GOOGLE_CLOUD_PROJECT not set) — skipping seed")
+            logger.warning(
+                "RAG unavailable (no Gemini API key or Vertex project configured) — skipping seed"
+            )
         elif seed_inputs:
             _seed_store(seed_inputs, profile_path, theme_id, run_root / "seed_runs", images)
         else:
