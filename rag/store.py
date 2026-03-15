@@ -13,6 +13,7 @@ WORKSHEETS = "worksheets"
 SKILLS = "skills"
 ADAPTATIONS = "adaptations"
 EXEMPLARS = "exemplars"
+CURRICULUM = "curriculum"
 
 
 def get_store(db_path: str = DEFAULT_DB_PATH) -> Any:

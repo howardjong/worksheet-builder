@@ -16,6 +16,10 @@ anthropic>=0.30
 python-dotenv>=1.0
 chromadb>=0.5
 
+# Corpus ingestion (optional — for UFLI curriculum indexing)
+python-pptx>=0.6.21
+playwright>=1.40
+
 # Dev / CI
 pytest>=7.0
 mypy>=1.5

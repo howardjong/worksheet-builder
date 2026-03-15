@@ -8,6 +8,10 @@ vector_store/
 # Sample inputs (UFLI copyrighted — private, local only)
 samples/input/
 
+# UFLI corpus raw downloads (copyrighted — private, local only)
+data/ufli/raw/
+data/ufli/normalized.jsonl
+
 # Python
 __pycache__/
 *.py[cod]

@@ -30,6 +30,8 @@ module = [
     "google.*",
     "google.genai.*",
     "chromadb.*",
+    "playwright.*",
+    "pptx.*",
 ]
 ignore_missing_imports = true
 

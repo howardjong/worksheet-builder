@@ -41,6 +41,12 @@ python batch.py --input-dir ./photos/ --profile profiles/ian.yaml --theme space 
 # Mark completion and award tokens
 python complete.py --profile profiles/ian.yaml --lesson 5
 
+# Backfill saved artifacts into the RAG store
+python -m rag.backfill --artifacts-dir ./samples/output --output-dir ./samples/output
+
+# Evaluate retrieval and baseline-vs-RAG behavior
+python -m rag.eval --test-dir ./samples/input --profile profiles/ian.yaml
+
 # View progress
 python complete.py --profile profiles/ian.yaml --progress
 ```
@@ -241,6 +247,42 @@ Outputs include:
 - `scorecard.md` and `scorecard.json` with per-target A/B deltas
 - Per-variant `artifacts/rag_context.json` showing retrieval provenance
 - Frozen `source_model.json` + `skill_model.json` for reproducible reruns
+
+### RAG backfill and evaluation
+
+Phase 7 adds two maintenance/evaluation commands on top of the live RAG path:
+
+```bash
+# Backfill previously generated outputs into the vector store
+python -m rag.backfill \
+  --artifacts-dir ./samples/output \
+  --output-dir ./samples/output \
+  --db-path vector_store
+
+# Evaluate retrieval quality and baseline-vs-RAG differences
+python -m rag.eval \
+  --test-dir ./samples/input \
+  --profile profiles/ian.yaml \
+  --theme roblox_obby \
+  --db-path vector_store \
+  --output-root ./samples/output/rag_eval \
+  --no-images
+```
+
+`rag.backfill` scans saved `artifacts/` directories for `source_model.json`,
+`skill_model.json`, `adapted_model*.json`, `validation*.json`, and matching
+PDFs, then reconstructs indexing payloads using the same `index_run()` path as
+live pipeline runs.
+
+`rag.eval` freezes extraction and skill inference per input, measures
+`retrieval@3`, compares baseline vs RAG validator pass rate, tracks whether the
+RAG variant changes response-format sets, and estimates distractor novelty from
+retrieved prior adaptations.
+
+Current RAG operational notes:
+- The curriculum store is already populated with 148 indexed UFLI lessons.
+- Live embedding currently works via API-key auto-selection from `.env`.
+- Vertex fallback remains supported through `RAG_GEMINI_BACKEND=vertex`.
 
 ## Companion layer
 

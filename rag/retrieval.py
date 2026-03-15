@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from rag.embeddings import embed_text
 from rag.store import (
     ADAPTATIONS,
+    CURRICULUM,
     EXEMPLARS,
     SKILLS,
     WORKSHEETS,
@@ -34,6 +35,7 @@ class RAGContext(BaseModel):
     similar_skills: list[RetrievalResult] = Field(default_factory=list)
     prior_adaptations: list[RetrievalResult] = Field(default_factory=list)
     curated_exemplars: list[RetrievalResult] = Field(default_factory=list)
+    curriculum_references: list[RetrievalResult] = Field(default_factory=list)
 
 
 def retrieve_context(
@@ -87,6 +89,19 @@ def retrieve_context(
                 _parse_results(adapt_results),
                 limit=n_results,
             )
+
+        curriculum_col = get_or_create_collection(store, CURRICULUM)
+        if int(curriculum_col.count()) > 0:
+            curriculum_where: dict[str, Any] | None = None
+            if grade_level:
+                curriculum_where = {"grade_level": grade_level}
+            curriculum_results = query_similar(
+                curriculum_col,
+                skill_emb.values,
+                n_results=n_results,
+                where=curriculum_where,
+            )
+            context.curriculum_references = _parse_results(curriculum_results)
 
     if extracted_text:
         text_emb = embed_text(extracted_text[:500], task_type="RETRIEVAL_QUERY")

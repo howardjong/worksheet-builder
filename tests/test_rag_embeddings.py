@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 import pytest
+
 from rag import embeddings
 
 
@@ -150,7 +151,43 @@ def test_embedding_model_configurable_via_env(monkeypatch: pytest.MonkeyPatch) -
     fake_client = _FakeClient()
     monkeypatch.setattr(embeddings, "_types_module", lambda: _FakeTypes)
     monkeypatch.setattr(embeddings, "get_rag_client", lambda: fake_client)
-    monkeypatch.setattr(embeddings, "EMBEDDING_MODEL", "gemini-embedding-test")
+    monkeypatch.setattr(
+        embeddings,
+        "get_embedding_models",
+        lambda: ["gemini-embedding-test"],
+    )
 
     embeddings.embed_text("phonics", dimensions=3)
     assert fake_client.models.calls[0]["model"] == "gemini-embedding-test"
+
+
+def test_embed_text_falls_back_to_next_model(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class _FallbackModels(_FakeModels):
+        def embed_content(
+            self,
+            model: str,
+            contents: object,
+            config: _FakeEmbedConfig,
+        ) -> Any:
+            if model == "gemini-embedding-exp-03-07":
+                raise RuntimeError("403 permission denied")
+            return super().embed_content(model, contents, config)
+
+    class _FallbackClient(_FakeClient):
+        def __init__(self) -> None:
+            self.models = _FallbackModels()
+
+    fake_client = _FallbackClient()
+    monkeypatch.setattr(embeddings, "_types_module", lambda: _FakeTypes)
+    monkeypatch.setattr(embeddings, "get_rag_client", lambda: fake_client)
+    monkeypatch.setattr(
+        embeddings,
+        "get_embedding_models",
+        lambda: ["gemini-embedding-exp-03-07", "text-embedding-005"],
+    )
+
+    result = embeddings.embed_text("phonics", dimensions=3)
+    assert result.model == "text-embedding-005"
+    assert fake_client.models.calls[0]["model"] == "text-embedding-005"

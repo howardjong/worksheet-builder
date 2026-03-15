@@ -1,6 +1,6 @@
-# CLAUDE.md
+# AGENTS.md
 
-This file provides guidance to Claude Code when working with code in this repository.
+This file provides guidance to Codex when working with code in this repository.
 
 ## Project Overview
 
@@ -52,12 +52,6 @@ python complete.py --profile profiles/ian.yaml --lesson 5
 
 # Preview before print
 python transform.py --input photo.jpg --profile profiles/ian.yaml --theme space --preview
-
-# Backfill saved outputs into the vector store
-python -m rag.backfill --artifacts-dir ./samples/output --output-dir ./samples/output
-
-# Evaluate retrieval quality and baseline-vs-RAG behavior
-python -m rag.eval --test-dir ./samples/input --profile profiles/ian.yaml
 ```
 
 ## Architecture
@@ -98,8 +92,6 @@ theme/       — calm theme engine + curated assets
 companion/   — learner profile, avatar, rewards, caregiver controls
 render/      — ReportLab PDF + preview
 validate/    — skill-parity, print quality, ADHD compliance
-rag/         — embeddings, store, retrieval, indexer, backfill, evaluation
-corpus/      — UFLI crawl/acquire/extract/ingest pipeline
 ```
 
 ## Conventions
@@ -113,21 +105,12 @@ corpus/      — UFLI crawl/acquire/extract/ingest pipeline
 - **Master images** stored permanently in `masters/` for reprocessing
 - **Profiles** stored as YAML in `profiles/`
 - **Curated theme assets** committed to repo; generated assets cached in `asset_cache/` (gitignored)
-- **RAG store** persists in `vector_store/`; UFLI curriculum corpus lives in the `curriculum` collection
-
-## RAG Workflow
-
-- **Live retrieval path:** `transform.py` retrieves RAG context before adaptation and indexes successful runs after rendering.
-- **Corpus ingestion:** `python -m corpus.ufli.ingest index --data-dir ./data/ufli`
-- **Backfill old runs:** `python -m rag.backfill --artifacts-dir ./samples/output --output-dir ./samples/output`
-- **Evaluate retrieval quality:** `python -m rag.eval --test-dir ./samples/input --profile profiles/ian.yaml`
-- **Current backend behavior:** RAG embedding auto-selects API-key Gemini when available in `.env`; Vertex remains available via `RAG_GEMINI_BACKEND=vertex`.
 
 ## Operating Conventions
 
 ### Commands and Skills
 - **Commands** (`.claude/commands/`) define **what to do** — user invokes them via `/slash-command`
-- **Skills** (`.claude/skills/`) define **how to do it well** — auto-loaded when task context matches
+- **Skills** (`.agents/skills/`) define **how to do it well** — auto-loaded when task context matches
 - **Before executing any command or implementation task:** identify which skills apply and load them. The skills encode domain rules (ADHD design, data contracts, skill preservation, print quality, avatar rewards, pipeline stages) that must influence the work.
 
 ### Parallelization Rules
@@ -144,7 +127,7 @@ Do NOT parallelize when:
 ### Implementation Protocol
 For each checkpoint or non-trivial task:
 1. Read the plan and context doc for current state
-2. Identify which skills apply (check `.claude/skills/`)
+2. Identify which skills apply (check `.agents/skills/`)
 3. Decompose into independent sub-tasks if possible
 4. Implement (parallelize independent sub-tasks via sub-agents)
 5. Validate after implementation: run tests, check contracts, verify ADHD compliance
