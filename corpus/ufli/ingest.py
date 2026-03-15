@@ -173,6 +173,42 @@ def index(data_dir: str, db_path: str) -> None:
     click.echo(f"Indexed {count} lessons")
 
 
+@cli.command()
+@click.option("--data-dir", default="data/ufli", help="Data directory.")
+@click.option("--db-path", default="vector_store", help="ChromaDB path.")
+@click.option("--output-dir", default="data/ufli/audit", help="Audit report root directory.")
+@click.option("--sample-size", default=20, help="Manual review sample size.")
+@click.option("--benchmark-size", default=50, help="Retrieval benchmark sample size.")
+@click.option("--seed", default=42, help="Deterministic sampling seed.")
+@click.option(
+    "--use-ai-judge/--no-ai-judge",
+    default=False,
+    help="Advisory flag only; audit remains offline.",
+)
+def audit(
+    data_dir: str,
+    db_path: str,
+    output_dir: str,
+    sample_size: int,
+    benchmark_size: int,
+    seed: int,
+    use_ai_judge: bool,
+) -> None:
+    """Run an offline multimodal corpus audit and write timestamped reports."""
+    from corpus.ufli.audit import run_audit
+
+    summary = run_audit(
+        data_dir=data_dir,
+        db_path=db_path,
+        output_dir=output_dir,
+        sample_size=sample_size,
+        benchmark_size=benchmark_size,
+        seed=seed,
+        use_ai_judge=use_ai_judge,
+    )
+    click.echo(f"Audit written to {summary.output_dir}")
+
+
 @cli.command(name="run-all")
 @click.option("--data-dir", default="data/ufli", help="Data directory.")
 @click.option("--db-path", default="vector_store", help="ChromaDB path.")
