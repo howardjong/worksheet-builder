@@ -25,6 +25,8 @@ from corpus.ufli.audio_companion_schema import (
     AudioClipDefinition,
     AudioClipKind,
     AudioVoiceSettings,
+    BundleValidationIssue,
+    BundleValidationReport,
     ClipSourceField,
     DryRunEstimate,
     LessonAudioBundle,
@@ -54,6 +56,46 @@ _VOICE_PROFILES = "voice_profiles.yaml"
 _PILOT_LESSONS = "pilot_lessons.yaml"
 _NUMERIC_LESSONS = range(1, 129)
 _STAGE1_PILOT_SET = "pilot_micro"
+_FORBIDDEN_TEMPLATE_PHRASES = (
+    "read these words",
+    "with these words",
+)
+_METADATA_WORDS = {
+    "activity",
+    "block",
+    "brief",
+    "chains",
+    "chain",
+    "concept",
+    "decodable",
+    "home",
+    "hour",
+    "insert",
+    "irregular",
+    "lesson",
+    "monday",
+    "minute",
+    "new",
+    "part",
+    "practice",
+    "read",
+    "reading",
+    "reinforcement",
+    "review",
+    "roll",
+    "sample",
+    "script",
+    "sentence",
+    "sentences",
+    "teach",
+    "text",
+    "title",
+    "transition",
+    "wednesday",
+    "word",
+    "words",
+    "work",
+}
 _COMMON_WORDS = {
     "a",
     "and",
@@ -109,6 +151,7 @@ _COMMON_WORDS = {
     "words",
     "you",
 }
+_VALIDATION_WARNING_LIMIT = 25
 
 
 @dataclass(frozen=True)
@@ -151,7 +194,17 @@ def build_audio_companion_manifests(
         lesson_number = _lesson_number(lesson.lesson_id)
         if lesson_number is None or lesson_number not in selected_lessons:
             continue
-        bundles.append(_derive_lesson_bundle(lesson, lesson_number, lexicon))
+        bundle = _derive_lesson_bundle(lesson, lesson_number, lexicon)
+        bundle_issues = _validate_bundle(bundle, lexicon)
+        if bundle_issues:
+            summary = "; ".join(
+                f"{issue.code}: {issue.message}"
+                for issue in bundle_issues[:3]
+            )
+            raise RuntimeError(
+                f"Audio bundle validation failed for {bundle.lesson_key}: {summary}"
+            )
+        bundles.append(bundle)
 
     bundles.sort(key=lambda bundle: bundle.lesson_number)
     for bundle in bundles:
@@ -196,6 +249,22 @@ def generate_audio_companion(
     _enforce_stage1_pilot_scope(selected_lessons, pilot_lessons)
 
     bundles = load_audio_bundles(bundle_dir, selected_lessons=selected_lessons)
+    validation_report = validate_audio_companion(
+        data_dir=data_dir,
+        lesson_set=lesson_set,
+        lesson_id=lesson_id,
+        lesson_min=lesson_min,
+        lesson_max=lesson_max,
+    )
+    if not validation_report.passed:
+        summary = "; ".join(
+            f"{issue.bundle_key}:{issue.code}"
+            for issue in validation_report.issues[:3]
+        )
+        raise RuntimeError(
+            "Audio bundle validation failed before generation: "
+            f"{validation_report.issue_count} issues. {summary}"
+        )
     voice_catalog = load_voice_profiles(companion_dir / _VOICE_PROFILES)
     voice_names = _selected_voice_profiles(
         voice_catalog=voice_catalog,
@@ -456,6 +525,42 @@ def load_pilot_lessons(path: Path) -> PilotLessonCatalog:
     return catalog
 
 
+def validate_audio_companion(
+    data_dir: str = "data/ufli",
+    lesson_set: str = _STAGE1_PILOT_SET,
+    lesson_id: str | None = None,
+    lesson_min: int = 1,
+    lesson_max: int = 128,
+) -> BundleValidationReport:
+    """Validate selected built lesson bundles before synthesis or judging."""
+    base = Path(data_dir)
+    companion_dir = base / "companion"
+    pilot_lessons = load_pilot_lessons(companion_dir / _PILOT_LESSONS)
+    selected_lessons = _resolve_selected_lessons(
+        pilot_lessons=pilot_lessons,
+        lesson_set=lesson_set,
+        lesson_id=lesson_id,
+        lesson_min=lesson_min,
+        lesson_max=lesson_max,
+    )
+    bundles = load_audio_bundles(companion_dir / _BUNDLE_DIR, selected_lessons=selected_lessons)
+    lexicon = load_pronunciation_lexicon(companion_dir / _PRONUNCIATION_LEXICON)
+
+    issues: list[BundleValidationIssue] = []
+    for bundle in bundles:
+        issues.extend(_validate_bundle(bundle, lexicon))
+
+    return BundleValidationReport(
+        generated_at=datetime.now(tz=UTC).isoformat(),
+        data_dir=str(base),
+        lesson_ids=[bundle.lesson_id for bundle in bundles],
+        bundle_count=len(bundles),
+        passed=not any(issue.severity == "error" for issue in issues),
+        issue_count=len(issues),
+        issues=issues,
+    )
+
+
 def _load_yaml(path: Path) -> dict[str, Any]:
     if not path.exists():
         raise FileNotFoundError(f"Missing companion config: {path}")
@@ -482,8 +587,9 @@ def _derive_lesson_bundle(
     lesson_key = f"lesson_{lesson_number:03d}"
     concept = _clean_text(lesson.concept)
     title = f"Lesson {lesson_number}: {concept or 'UFLI practice'}"
-    word_targets = _extract_word_targets(lesson)
-    concept_targets = _extract_concept_targets(concept, word_targets, lexicon)
+    raw_word_targets = _extract_word_targets(lesson)
+    concept_targets = _extract_concept_targets(concept, raw_word_targets, lexicon)
+    word_targets = _filter_word_targets(raw_word_targets, concept_targets)
     passage_text = _extract_passage_text(lesson.decodable_text)
 
     clips: list[AudioClipDefinition] = []
@@ -506,7 +612,7 @@ def _derive_lesson_bundle(
     sequence_index += 1
 
     for target_index, target in enumerate(concept_targets, start=1):
-        example_word = _first_matching_example_word(target, word_targets)
+        example_word = _resolve_anchor_word(target, word_targets, lexicon)
         transcript_text, tts_text = _phoneme_clip_text(target, example_word)
         clips.append(
             _clip(
@@ -539,7 +645,7 @@ def _derive_lesson_bundle(
                 transcript_text=word,
                 tts_text=_apply_special_word_overrides(word, lexicon),
                 pronunciation_targets=[f"word:{_slugify(word)}"],
-                source_fields=["home_practice_text", "slide_text", "decodable_text"],
+                source_fields=["home_practice_text", "slide_text", "additional_text"],
             )
         )
         sequence_index += 1
@@ -745,20 +851,40 @@ def _extract_word_targets(lesson: LessonContent) -> list[str]:
     candidates.extend(_extract_sample_words(lesson.home_practice_text))
     candidates.extend(_extract_sample_words(lesson.additional_text))
     candidates.extend(_extract_sample_words(lesson.slide_text))
-    if lesson.decodable_text:
-        candidates.extend(_frequent_content_words(_extract_passage_text(lesson.decodable_text)))
-    candidates.extend(_frequent_content_words(lesson.slide_text))
     deduped = _dedupe_casefold(candidates)
     return deduped[:8]
 
 
 def _extract_sample_words(text: str) -> list[str]:
     words: list[str] = []
-    for token in re.findall(r"[A-Za-z][A-Za-z'-]{1,14}", text):
-        cleaned = token.strip("'")
-        if cleaned.lower() in _COMMON_WORDS:
+    for raw_line in text.splitlines():
+        line = _clean_text(raw_line)
+        if not line:
             continue
-        words.append(cleaned)
+        line = re.sub(r"^Lesson\s+[A-Za-z0-9-]+:?\s*", "", line)
+        line = re.sub(r"\b(?:[A-Za-z-]+\s*/[^/]+/[, ]*)+", " ", line)
+        line = _clean_text(line)
+        if not line:
+            continue
+        if any(char in line for char in "[]"):
+            continue
+        if "→" in line or "->" in line:
+            continue
+        if re.search(r"[.!?]", line) and len(line.split()) > 8:
+            continue
+        tokens = [
+            token.strip("'")
+            for token in re.findall(r"[A-Za-z][A-Za-z'-]{1,14}", line)
+        ]
+        if not tokens:
+            continue
+        for token in tokens:
+            normalized = token.casefold()
+            if normalized in _COMMON_WORDS or normalized in _METADATA_WORDS:
+                continue
+            if not _looks_like_student_word(token):
+                continue
+            words.append(token)
     return words
 
 
@@ -854,21 +980,16 @@ def _lesson_instruction_text(
     word_targets: list[str],
 ) -> str:
     focus = _concept_focus_text(concept_targets)
-    sample_words = ", ".join(word_targets[:4])
-    if sample_words:
-        return (
-            f"Listen first. Tap the sounds and read these words: {sample_words}. "
-            f"Focus on {focus}."
-        )
-    return f"Listen first. Tap the sounds and read the words. Focus on {focus}."
+    if focus != "the target sound":
+        return f"Listen. Tap the sounds. Then read the word. Focus on {focus}."
+    return "Listen. Tap the sounds. Then read the word."
 
 
 def _review_text(concept_targets: list[_ConceptTarget], word_targets: list[str]) -> str:
     focus = _concept_focus_text(concept_targets)
-    sample_words = ", ".join(word_targets[:4])
-    if sample_words:
-        return f"Review {focus} with these words: {sample_words}. Read each word slowly."
-    return f"Review {focus}. Read each word slowly."
+    if focus != "the target sound":
+        return f"Check each sound. Read the word slowly. Focus on {focus}."
+    return "Check each sound. Read the word slowly."
 
 
 def _concept_focus_text(concept_targets: list[_ConceptTarget]) -> str:
@@ -885,17 +1006,23 @@ def _concept_focus_text(concept_targets: list[_ConceptTarget]) -> str:
 
 def _phoneme_clip_text(target: _ConceptTarget, example_word: str) -> tuple[str, str]:
     example_text = f" As in {example_word}." if example_word else ""
-    transcript = f"{target.grapheme_display} says {target.phoneme_display}.{example_text}"
-    tts = f"{target.grapheme_tts} says {target.phoneme_tts}.{example_text}"
+    transcript = f"{target.grapheme_display}. {target.phoneme_display}.{example_text}"
+    tts = f"{target.grapheme_tts}. {target.phoneme_tts}.{example_text}"
     return transcript.strip(), tts.strip()
 
 
-def _first_matching_example_word(target: _ConceptTarget, word_targets: list[str]) -> str:
-    grapheme = target.grapheme_key.replace("_", "")
+def _resolve_anchor_word(
+    target: _ConceptTarget,
+    word_targets: list[str],
+    lexicon: PronunciationLexicon,
+) -> str:
+    entry = lexicon.graphemes.get(target.grapheme_key)
+    if entry is not None and entry.anchor_word:
+        return entry.anchor_word
     for word in word_targets:
-        if grapheme and grapheme in word.casefold():
+        if _word_matches_target(word, target):
             return word
-    return word_targets[0] if word_targets else ""
+    return ""
 
 
 def _bundle_pronunciation_targets(concept_targets: list[_ConceptTarget]) -> list[str]:
@@ -963,6 +1090,45 @@ def _frequent_content_words(text: str) -> list[str]:
     return ordered
 
 
+def _filter_word_targets(
+    candidates: list[str],
+    concept_targets: list[_ConceptTarget],
+) -> list[str]:
+    filtered: list[str] = []
+    for candidate in candidates:
+        if _is_metadata_word(candidate):
+            continue
+        if not any(_word_matches_target(candidate, target) for target in concept_targets):
+            continue
+        filtered.append(candidate)
+    return _dedupe_casefold(filtered)
+
+
+def _looks_like_student_word(word: str) -> bool:
+    normalized = _normalize_special_word(word)
+    return 2 <= len(normalized) <= 12 and normalized.isalpha()
+
+
+def _is_metadata_word(word: str) -> bool:
+    return _normalize_special_word(word) in _METADATA_WORDS
+
+
+def _word_matches_target(word: str, target: _ConceptTarget) -> bool:
+    grapheme = target.grapheme_key.replace("_", "")
+    normalized = _normalize_special_word(word)
+    if not grapheme or not normalized:
+        return False
+    if grapheme.startswith("-"):
+        return normalized.endswith(grapheme.lstrip("-"))
+    if grapheme.endswith("-"):
+        return normalized.startswith(grapheme.rstrip("-"))
+    if grapheme in {"a", "e", "i", "o", "u"}:
+        return grapheme in normalized
+    if len(grapheme) == 1:
+        return normalized.startswith(grapheme)
+    return grapheme in normalized
+
+
 def _dedupe_casefold(values: list[str]) -> list[str]:
     seen: set[str] = set()
     deduped: list[str] = []
@@ -973,6 +1139,136 @@ def _dedupe_casefold(values: list[str]) -> list[str]:
         seen.add(normalized)
         deduped.append(value)
     return deduped
+
+
+def _validate_bundle(
+    bundle: LessonAudioBundle,
+    lexicon: PronunciationLexicon,
+) -> list[BundleValidationIssue]:
+    issues: list[BundleValidationIssue] = []
+    concept_targets = _extract_concept_targets(bundle.concept, bundle.word_targets, lexicon)
+
+    if not bundle.word_targets:
+        issues.append(
+            _bundle_issue(
+                bundle=bundle,
+                code="missing_word_targets",
+                message="Bundle has no valid student-facing word targets.",
+            )
+        )
+
+    for word in bundle.word_targets:
+        if _is_metadata_word(word):
+            issues.append(
+                _bundle_issue(
+                    bundle=bundle,
+                    code="contaminated_word_target",
+                    message=(
+                        f"Word target {word!r} looks like teacher metadata, "
+                        "not student content."
+                    ),
+                )
+            )
+        elif not any(_word_matches_target(word, target) for target in concept_targets):
+            issues.append(
+                _bundle_issue(
+                    bundle=bundle,
+                    code="misaligned_word_target",
+                    message=f"Word target {word!r} does not match the lesson concept.",
+                )
+            )
+
+    for target in concept_targets:
+        if not _resolve_anchor_word(target, bundle.word_targets, lexicon):
+            issues.append(
+                _bundle_issue(
+                    bundle=bundle,
+                    code="missing_anchor_word",
+                    message=(
+                        "No approved anchor word is available for grapheme "
+                        f"{target.grapheme_key!r}."
+                    ),
+                )
+            )
+
+    for clip in bundle.clips:
+        lowered = clip.transcript_text.casefold()
+        if clip.segment_type in {"lesson_instruction", "review"}:
+            if any(phrase in lowered for phrase in _FORBIDDEN_TEMPLATE_PHRASES):
+                issues.append(
+                    _bundle_issue(
+                        bundle=bundle,
+                        code="answer_giving_prompt",
+                        message=(
+                            f"{clip.segment_type} prompt enumerates answer words instead of using "
+                            "a decoding-first process prompt."
+                        ),
+                        segment_id=clip.segment_id,
+                    )
+                )
+            if _contains_answer_list(clip.transcript_text, bundle.word_targets):
+                issues.append(
+                    _bundle_issue(
+                        bundle=bundle,
+                        code="answer_list_in_prompt",
+                        message=(
+                            f"{clip.segment_type} prompt contains target words that should be "
+                            "attempted by the child first."
+                        ),
+                        segment_id=clip.segment_id,
+                    )
+                )
+
+        if clip.segment_type == "phoneme_model":
+            if not any(
+                clip.transcript_text.casefold().endswith(word.casefold() + ".")
+                or clip.transcript_text.casefold().endswith(word.casefold())
+                for word in bundle.word_targets
+            ) and not any(
+                clip.transcript_text.casefold().endswith(
+                    entry.anchor_word.casefold() + "."
+                )
+                or clip.transcript_text.casefold().endswith(entry.anchor_word.casefold())
+                for entry in lexicon.graphemes.values()
+                if entry.anchor_word
+            ):
+                issues.append(
+                    _bundle_issue(
+                        bundle=bundle,
+                        code="missing_anchor_in_phoneme_model",
+                        message="Phoneme model clip is missing an approved exemplar word.",
+                        segment_id=clip.segment_id,
+                    )
+                )
+
+    return issues
+
+
+def _bundle_issue(
+    bundle: LessonAudioBundle,
+    code: str,
+    message: str,
+    segment_id: str = "",
+) -> BundleValidationIssue:
+    return BundleValidationIssue(
+        lesson_id=bundle.lesson_id,
+        lesson_number=bundle.lesson_number,
+        bundle_key=bundle.lesson_key,
+        segment_id=segment_id,
+        severity="error",
+        code=code,
+        message=message,
+    )
+
+
+def _contains_answer_list(text: str, word_targets: list[str]) -> bool:
+    matches = [
+        word
+        for word in word_targets
+        if len(_normalize_special_word(word)) >= 3
+        and re.search(rf"\b{re.escape(word)}\b", text, flags=re.IGNORECASE)
+    ]
+    return len(matches) >= 2
 
 
 def _lesson_number(lesson_id: str) -> int | None:

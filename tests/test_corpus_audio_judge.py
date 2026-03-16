@@ -127,6 +127,7 @@ def test_judge_audio_companion_writes_reports_with_stubbed_judge(
             segment_id=kwargs["clip"].segment_id,
             segment_type=kwargs["clip"].segment_type,
             audio_path=kwargs["clip"].audio_path,
+            transcript_word_count=max(len(kwargs["clip"].transcript_text.split()), 1),
             actual_duration_ms=1200,
             actual_wpm=90.0,
             expected_wpm_target=92.0,
@@ -163,6 +164,8 @@ def test_judge_audio_companion_writes_reports_with_stubbed_judge(
     assert summary.clip_count == len(bundle.clips)
     assert summary.blocker_count == 0
     assert summary.recommendation_counts == {"use": len(bundle.clips)}
+    assert summary.family_summaries
+    assert summary.required_manual_review_segments
     assert (report_dir / "judge_summary.json").exists()
     assert (report_dir / "judge_results.csv").exists()
     assert (report_dir / "judge_report.md").exists()
@@ -246,3 +249,67 @@ def test_judge_clip_uses_audio_pacing_and_clarity_guardrails(
         "does not closely match the intended transcript" in concern
         for concern in result.concerns
     )
+
+
+def test_judge_short_word_model_clip_avoids_pacing_false_positive(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_companion_configs(tmp_path)
+    _write_normalized(tmp_path / "normalized.jsonl", _sample_rows())
+    bundle = build_audio_companion_manifests(data_dir=str(tmp_path))[0]
+    clip = next(item for item in bundle.clips if item.segment_type == "word_model")
+    clip.status = "generated"
+    clip.voice_profile = "dorothy"
+    clip.speaker = "dorothy"
+    clip.audio_path = f"audio/dorothy/lessons/{bundle.lesson_key}/{clip.audio_file_name}"
+    audio_path = tmp_path / "companion" / clip.audio_path
+    audio_path.parent.mkdir(parents=True, exist_ok=True)
+    audio_path.write_bytes(b"mp3")
+
+    monkeypatch.setattr("corpus.ufli.audio_judge._measure_audio_duration_ms", lambda _path: 1200)
+    fake_response = SimpleNamespace(
+        text=json.dumps(
+            {
+                "heard_text": clip.transcript_text,
+                "clarity_score": 5,
+                "pronunciation_accuracy_score": 5,
+                "instructional_match_score": 5,
+                "target_accuracy_score": 5,
+                "decoding_support_score": 5,
+                "passage_neutrality_score": None,
+                "adhd_supportiveness_score": 5,
+                "pacing_suitability_score": 5,
+                "pacing_consistency_score": 5,
+                "blocker": False,
+                "recommendation": "use",
+                "strengths": ["clear word model"],
+                "concerns": [],
+                "rationale": "Looks good.",
+            }
+        )
+    )
+    fake_client = SimpleNamespace(
+        models=SimpleNamespace(generate_content=lambda **_kwargs: fake_response)
+    )
+
+    result = _judge_clip_with_gemini(
+        client=fake_client,
+        judge_model="gemini-3-flash-preview",
+        companion_dir=tmp_path / "companion",
+        lesson=LessonContent(
+            lesson_id="1",
+            lesson_group="1-34",
+            concept="a /ă/",
+            slide_text="Lesson 1 a /ă/ cat map at as.",
+            slide_count=4,
+            decodable_text="",
+            home_practice_text="",
+            additional_text="",
+        ),
+        bundle=bundle,
+        clip=clip,
+    )
+
+    assert result.recommendation == "use"
+    assert not any("expected band" in concern for concern in result.concerns)

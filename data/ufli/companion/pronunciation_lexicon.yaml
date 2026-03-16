@@ -1,19 +1,19 @@
 phonemes:
   a_short:
     transcript_text: "/a/"
-    approved_tts_text: "short a"
+    approved_tts_text: "the short a sound"
   e_short:
     transcript_text: "/e/"
-    approved_tts_text: "short e"
+    approved_tts_text: "the short e sound"
   i_short:
     transcript_text: "/i/"
-    approved_tts_text: "short i"
+    approved_tts_text: "the short i sound"
   o_short:
     transcript_text: "/o/"
-    approved_tts_text: "short o"
+    approved_tts_text: "the short o sound"
   u_short:
     transcript_text: "/u/"
-    approved_tts_text: "short u"
+    approved_tts_text: "the short u sound"
   k:
     transcript_text: "/k/"
     approved_tts_text: "the k sound"
@@ -33,15 +33,19 @@ graphemes:
   a:
     transcript_text: "a"
     approved_tts_text: "letter a"
+    anchor_word: "cat"
   c:
     transcript_text: "c"
     approved_tts_text: "letter c"
+    anchor_word: "cat"
   oi:
     transcript_text: "oi"
     approved_tts_text: "o i"
+    anchor_word: "foil"
   oy:
     transcript_text: "oy"
     approved_tts_text: "o y"
+    anchor_word: "toy"
   sh:
     transcript_text: "sh"
     approved_tts_text: "s h"

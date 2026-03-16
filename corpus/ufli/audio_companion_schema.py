@@ -46,6 +46,8 @@ class PronunciationLexiconEntry(BaseModel):
     transcript_text: str
     approved_tts_text: str
     notes: str = ""
+    anchor_word: str = ""
+    modeling_tts_text: str = ""
 
 
 class PronunciationLexicon(BaseModel):
@@ -176,6 +178,34 @@ class PilotReviewRecord(BaseModel):
     notes: str = ""
 
 
+class BundleValidationIssue(BaseModel):
+    """One deterministic validation failure for a built lesson bundle."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    lesson_id: str
+    lesson_number: int
+    bundle_key: str
+    segment_id: str = ""
+    severity: Literal["error", "warning"] = "error"
+    code: str
+    message: str
+
+
+class BundleValidationReport(BaseModel):
+    """Aggregate validation output for selected built lesson bundles."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    generated_at: str
+    data_dir: str
+    lesson_ids: list[str] = Field(default_factory=list)
+    bundle_count: int = 0
+    passed: bool = False
+    issue_count: int = 0
+    issues: list[BundleValidationIssue] = Field(default_factory=list)
+
+
 class AudioJudgeClipResult(BaseModel):
     """LLM-judge result for one generated audio companion clip."""
 
@@ -187,6 +217,7 @@ class AudioJudgeClipResult(BaseModel):
     segment_id: str
     segment_type: AudioClipKind
     audio_path: str
+    transcript_word_count: int = Field(ge=1, default=1)
     actual_duration_ms: int = Field(ge=0, default=0)
     actual_wpm: float = Field(ge=0.0, default=0.0)
     expected_wpm_target: float = Field(ge=0.0, default=0.0)
@@ -210,6 +241,20 @@ class AudioJudgeClipResult(BaseModel):
     rationale: str = ""
 
 
+class AudioJudgeFamilySummary(BaseModel):
+    """Per clip-family aggregate metrics for one judge run."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    clip_count: int = 0
+    blocker_count: int = 0
+    recommendation_counts: dict[str, int] = Field(default_factory=dict)
+    median_actual_wpm: float = 0.0
+    min_actual_wpm: float = 0.0
+    max_actual_wpm: float = 0.0
+    median_scores: dict[str, float] = Field(default_factory=dict)
+
+
 class AudioJudgeSummary(BaseModel):
     """Aggregate output for one audio judge run."""
 
@@ -225,4 +270,8 @@ class AudioJudgeSummary(BaseModel):
     blocker_count: int = 0
     recommendation_counts: dict[str, int] = Field(default_factory=dict)
     median_scores: dict[str, float] = Field(default_factory=dict)
+    family_summaries: dict[str, AudioJudgeFamilySummary] = Field(default_factory=dict)
+    pilot_ready: bool = False
+    pilot_gate_failures: list[str] = Field(default_factory=list)
+    required_manual_review_segments: list[str] = Field(default_factory=list)
     clip_results: list[AudioJudgeClipResult] = Field(default_factory=list)

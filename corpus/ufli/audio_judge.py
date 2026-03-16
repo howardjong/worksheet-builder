@@ -22,11 +22,14 @@ from corpus.ufli.audio_companion import (
     load_audio_bundles,
     load_pilot_lessons,
     load_voice_profiles,
+    validate_audio_companion,
 )
 from corpus.ufli.audio_companion_schema import (
     AudioClipDefinition,
     AudioJudgeClipResult,
+    AudioJudgeFamilySummary,
     AudioJudgeSummary,
+    BundleValidationReport,
     LessonAudioBundle,
     PacingMeasurementSource,
 )
@@ -44,6 +47,8 @@ _EVAL_DIR = "evals"
 
 @dataclass(frozen=True)
 class _PacingMetrics:
+    segment_type: str
+    transcript_word_count: int
     actual_duration_ms: int
     actual_wpm: float
     expected_wpm_target: float
@@ -63,6 +68,8 @@ _PACING_PROFILES: dict[str, tuple[float, float, float]] = {
     "passage_full": (115.0, 100.0, 128.0),
     "review": (92.0, 78.0, 108.0),
 }
+_SANE_SINGLE_WORD_MIN_MS = 600
+_SANE_SINGLE_WORD_MAX_MS = 2500
 
 
 def judge_audio_companion(
@@ -137,6 +144,20 @@ def judge_audio_companion(
     timestamp = datetime.now(tz=UTC).strftime("%Y%m%d_%H%M%S")
     report_dir = Path(output_dir or companion_dir / _EVAL_DIR) / timestamp
     report_dir.mkdir(parents=True, exist_ok=True)
+    validation_report = validate_audio_companion(
+        data_dir=data_dir,
+        lesson_set=lesson_set,
+        lesson_id=lesson_id,
+        lesson_min=lesson_min,
+        lesson_max=lesson_max,
+    )
+
+    family_summaries = _family_summaries(clip_results)
+    pilot_ready, pilot_gate_failures = _evaluate_pilot_gate(
+        clip_results=clip_results,
+        family_summaries=family_summaries,
+        validation_report=validation_report,
+    )
 
     summary = AudioJudgeSummary(
         generated_at=datetime.now(tz=UTC).isoformat(),
@@ -151,6 +172,10 @@ def judge_audio_companion(
             Counter(result.recommendation for result in clip_results)
         ),
         median_scores=_median_scores(clip_results),
+        family_summaries=family_summaries,
+        pilot_ready=pilot_ready,
+        pilot_gate_failures=pilot_gate_failures,
+        required_manual_review_segments=_required_manual_review_segments(clip_results),
         clip_results=clip_results,
     )
 
@@ -201,6 +226,7 @@ def _judge_clip_with_gemini(
         segment_id=clip.segment_id,
         segment_type=clip.segment_type,
         audio_path=clip.audio_path,
+        transcript_word_count=pacing_metrics.transcript_word_count,
         actual_duration_ms=pacing_metrics.actual_duration_ms,
         actual_wpm=round(pacing_metrics.actual_wpm, 1),
         expected_wpm_target=pacing_metrics.expected_wpm_target,
@@ -404,6 +430,152 @@ def _median_scores(clip_results: list[AudioJudgeClipResult]) -> dict[str, float]
     return scores
 
 
+def _family_summaries(
+    clip_results: list[AudioJudgeClipResult],
+) -> dict[str, AudioJudgeFamilySummary]:
+    grouped: dict[str, list[AudioJudgeClipResult]] = {}
+    for result in clip_results:
+        grouped.setdefault(result.segment_type, []).append(result)
+
+    summaries: dict[str, AudioJudgeFamilySummary] = {}
+    for segment_type, results in grouped.items():
+        summaries[segment_type] = AudioJudgeFamilySummary(
+            clip_count=len(results),
+            blocker_count=sum(1 for result in results if result.blocker),
+            recommendation_counts=dict(
+                Counter(result.recommendation for result in results)
+            ),
+            median_actual_wpm=float(median(result.actual_wpm for result in results)),
+            min_actual_wpm=min(result.actual_wpm for result in results),
+            max_actual_wpm=max(result.actual_wpm for result in results),
+            median_scores={
+                "clarity_score": float(median(result.clarity_score for result in results)),
+                "pronunciation_accuracy_score": float(
+                    median(result.pronunciation_accuracy_score for result in results)
+                ),
+                "instructional_match_score": float(
+                    median(result.instructional_match_score for result in results)
+                ),
+                "pacing_suitability_score": float(
+                    median(result.pacing_suitability_score for result in results)
+                ),
+                "pacing_consistency_score": float(
+                    median(result.pacing_consistency_score for result in results)
+                ),
+            },
+        )
+    return summaries
+
+
+def _required_manual_review_segments(
+    clip_results: list[AudioJudgeClipResult],
+) -> list[str]:
+    segment_ids: list[str] = []
+    seen_lessons: set[str] = set()
+    for result in clip_results:
+        if result.segment_type in {"lesson_instruction", "review", "phoneme_model", "passage_full"}:
+            segment_ids.append(result.segment_id)
+        elif result.segment_type == "passage_sentence" and result.lesson_id not in seen_lessons:
+            segment_ids.append(result.segment_id)
+            seen_lessons.add(result.lesson_id)
+    return segment_ids
+
+
+def _evaluate_pilot_gate(
+    clip_results: list[AudioJudgeClipResult],
+    family_summaries: dict[str, AudioJudgeFamilySummary],
+    validation_report: BundleValidationReport,
+) -> tuple[bool, list[str]]:
+    failures: list[str] = []
+    if not validation_report.passed:
+        failures.append(
+            f"bundle validation failed with {validation_report.issue_count} source-level issues"
+        )
+
+    block_count = sum(
+        1
+        for result in clip_results
+        if result.blocker or result.recommendation == "block"
+    )
+    if block_count:
+        failures.append(f"{block_count} clips remain blocked")
+
+    required_use_types = {
+        "lesson_instruction",
+        "review",
+        "phoneme_model",
+        "passage_sentence",
+        "passage_full",
+    }
+    required_non_use = [
+        result.segment_id
+        for result in clip_results
+        if result.segment_type in required_use_types and result.recommendation != "use"
+    ]
+    if required_non_use:
+        failures.append(
+            "required instructional clips are not all `use`: "
+            + ", ".join(required_non_use[:8])
+        )
+
+    invalid_revisions = [
+        result.segment_id
+        for result in clip_results
+        if result.recommendation == "revise" and not _is_allowed_word_model_revision(result)
+    ]
+    if invalid_revisions:
+        failures.append(
+            "revise results are not limited to single-word word_model pacing noise: "
+            + ", ".join(invalid_revisions[:8])
+        )
+
+    systemic_markers = (
+        "metadata",
+        "teacher",
+        "read these words",
+        "with these words",
+        "accidentally included meta",
+        "instructional error: associates",
+        "mismatch between the grapheme",
+    )
+    if any(
+        marker in concern.casefold()
+        for result in clip_results
+        for concern in result.concerns
+        for marker in systemic_markers
+    ):
+        failures.append("systemic content or anchor concerns remain in judge output")
+
+    for segment_type, summary in family_summaries.items():
+        median_scores = summary.median_scores
+        if any(
+            median_scores.get(metric, 0.0) < 4.0
+            for metric in (
+                "clarity_score",
+                "pronunciation_accuracy_score",
+                "instructional_match_score",
+                "pacing_suitability_score",
+                "pacing_consistency_score",
+            )
+        ):
+            failures.append(f"{segment_type} family medians are below the pilot-ready threshold")
+
+    return not failures, failures
+
+
+def _is_allowed_word_model_revision(result: AudioJudgeClipResult) -> bool:
+    if result.segment_type != "word_model":
+        return False
+    if result.transcript_word_count != 1:
+        return False
+    if not result.concerns:
+        return True
+    return all(
+        "pace" in concern.casefold() or "wpm" in concern.casefold()
+        for concern in result.concerns
+    )
+
+
 def _build_pacing_metrics(companion_dir: Path, clip: AudioClipDefinition) -> _PacingMetrics:
     target_wpm, min_wpm, max_wpm = _PACING_PROFILES[clip.segment_type]
     transcript_word_count = max(len(clip.transcript_text.split()), 1)
@@ -422,6 +594,8 @@ def _build_pacing_metrics(companion_dir: Path, clip: AudioClipDefinition) -> _Pa
         measurement_source = "estimate_fallback"
     actual_wpm = (float(transcript_word_count) * 60000.0) / float(actual_duration_ms)
     return _PacingMetrics(
+        segment_type=clip.segment_type,
+        transcript_word_count=transcript_word_count,
         actual_duration_ms=actual_duration_ms,
         actual_wpm=actual_wpm,
         expected_wpm_target=target_wpm,
@@ -440,8 +614,12 @@ def _apply_pacing_guardrails(
     target_wpm = pacing_metrics.expected_wpm_target
     min_wpm = pacing_metrics.expected_wpm_min
     max_wpm = pacing_metrics.expected_wpm_max
+    relax_for_word_model = _relax_word_model_pacing_guardrail(pacing_metrics)
+    relax_for_passage_interjection = _relax_passage_interjection_guardrail(pacing_metrics)
 
-    if actual_wpm < min_wpm or actual_wpm > max_wpm:
+    if actual_wpm > max_wpm or (
+        actual_wpm < min_wpm and not relax_for_word_model and not relax_for_passage_interjection
+    ):
         concerns.append(
             "Actual audio pace is outside the expected band "
             f"({actual_wpm:.1f} WPM vs {min_wpm:.1f}-{max_wpm:.1f} WPM)."
@@ -456,11 +634,20 @@ def _apply_pacing_guardrails(
         )
         if result["recommendation"] == "use":
             result["recommendation"] = "revise"
-        if actual_wpm < (min_wpm * 0.7) or actual_wpm > (max_wpm * 1.3):
+        if (
+            actual_wpm > (max_wpm * 1.3)
+            or (
+                actual_wpm < (min_wpm * 0.7)
+                and not relax_for_word_model
+                and not relax_for_passage_interjection
+            )
+        ):
             result["blocker"] = True
 
     deviation_ratio = abs(actual_wpm - target_wpm) / target_wpm if target_wpm else 0.0
-    if deviation_ratio > 0.2:
+    if deviation_ratio > 0.2 and not relax_for_word_model and not (
+        relax_for_passage_interjection and actual_wpm < target_wpm
+    ):
         concerns.append(
             "Actual audio pace is materially inconsistent with the target pace "
             f"for this clip family ({actual_wpm:.1f} WPM vs target {target_wpm:.1f} WPM)."
@@ -474,6 +661,26 @@ def _apply_pacing_guardrails(
 
     result["concerns"] = concerns
     return result
+
+
+def _relax_word_model_pacing_guardrail(pacing_metrics: _PacingMetrics) -> bool:
+    return (
+        pacing_metrics.segment_type == "word_model"
+        and pacing_metrics.transcript_word_count == 1
+        and _SANE_SINGLE_WORD_MIN_MS
+        <= pacing_metrics.actual_duration_ms
+        <= _SANE_SINGLE_WORD_MAX_MS
+    )
+
+
+def _relax_passage_interjection_guardrail(pacing_metrics: _PacingMetrics) -> bool:
+    return (
+        pacing_metrics.segment_type == "passage_sentence"
+        and pacing_metrics.transcript_word_count == 1
+        and _SANE_SINGLE_WORD_MIN_MS
+        <= pacing_metrics.actual_duration_ms
+        <= _SANE_SINGLE_WORD_MAX_MS
+    )
 
 
 def _apply_clarity_guardrails(
@@ -568,14 +775,59 @@ def _write_markdown_report(path: Path, summary: AudioJudgeSummary) -> None:
         f"- Blockers: `{summary.blocker_count}`",
         f"- Recommendations: `{summary.recommendation_counts}`",
         f"- Median scores: `{summary.median_scores}`",
+        f"- Pilot ready: `{summary.pilot_ready}`",
         "",
         "Note: This judge evaluates transcript/script alignment, actual audio clarity, "
         "actual audio pacing, and model-based acoustic pronunciation judgments from the "
         "generated file. It is still not a forced-alignment or phonetics-lab measurement.",
         "",
-        "## Blocked or Revision Clips",
+        "## Family Summaries",
         "",
     ]
+    if not summary.family_summaries:
+        lines.append("- None")
+    else:
+        for segment_type, family_summary in summary.family_summaries.items():
+            lines.append(
+                f"- `{segment_type}`: clips={family_summary.clip_count} "
+                f"blockers={family_summary.blocker_count} "
+                f"wpm_median={family_summary.median_actual_wpm:.1f} "
+                f"wpm_min={family_summary.min_actual_wpm:.1f} "
+                f"wpm_max={family_summary.max_actual_wpm:.1f} "
+                f"recommendations={family_summary.recommendation_counts} "
+                f"median_scores={family_summary.median_scores}"
+            )
+    lines.extend(
+        [
+            "",
+            "## Pilot Gate",
+            "",
+        ]
+    )
+    if summary.pilot_gate_failures:
+        for failure in summary.pilot_gate_failures:
+            lines.append(f"- {failure}")
+    else:
+        lines.append("- Passed automated pilot gate")
+    lines.extend(
+        [
+            "",
+            "## Required Manual Review",
+            "",
+        ]
+    )
+    if summary.required_manual_review_segments:
+        for segment_id in summary.required_manual_review_segments:
+            lines.append(f"- `{segment_id}`")
+    else:
+        lines.append("- None")
+    lines.extend(
+        [
+            "",
+            "## Blocked or Revision Clips",
+            "",
+        ]
+    )
     flagged = [
         result
         for result in summary.clip_results

@@ -186,6 +186,50 @@ def build_audio(
     click.echo(f"Built {len(bundles)} audio lesson bundles")
 
 
+@cli.command(name="validate-audio")
+@click.option("--data-dir", default="data/ufli", help="Data directory.")
+@click.option(
+    "--lesson-set",
+    type=click.Choice(["pilot_micro", "pilot_rep", "all", "range"]),
+    default="pilot_micro",
+    show_default=True,
+    help="Lesson selection mode.",
+)
+@click.option("--lesson", "lesson_id", default=None, help="Specific numeric lesson to validate.")
+@click.option("--lesson-min", default=1, help="Minimum numeric lesson for --lesson-set range.")
+@click.option("--lesson-max", default=128, help="Maximum numeric lesson for --lesson-set range.")
+def validate_audio(
+    data_dir: str,
+    lesson_set: str,
+    lesson_id: str | None,
+    lesson_min: int,
+    lesson_max: int,
+) -> None:
+    """Validate built lesson audio bundles before synthesis."""
+    from corpus.ufli.audio_companion import validate_audio_companion
+
+    report = validate_audio_companion(
+        data_dir=data_dir,
+        lesson_set=lesson_set,
+        lesson_id=lesson_id,
+        lesson_min=lesson_min,
+        lesson_max=lesson_max,
+    )
+    click.echo(
+        "Audio validation summary: "
+        f"bundles={report.bundle_count} "
+        f"issues={report.issue_count} "
+        f"passed={report.passed}"
+    )
+    for issue in report.issues[:25]:
+        location = issue.segment_id or issue.bundle_key
+        click.echo(f"- {location} [{issue.code}] {issue.message}")
+    if not report.passed:
+        raise click.ClickException(
+            f"Audio validation failed with {report.issue_count} issues."
+        )
+
+
 @cli.command(name="generate-audio")
 @click.option("--data-dir", default="data/ufli", help="Data directory.")
 @click.option(
@@ -372,6 +416,7 @@ def judge_audio(
         "Audio judge summary: "
         f"clips={summary.clip_count} "
         f"blockers={summary.blocker_count} "
+        f"pilot_ready={summary.pilot_ready} "
         f"report_dir={summary.output_dir}"
     )
 

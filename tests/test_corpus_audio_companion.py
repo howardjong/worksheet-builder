@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 
 import pytest
+import yaml
 
 pytest.importorskip("chromadb")
 
@@ -14,6 +15,7 @@ from corpus.ufli.audio_companion import (
     generate_audio_companion,
     index_audio_companion,
     load_audio_bundles,
+    validate_audio_companion,
 )
 from rag.store import AUDIO_COMPANION, get_or_create_collection, get_store
 
@@ -80,11 +82,11 @@ def _sample_rows() -> list[dict[str, object]]:
         {
             "lesson_id": "128",
             "lesson_group": "99-128",
-            "concept": "ignored",
-            "slide_text": "ignored",
-            "slide_count": 1,
+            "concept": "a /ă/",
+            "slide_text": "Lesson 128 a /ă/ cat map at as.",
+            "slide_count": 4,
             "decodable_text": "",
-            "home_practice_text": "",
+            "home_practice_text": "1. at → cat → cap",
             "additional_text": "",
         },
         {
@@ -116,6 +118,8 @@ def test_build_audio_bundles_use_stage1_taxonomy_and_pilot_scope(tmp_path: Path)
     }
     lesson_14 = bundles[1]
     assert "Can Cam fit on the cot?" in lesson_14.passage_text
+    assert "read these words" not in lesson_1.clips[0].transcript_text.casefold()
+    assert "with these words" not in lesson_1.clips[-1].transcript_text.casefold()
     assert {"passage_sentence", "passage_full"}.issubset(
         {clip.segment_type for clip in lesson_14.clips}
     )
@@ -162,8 +166,25 @@ def test_build_audio_applies_lexicon_overrides_for_phonemes_and_words(tmp_path: 
         for clip in bundle.clips
         if clip.segment_type == "word_model" and clip.transcript_text == "February"
     )
-    assert "short a" in phoneme_clip.tts_text
+    assert "short a sound" in phoneme_clip.tts_text
     assert word_clip.tts_text == "Feb roo air ee"
+
+
+def test_build_audio_uses_exact_anchor_for_oy(tmp_path: Path) -> None:
+    _write_companion_configs(tmp_path)
+    _write_normalized(tmp_path / "normalized.jsonl", _sample_rows())
+
+    bundle = build_audio_companion_manifests(
+        data_dir=str(tmp_path),
+        lesson_id="95",
+    )[0]
+
+    oy_clip = next(
+        clip
+        for clip in bundle.clips
+        if clip.segment_id.endswith("phoneme_02_oy")
+    )
+    assert oy_clip.transcript_text.endswith("toy.")
 
 
 def test_generate_audio_dry_run_estimates_both_pilot_voices(tmp_path: Path) -> None:
@@ -197,6 +218,75 @@ def test_generate_audio_rejects_non_pilot_live_scope(tmp_path: Path) -> None:
             dry_run=False,
             voice_profile="dorothy",
         )
+
+
+def test_validate_audio_detects_contaminated_targets(tmp_path: Path) -> None:
+    _write_companion_configs(tmp_path)
+    _write_normalized(tmp_path / "normalized.jsonl", _sample_rows())
+    bundle = build_audio_companion_manifests(
+        data_dir=str(tmp_path),
+        lesson_id="1",
+    )[0]
+    bundle.word_targets.append("activity")
+    (tmp_path / "companion" / "lessons" / f"{bundle.lesson_key}.json").write_text(
+        bundle.model_dump_json(indent=2)
+    )
+
+    report = validate_audio_companion(
+        data_dir=str(tmp_path),
+        lesson_id="1",
+    )
+
+    assert report.passed is False
+    assert any(issue.code == "contaminated_word_target" for issue in report.issues)
+
+
+def test_validate_audio_detects_answer_giving_prompt(tmp_path: Path) -> None:
+    _write_companion_configs(tmp_path)
+    _write_normalized(tmp_path / "normalized.jsonl", _sample_rows())
+    bundle = build_audio_companion_manifests(
+        data_dir=str(tmp_path),
+        lesson_id="14",
+    )[0]
+    instruction = next(clip for clip in bundle.clips if clip.segment_type == "lesson_instruction")
+    instruction.transcript_text = "Listen first. Read these words: cat, cap, cop, cod."
+    instruction.tts_text = instruction.transcript_text
+    (tmp_path / "companion" / "lessons" / f"{bundle.lesson_key}.json").write_text(
+        bundle.model_dump_json(indent=2)
+    )
+
+    report = validate_audio_companion(
+        data_dir=str(tmp_path),
+        lesson_id="14",
+    )
+
+    assert report.passed is False
+    assert any(issue.code == "answer_giving_prompt" for issue in report.issues)
+
+
+def test_validate_audio_detects_missing_anchor_word(tmp_path: Path) -> None:
+    _write_companion_configs(tmp_path)
+    _write_normalized(tmp_path / "normalized.jsonl", _sample_rows())
+    bundle = build_audio_companion_manifests(
+        data_dir=str(tmp_path),
+        lesson_id="95",
+    )[0]
+    lexicon_path = tmp_path / "companion" / "pronunciation_lexicon.yaml"
+    lexicon_payload = yaml.safe_load(lexicon_path.read_text())
+    lexicon_payload["graphemes"]["oy"].pop("anchor_word", None)
+    lexicon_path.write_text(yaml.safe_dump(lexicon_payload, sort_keys=False))
+    bundle.word_targets = [word for word in bundle.word_targets if "oy" not in word]
+    (tmp_path / "companion" / "lessons" / f"{bundle.lesson_key}.json").write_text(
+        bundle.model_dump_json(indent=2)
+    )
+
+    report = validate_audio_companion(
+        data_dir=str(tmp_path),
+        lesson_id="95",
+    )
+
+    assert report.passed is False
+    assert any(issue.code == "missing_anchor_word" for issue in report.issues)
 
 
 def test_generate_audio_writes_review_packet_with_stubbed_tts(
