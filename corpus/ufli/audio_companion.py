@@ -160,6 +160,7 @@ class _ConceptTarget:
     grapheme_key: str
     grapheme_display: str
     grapheme_tts: str
+    anchor_word: str
     phoneme_key: str
     phoneme_display: str
     phoneme_tts: str
@@ -937,6 +938,7 @@ def _extract_concept_targets(
                 grapheme_key=grapheme_key,
                 grapheme_display=grapheme_target.transcript_text,
                 grapheme_tts=grapheme_target.approved_tts_text,
+                anchor_word=grapheme_target.anchor_word,
                 phoneme_key=phoneme_key,
                 phoneme_display=phoneme_entry.transcript_text,
                 phoneme_tts=phoneme_entry.approved_tts_text,
@@ -958,6 +960,7 @@ def _extract_concept_targets(
             grapheme_key=fallback_grapheme,
             grapheme_display=grapheme_entry.transcript_text,
             grapheme_tts=grapheme_entry.approved_tts_text,
+            anchor_word=grapheme_entry.anchor_word,
             phoneme_key=fallback_grapheme,
             phoneme_display=phoneme_entry.transcript_text,
             phoneme_tts=phoneme_entry.approved_tts_text,
@@ -1025,7 +1028,7 @@ def _review_text(
     concept_targets: list[_ConceptTarget],
     word_targets: list[str],
 ) -> tuple[str, str]:
-    focus = _concept_focus_text(concept_targets)
+    focus = _review_focus_text(concept_targets, word_targets)
     if focus != "the target sound":
         transcript = f"Check each sound. Read the word slowly. Focus on {focus}."
         tts = _pause_joined_tts(
@@ -1044,6 +1047,24 @@ def _review_text(
         ]
     )
     return transcript, tts
+
+
+def _review_focus_text(
+    concept_targets: list[_ConceptTarget],
+    word_targets: list[str],
+) -> str:
+    if len(concept_targets) != 1:
+        return _concept_focus_text(concept_targets)
+
+    target = concept_targets[0]
+    if target.phoneme_key == "k":
+        anchor_word = target.anchor_word or next(
+            (word for word in word_targets if _word_matches_target(word, target)),
+            "",
+        )
+        if anchor_word:
+            return f"{target.grapheme_display} in {anchor_word}"
+    return _concept_focus_text(concept_targets)
 
 
 def _concept_focus_text(concept_targets: list[_ConceptTarget]) -> str:
@@ -1092,8 +1113,13 @@ def _pause_shaped_passage_tts(text: str) -> str:
     shaped = _clause_pause_only_tts(text)
     if not shaped:
         return ""
-    if "..." not in shaped and len(re.findall(r"[A-Za-z0-9']+", shaped)) >= 6:
-        shaped = _insert_mid_sentence_pause(shaped, pause_after_words=3)
+    word_count = len(re.findall(r"[A-Za-z0-9']+", shaped))
+    pause_count = shaped.count("...")
+    if shaped.endswith("..."):
+        pause_count -= 1
+    if pause_count == 0 and word_count >= 6:
+        pause_after_words = 4 if word_count >= 8 else 3
+        shaped = _insert_mid_sentence_pause(shaped, pause_after_words=pause_after_words)
     return _clean_text(shaped)
 
 

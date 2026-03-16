@@ -204,8 +204,10 @@ def test_build_audio_uses_pause_shaped_tts_without_changing_transcript(tmp_path:
     assert "..." in instruction.tts_text
     assert "..." not in review.transcript_text
     assert "..." in review.tts_text
+    assert review.transcript_text.endswith("Focus on c in cat.")
     assert passage_sentence.tts_text != passage_sentence.transcript_text
     assert "..." in passage_sentence.tts_text
+    assert passage_sentence.tts_text.count("...") >= 2
     assert _normalized_words(passage_sentence.tts_text) == _normalized_words(
         passage_sentence.transcript_text
     )
