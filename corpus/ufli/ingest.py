@@ -16,35 +16,16 @@ try:
 except ImportError:
     pass
 
+from corpus.ufli.grade_levels import derive_grade
 from rag.embeddings import embed_text
 from rag.store import CURRICULUM, add_document, get_or_create_collection, get_store
 
 logger = logging.getLogger(__name__)
 
-# Lesson-to-grade mapping based on UFLI scope and sequence.
-_GRADE_RANGES: list[tuple[str, str, str]] = [
-    # (start, end, grade)  — for numeric lessons
-    ("1", "34", "K"),
-    ("35", "64", "1"),
-    ("65", "94", "1"),
-    ("95", "128", "2"),
-]
-
-_ALPHA_LESSONS = set("ABCDEFGHIJ")
-
 
 def _derive_grade(lesson_id: str) -> str:
-    """Derive grade level from UFLI lesson ID."""
-    if lesson_id.upper() in _ALPHA_LESSONS:
-        return "K"
-    try:
-        num = int(lesson_id)
-    except ValueError:
-        return "K"
-    for start, end, grade in _GRADE_RANGES:
-        if int(start) <= num <= int(end):
-            return grade
-    return "2"
+    """Backward-compatible wrapper for UFLI grade derivation."""
+    return derive_grade(lesson_id)
 
 
 def ingest_curriculum(
@@ -171,6 +152,161 @@ def index(data_dir: str, db_path: str) -> None:
     """Embed and index extracted lessons into ChromaDB."""
     count = ingest_curriculum(data_dir=data_dir, db_path=db_path)
     click.echo(f"Indexed {count} lessons")
+
+
+@cli.command(name="build-audio")
+@click.option("--data-dir", default="data/ufli", help="Data directory.")
+@click.option(
+    "--lesson-set",
+    type=click.Choice(["pilot_micro", "pilot_rep", "all", "range"]),
+    default="pilot_micro",
+    show_default=True,
+    help="Lesson selection mode.",
+)
+@click.option("--lesson", "lesson_id", default=None, help="Specific numeric lesson to build.")
+@click.option("--lesson-min", default=1, help="Minimum numeric lesson for --lesson-set range.")
+@click.option("--lesson-max", default=128, help="Maximum numeric lesson for --lesson-set range.")
+def build_audio(
+    data_dir: str,
+    lesson_set: str,
+    lesson_id: str | None,
+    lesson_min: int,
+    lesson_max: int,
+) -> None:
+    """Build lesson audio bundles and audio companion manifests."""
+    from corpus.ufli.audio_companion import build_audio_companion_manifests
+
+    bundles = build_audio_companion_manifests(
+        data_dir=data_dir,
+        lesson_set=lesson_set,
+        lesson_id=lesson_id,
+        lesson_min=lesson_min,
+        lesson_max=lesson_max,
+    )
+    click.echo(f"Built {len(bundles)} audio lesson bundles")
+
+
+@cli.command(name="generate-audio")
+@click.option("--data-dir", default="data/ufli", help="Data directory.")
+@click.option(
+    "--lesson-set",
+    type=click.Choice(["pilot_micro", "pilot_rep", "all", "range"]),
+    default="pilot_micro",
+    show_default=True,
+    help="Lesson selection mode.",
+)
+@click.option("--lesson", "lesson_id", default=None, help="Specific numeric lesson to generate.")
+@click.option("--lesson-min", default=1, help="Minimum numeric lesson for --lesson-set range.")
+@click.option("--lesson-max", default=128, help="Maximum numeric lesson for --lesson-set range.")
+@click.option(
+    "--voice-profile",
+    default=None,
+    help="Named voice profile from data/ufli/companion/voice_profiles.yaml.",
+)
+@click.option(
+    "--dry-run/--live",
+    default=True,
+    help="Keep generation offline by default; use --live to call ElevenLabs.",
+)
+@click.option(
+    "--force/--no-force",
+    default=False,
+    help="Regenerate files even if they already exist.",
+)
+@click.option(
+    "--review-packet/--no-review-packet",
+    default=False,
+    help="Write a timestamped pilot review packet under data/ufli/companion/pilots/.",
+)
+def generate_audio(
+    data_dir: str,
+    lesson_set: str,
+    lesson_id: str | None,
+    lesson_min: int,
+    lesson_max: int,
+    voice_profile: str | None,
+    dry_run: bool,
+    force: bool,
+    review_packet: bool,
+) -> None:
+    """Generate ElevenLabs audio for lesson bundles."""
+    from corpus.ufli.audio_companion import generate_audio_companion
+
+    summary = generate_audio_companion(
+        data_dir=data_dir,
+        lesson_set=lesson_set,
+        lesson_id=lesson_id,
+        lesson_min=lesson_min,
+        lesson_max=lesson_max,
+        voice_profile=voice_profile,
+        dry_run=dry_run,
+        force=force,
+        review_packet=review_packet,
+    )
+    click.echo(
+        "Audio generation summary: "
+        f"planned={summary['planned']} "
+        f"generated={summary['generated']} "
+        f"skipped={summary['skipped']} "
+        f"review_packet_dir={summary['review_packet_dir'] or 'n/a'}"
+    )
+    for profile_name, estimate in summary["voice_profiles"].items():
+        click.echo(
+            f"Voice {profile_name}: clips={estimate['clip_count']} "
+            f"chars={estimate['character_count']} "
+            f"costs={estimate['projected_costs_usd']}"
+        )
+
+
+@cli.command(name="index-audio")
+@click.option("--data-dir", default="data/ufli", help="Data directory.")
+@click.option("--db-path", default="vector_store", help="ChromaDB path.")
+@click.option(
+    "--lesson-set",
+    type=click.Choice(["pilot_micro", "pilot_rep", "all", "range"]),
+    default="pilot_micro",
+    show_default=True,
+    help="Lesson selection mode.",
+)
+@click.option("--lesson", "lesson_id", default=None, help="Specific numeric lesson to index.")
+@click.option("--lesson-min", default=1, help="Minimum numeric lesson for --lesson-set range.")
+@click.option("--lesson-max", default=128, help="Maximum numeric lesson for --lesson-set range.")
+@click.option(
+    "--voice-profile",
+    default=None,
+    help="Restrict indexing to one generated voice profile.",
+)
+@click.option(
+    "--granularity",
+    type=click.Choice(["clips", "lessons", "both"]),
+    default="clips",
+    show_default=True,
+    help="Indexing granularity. Only clips is implemented in Stage 1.",
+)
+def index_audio(
+    data_dir: str,
+    db_path: str,
+    lesson_set: str,
+    lesson_id: str | None,
+    lesson_min: int,
+    lesson_max: int,
+    voice_profile: str | None,
+    granularity: str,
+) -> None:
+    """Index generated audio companion transcripts into ChromaDB."""
+    from corpus.ufli.audio_companion import index_audio_companion
+
+    count = index_audio_companion(
+        data_dir=data_dir,
+        db_path=db_path,
+        lesson_set=lesson_set,
+        lesson_id=lesson_id,
+        lesson_min=lesson_min,
+        lesson_max=lesson_max,
+        voice_profile=voice_profile,
+        granularity=granularity,
+    )
+    click.echo(f"Indexed {count} audio companion clips")
 
 
 @cli.command()

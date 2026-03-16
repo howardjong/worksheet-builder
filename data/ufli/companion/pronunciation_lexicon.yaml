@@ -1,0 +1,77 @@
+phonemes:
+  a_short:
+    transcript_text: "/a/"
+    approved_tts_text: "short a"
+  e_short:
+    transcript_text: "/e/"
+    approved_tts_text: "short e"
+  i_short:
+    transcript_text: "/i/"
+    approved_tts_text: "short i"
+  o_short:
+    transcript_text: "/o/"
+    approved_tts_text: "short o"
+  u_short:
+    transcript_text: "/u/"
+    approved_tts_text: "short u"
+  k:
+    transcript_text: "/k/"
+    approved_tts_text: "the k sound"
+  s:
+    transcript_text: "/s/"
+    approved_tts_text: "the s sound"
+  z:
+    transcript_text: "/z/"
+    approved_tts_text: "the z sound"
+  oi_diphthong:
+    transcript_text: "/oi/"
+    approved_tts_text: "the oi sound"
+  ou_diphthong:
+    transcript_text: "/ou/"
+    approved_tts_text: "the ou sound"
+graphemes:
+  a:
+    transcript_text: "a"
+    approved_tts_text: "letter a"
+  c:
+    transcript_text: "c"
+    approved_tts_text: "letter c"
+  oi:
+    transcript_text: "oi"
+    approved_tts_text: "o i"
+  oy:
+    transcript_text: "oy"
+    approved_tts_text: "o y"
+  sh:
+    transcript_text: "sh"
+    approved_tts_text: "s h"
+  ch:
+    transcript_text: "ch"
+    approved_tts_text: "c h"
+  ar:
+    transcript_text: "ar"
+    approved_tts_text: "a r"
+affixes:
+  -s:
+    transcript_text: "-s"
+    approved_tts_text: "suffix s"
+  -ed:
+    transcript_text: "-ed"
+    approved_tts_text: "suffix e d"
+  -ing:
+    transcript_text: "-ing"
+    approved_tts_text: "suffix ing"
+  re-:
+    transcript_text: "re-"
+    approved_tts_text: "prefix ree"
+special_words:
+  february:
+    transcript_text: "February"
+    approved_tts_text: "Feb roo air ee"
+    notes: "Pilot override for lesson 95 review materials."
+  boyd:
+    transcript_text: "Boyd"
+    approved_tts_text: "Boyd"
+  cam:
+    transcript_text: "Cam"
+    approved_tts_text: "Cam"

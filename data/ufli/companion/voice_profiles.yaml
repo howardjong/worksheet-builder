@@ -1,0 +1,84 @@
+default_profile: dorothy
+profiles:
+  dorothy:
+    name: dorothy
+    voice_id: ThT5KcBeYPX3keUQqHPh
+    description: Existing scaffold voice for pilot comparison.
+    language_code: en
+    default_model: eleven_multilingual_v2
+    fallback_model: eleven_flash_v2_5
+    estimated_cost_per_1k_chars_usd:
+      eleven_multilingual_v2: 0.12
+      eleven_flash_v2_5: 0.06
+    clip_settings:
+      lesson_instruction:
+        stability: 0.68
+        similarity_boost: 0.76
+        style: 0.0
+        speed: 0.9
+      phoneme_model:
+        stability: 0.72
+        similarity_boost: 0.78
+        style: 0.0
+        speed: 0.76
+      word_model:
+        stability: 0.7
+        similarity_boost: 0.78
+        style: 0.0
+        speed: 0.84
+      passage_sentence:
+        stability: 0.65
+        similarity_boost: 0.75
+        style: 0.0
+        speed: 0.92
+      passage_full:
+        stability: 0.65
+        similarity_boost: 0.75
+        style: 0.0
+        speed: 0.92
+      review:
+        stability: 0.68
+        similarity_boost: 0.76
+        style: 0.0
+        speed: 0.9
+  neutral_na_pilot:
+    name: neutral_na_pilot
+    voice_id: TODO_SET_NEUTRAL_NA_PILOT_VOICE_ID
+    description: Neutral North American pilot voice. Set a real ElevenLabs voice id before live generation.
+    language_code: en
+    default_model: eleven_multilingual_v2
+    fallback_model: eleven_flash_v2_5
+    estimated_cost_per_1k_chars_usd:
+      eleven_multilingual_v2: 0.12
+      eleven_flash_v2_5: 0.06
+    clip_settings:
+      lesson_instruction:
+        stability: 0.68
+        similarity_boost: 0.76
+        style: 0.0
+        speed: 0.9
+      phoneme_model:
+        stability: 0.72
+        similarity_boost: 0.78
+        style: 0.0
+        speed: 0.76
+      word_model:
+        stability: 0.7
+        similarity_boost: 0.78
+        style: 0.0
+        speed: 0.84
+      passage_sentence:
+        stability: 0.65
+        similarity_boost: 0.75
+        style: 0.0
+        speed: 0.92
+      passage_full:
+        stability: 0.65
+        similarity_boost: 0.75
+        style: 0.0
+        speed: 0.92
+      review:
+        stability: 0.68
+        similarity_boost: 0.76
+        style: 0.0
+        speed: 0.9

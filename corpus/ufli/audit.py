@@ -31,7 +31,7 @@ from corpus.ufli.audit_schema import (
     RecordType,
     RetrievalBenchmarkResult,
 )
-from corpus.ufli.ingest import _derive_grade
+from corpus.ufli.grade_levels import derive_grade
 from rag.store import CURRICULUM, get_store
 
 logger = logging.getLogger(__name__)
@@ -60,7 +60,7 @@ _STOPWORDS = {
 _PLACEHOLDER_TOKENS = {"todo", "tbd", "placeholder", "image", "audio", "segment", "caption"}
 _IMAGE_COLLECTION_NAMES = ("image_companion", "ufli_image_companion")
 _AUDIO_COLLECTION_NAMES = ("audio_companion", "audio_companion_transcripts", "ufli_audio_companion")
-_BOILERPLATE_AUDIO_TYPES = {"encouragement"}
+_BOILERPLATE_AUDIO_TYPES: set[str] = set()
 
 
 def run_audit(
@@ -1037,7 +1037,7 @@ def _text_retrieval_benchmark(
     cases: list[tuple[str, str, str]] = []
     for record in sampled:
         if record.concept.strip():
-            cases.append((record.lesson_id, record.concept, _derive_grade(record.lesson_id)))
+            cases.append((record.lesson_id, record.concept, derive_grade(record.lesson_id)))
         lexical_tokens = [
             token for token in _tokenize(_combined_text(record)) if len(token) > 2
         ][:5]
@@ -1046,7 +1046,7 @@ def _text_retrieval_benchmark(
                 (
                     record.lesson_id,
                     " ".join(lexical_tokens),
-                    _derive_grade(record.lesson_id),
+                    derive_grade(record.lesson_id),
                 )
             )
 
@@ -1098,13 +1098,13 @@ def _companion_retrieval_benchmark(
     cases: list[tuple[str, str, str]] = []
     for record in sampled:
         if isinstance(record, ImageCompanionRecord):
-            cases.append((record.lesson_id, record.caption_text, _derive_grade(record.lesson_id)))
+            cases.append((record.lesson_id, record.caption_text, derive_grade(record.lesson_id)))
         else:
             cases.append(
                 (
                     record.lesson_id,
                     record.transcript_text,
-                    _derive_grade(record.lesson_id),
+                    derive_grade(record.lesson_id),
                 )
             )
     return _score_retrieval_cases(

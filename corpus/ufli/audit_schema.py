@@ -11,10 +11,11 @@ AuditStatus = Literal["completed", "skipped", "not_present"]
 RecordType = Literal["text", "image", "audio"]
 ImageAssetType = Literal["scene", "character", "word_picture", "diagram", "cover"]
 AudioSegmentType = Literal[
-    "intro",
-    "instruction",
-    "worked_example",
-    "encouragement",
+    "lesson_instruction",
+    "word_model",
+    "phoneme_model",
+    "passage_sentence",
+    "passage_full",
     "review",
 ]
 
@@ -58,7 +59,7 @@ class AudioCompanionRecord(BaseModel):
 
     lesson_id: str
     segment_id: str
-    segment_type: AudioSegmentType = "instruction"
+    segment_type: AudioSegmentType = "lesson_instruction"
     sequence_index: int = 0
     audio_path: str
     duration_ms: int

@@ -122,7 +122,7 @@ def test_manifest_loaders_parse_image_and_audio_records(tmp_path: Path) -> None:
             {
                 "lesson_id": "58",
                 "segment_id": "seg-1",
-                "segment_type": "instruction",
+                "segment_type": "lesson_instruction",
                 "sequence_index": 0,
                 "audio_path": "companion/audio/58.wav",
                 "duration_ms": 1200,
@@ -138,7 +138,7 @@ def test_manifest_loaders_parse_image_and_audio_records(tmp_path: Path) -> None:
     assert len(images) == 1
     assert images[0].asset_type == "scene"
     assert len(audio) == 1
-    assert audio[0].segment_type == "instruction"
+    assert audio[0].segment_type == "lesson_instruction"
     assert flags == []
 
 
@@ -171,7 +171,7 @@ def test_run_audit_flags_image_audio_quality_and_skips_companion_retrieval(
             {
                 "lesson_id": "58",
                 "segment_id": "seg-1",
-                "segment_type": "instruction",
+                "segment_type": "lesson_instruction",
                 "sequence_index": 0,
                 "audio_path": "companion/audio/58.wav",
                 "duration_ms": 1500,
@@ -275,7 +275,7 @@ def test_run_audit_detects_near_duplicate_images_and_duplicate_transcripts(
             {
                 "lesson_id": "58",
                 "segment_id": "seg-58",
-                "segment_type": "instruction",
+                "segment_type": "lesson_instruction",
                 "sequence_index": 0,
                 "audio_path": "companion/audio/58.wav",
                 "duration_ms": 2000,
@@ -285,7 +285,7 @@ def test_run_audit_detects_near_duplicate_images_and_duplicate_transcripts(
             {
                 "lesson_id": "59",
                 "segment_id": "seg-59",
-                "segment_type": "instruction",
+                "segment_type": "lesson_instruction",
                 "sequence_index": 0,
                 "audio_path": "companion/audio/59.wav",
                 "duration_ms": 2000,
@@ -373,7 +373,7 @@ def test_run_audit_tracks_modality_coverage_and_cross_modality_mismatch(
             {
                 "lesson_id": "58",
                 "segment_id": "seg-58",
-                "segment_type": "instruction",
+                "segment_type": "lesson_instruction",
                 "sequence_index": 0,
                 "audio_path": "companion/audio/58.wav",
                 "duration_ms": 5000,

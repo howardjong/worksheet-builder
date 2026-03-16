@@ -8,7 +8,7 @@
 
 ## Current State
 
-**Status:** Core product milestones remain complete. Gemini Embedding 2 RAG Phase 7 is implemented and the curriculum-aware adaptation follow-up is now wired through `adapt/engine.py`. UFLI corpus pipeline is fully executed: crawl complete (148 lessons), acquire complete (539 files), extract complete (148 normalized), index complete (148 curriculum records in `vector_store/`). UFLI multimodal corpus audit is now implemented too: `corpus/ufli/ingest.py` has a new offline `audit` subcommand, `corpus/ufli/audit.py` + `corpus/ufli/audit_schema.py` produce timestamped Markdown/JSON/CSV reports, optional companion manifests (`data/ufli/companion/images.jsonl`, `data/ufli/companion/audio.jsonl`) are audited without requiring companion indexes, and missing companion retrieval sections are marked `skipped`. RAG client now supports API-key or Vertex backends plus embedding-model fallback (`gemini-embedding-exp-03-07` -> `gemini-embedding-2-preview` -> `text-embedding-005`). Curriculum retrieval now flows through `transform.py` and `ab_eval.py` into adaptation so word choices can be steered toward exact UFLI lesson content when overlap is strong enough. Validation for this follow-up passed: focused `ruff`/`mypy` on touched files, focused audit/ingest tests green (`9 passed`), and today’s offline repo audit wrote reports to `data/ufli/audit/20260315_204339` with text benchmark `Hit@1=0.78`, `Hit@3=0.93`, `Hit@5=0.96`, `MRR=0.85`, `grade correctness=0.96`, plus image/audio retrieval cleanly skipped because companion manifests are not present yet. Gemini access investigation on 2026-03-15 confirmed `.env` config is present and direct Gemini API access works outside the sandbox; prior live eval failures were caused by sandbox DNS/network restrictions, not missing credentials. OCR crash investigation on 2026-03-15 found the remaining stability risk is local PaddleOCR fallback on macOS/Python 3.13, not the RAG code itself: one `PaddleOCR(lang="en")` init raised RSS from ~163 MB to ~862 MB, and one real OCR pass on `samples/input/IMG_0004.JPG` peaked at `ru_maxrss=10432413696` (~10.4 GB on macOS) while processing only the first image. Eval hardening is now implemented enough for safe live runs: `ab_eval.py` and `rag/eval.py` default to `--extract-mode vision_only` so live evals fail fast instead of silently falling back to Paddle, `ab_eval.py` now requires explicit `--seed --extract-mode auto` for the old seed-and-fallback flow, and `extract/ocr.py` reuses a single PaddleOCR instance per process. Phase 14 batch indexing is now implemented too: batch workers return `RunArtifacts` payloads and the main thread performs sequential RAG indexing after worker completion. Harness split is now explicit: `rag/eval.py` is the primary experiment harness with retrieval-health and efficiency metrics, while `ab_eval.py` is the narrower causal check for whether retrieval beats no-RAG and an intentionally weak retrieval control.
+**Status:** Core product milestones remain complete. Gemini Embedding 2 RAG Phase 7 is implemented and the curriculum-aware adaptation follow-up is now wired through `adapt/engine.py`. UFLI corpus pipeline is fully executed: crawl complete (148 lessons), acquire complete (539 files), extract complete (148 normalized), index complete (148 curriculum records in `vector_store/`). UFLI multimodal corpus audit is now implemented too: `corpus/ufli/ingest.py` has a new offline `audit` subcommand, `corpus/ufli/audit.py` + `corpus/ufli/audit_schema.py` produce timestamped Markdown/JSON/CSV reports, optional companion manifests (`data/ufli/companion/images.jsonl`, `data/ufli/companion/audio.jsonl`) are audited without requiring companion indexes, and missing companion retrieval sections are marked `skipped`. UFLI audio companion Stage 0 and Stage 1 are now implemented in a pilot-first shape: `corpus/ufli/audio_companion.py` + `corpus/ufli/audio_companion_schema.py` now build voice-neutral lesson bundles, enforce numeric lessons `1-128`, enforce Stage 1 live generation/indexing to pilot lessons `1`, `14`, and `95`, load committed companion configs from `data/ufli/companion/pronunciation_lexicon.yaml`, `voice_profiles.yaml`, and `pilot_lessons.yaml`, use the refined clip taxonomy (`lesson_instruction`, `phoneme_model`, `word_model`, `passage_sentence`, `passage_full`, `review`), keep `encouragement` out of indexed lesson clips, support `dorothy` and `neutral_na_pilot` voice profiles, default offline generation to dry-run, and emit timestamped review packets under `data/ufli/companion/pilots/<timestamp>/`. `corpus/ufli/ingest.py` now exposes pilot-aware `build-audio`, `generate-audio`, and `index-audio` flags for lesson-set selection, voice-profile selection, dry-run estimation, review-packet generation, and Stage-1-only clip indexing. The numeric lesson scope for companion audio remains explicitly corrected to lessons `1-128` rather than `1-34`, while alpha lessons remain excluded from this path. RAG client now supports API-key or Vertex backends plus embedding-model fallback (`gemini-embedding-exp-03-07` -> `gemini-embedding-2-preview` -> `text-embedding-005`). Curriculum retrieval now flows through `transform.py` and `ab_eval.py` into adaptation so word choices can be steered toward exact UFLI lesson content when overlap is strong enough. Validation for the audit follow-up passed: focused `ruff`/`mypy` on touched files, focused audit/ingest tests green (`9 passed`), and today’s offline repo audit wrote reports to `data/ufli/audit/20260315_204339` with text benchmark `Hit@1=0.78`, `Hit@3=0.93`, `Hit@5=0.96`, `MRR=0.85`, `grade correctness=0.96`, plus image/audio retrieval cleanly skipped because companion manifests are not present yet. Validation for the Stage 0/1 audio rollout is also green: focused `ruff`, `mypy`, and `pytest -q tests/test_corpus_audio_companion.py tests/test_corpus_audit.py tests/test_corpus_ingest.py` all passed on 2026-03-15 (`16 passed`). Gemini access investigation on 2026-03-15 confirmed `.env` config is present and direct Gemini API access works outside the sandbox; prior live eval failures were caused by sandbox DNS/network restrictions, not missing credentials. OCR crash investigation on 2026-03-15 found the remaining stability risk is local PaddleOCR fallback on macOS/Python 3.13, not the RAG code itself: one `PaddleOCR(lang="en")` init raised RSS from ~163 MB to ~862 MB, and one real OCR pass on `samples/input/IMG_0004.JPG` peaked at `ru_maxrss=10432413696` (~10.4 GB on macOS) while processing only the first image. Eval hardening is now implemented enough for safe live runs: `ab_eval.py` and `rag/eval.py` default to `--extract-mode vision_only` so live evals fail fast instead of silently falling back to Paddle, `ab_eval.py` now requires explicit `--seed --extract-mode auto` for the old seed-and-fallback flow, and `extract/ocr.py` reuses a single PaddleOCR instance per process. Phase 14 batch indexing is now implemented too: batch workers return `RunArtifacts` payloads and the main thread performs sequential RAG indexing after worker completion. Harness split is now explicit: `rag/eval.py` is the primary experiment harness with retrieval-health and efficiency metrics, while `ab_eval.py` is the narrower causal check for whether retrieval beats no-RAG and an intentionally weak retrieval control.
 **Branch:** `codex/feature-gemini-embedding-2-rag`
 **Plan version:** 1.5.0 + `gemini-embedding-2-rag-plan.md` (v2)
 **Last Updated:** 2026-03-15
@@ -51,6 +51,13 @@
     - Current behavior: text corpus audits always run; image/audio companion manifests are optional; companion retrieval benchmarks are skipped cleanly when companion indexes are absent
     - Heuristics covered: inventory parity, empty/short text detection, concept coverage, image caption/alt/file integrity, image duplicate detection, audio transcript/duration/WPM checks, transcript duplicate/boilerplate checks, cross-modality lexical consistency, per-lesson modality coverage
     - New tests: `tests/test_corpus_audit.py` covering image/audio manifest parsing, modality coverage, cross-modality mismatch, duplicate heuristics, skipped companion retrieval, and CLI artifact generation
+  - UFLI audio companion Stage 0 + Stage 1 rollout implemented (2026-03-15):
+    - `corpus/ufli/audio_companion_schema.py` now defines committed config/data contracts for pronunciation lexicon, voice profiles, pilot lesson sets, dry-run estimates, and pilot review rows
+    - `corpus/ufli/audio_companion.py` now builds voice-neutral lesson bundles keyed to raw numeric lesson ids, derives deterministic `passage_sentence` and `passage_full` clips from passage text when present, removes `encouragement` from indexed lesson clips, applies pronunciation lexicon overrides, supports dry-run cost estimation across pilot voices, keeps generation offline by default, validates live generation voice ids, and writes review packets (`review.md`, `review.csv`, `clips.json`, `playlist.m3u`, copied audio) to `data/ufli/companion/pilots/<timestamp>/`
+    - `data/ufli/companion/pronunciation_lexicon.yaml` captures phoneme/grapheme/affix/special-word overrides; `voice_profiles.yaml` captures `dorothy` and `neutral_na_pilot` with `eleven_multilingual_v2` default + `eleven_flash_v2_5` fallback and clip-family settings; `pilot_lessons.yaml` captures `pilot_micro` (`1`, `14`, `95`) and `pilot_rep`
+    - `corpus/ufli/ingest.py` audio subcommands now accept `--lesson-set`, `--voice-profile`, `--dry-run/--live`, `--review-packet`, and `--granularity`, with live generation/indexing explicitly gated to Stage 1 pilot lessons only and lesson-level indexing left for Stage 2
+    - `corpus/ufli/audit_schema.py` and `corpus/ufli/audit.py` now understand the refined audio taxonomy and no longer treat `encouragement` as boilerplate because it is no longer indexed
+    - New/updated tests: `tests/test_corpus_audio_companion.py` now covers taxonomy, pilot lesson selection, lexicon overrides, dry-run estimation, review packet generation, and voice-profile-aware indexing; `tests/test_corpus_audit.py` now uses `lesson_instruction`
   - Config/deps updates: `requirements.txt` (`chromadb>=0.5`, `python-pptx>=0.6.21`, `playwright>=1.40`), `.gitignore` (`vector_store/`, `data/ufli/raw/`, `data/ufli/normalized.jsonl`), `pyproject.toml` mypy override for `chromadb.*`, `playwright.*`, `pptx.*`
   - New RAG tests: `tests/test_rag_embeddings.py`, `tests/test_rag_store.py`, `tests/test_rag_retrieval.py`, `tests/test_rag_indexer.py`, `tests/test_rag_adapt.py`
   - New curriculum steering tests: `tests/test_rag_adapt.py` covers curriculum-backed target-word prioritization and the minimum-match guardrail; `tests/test_transform_rag_context.py` covers curriculum document preservation in transform-side RAG selection
@@ -84,6 +91,9 @@
   - `.venv/bin/ruff check corpus/ufli/audit.py corpus/ufli/audit_schema.py corpus/ufli/ingest.py tests/test_corpus_audit.py` — clean
   - `.venv/bin/mypy corpus/ufli/audit.py corpus/ufli/audit_schema.py corpus/ufli/ingest.py tests/test_corpus_audit.py` — clean
   - `.venv/bin/pytest -q tests/test_corpus_audit.py tests/test_corpus_ingest.py` → `9 passed`
+  - `.venv/bin/ruff check corpus/ufli/audio_companion.py corpus/ufli/audio_companion_schema.py corpus/ufli/audit.py corpus/ufli/audit_schema.py corpus/ufli/ingest.py tests/test_corpus_audio_companion.py tests/test_corpus_audit.py` — clean
+  - `.venv/bin/mypy corpus/ufli/audio_companion.py corpus/ufli/audio_companion_schema.py corpus/ufli/audit.py corpus/ufli/audit_schema.py corpus/ufli/ingest.py tests/test_corpus_audio_companion.py tests/test_corpus_audit.py` — clean
+  - `.venv/bin/pytest -q tests/test_corpus_audio_companion.py tests/test_corpus_audit.py tests/test_corpus_ingest.py` → `16 passed`
   - `.venv/bin/python -m corpus.ufli.ingest audit --data-dir data/ufli --db-path vector_store --output-dir data/ufli/audit --sample-size 20 --benchmark-size 50 --seed 42 --no-ai-judge`
     - Output root: `data/ufli/audit/20260315_204339`
     - Result: text benchmark complete (`Hit@1=0.78`, `Hit@3=0.93`, `Hit@5=0.96`, `MRR=0.85`, `grade correctness=0.96`); image/audio sections `not_present` and retrieval skipped; action-item leaders were `missing_concept` (10), `very_short_record` (4), and `near_duplicate_lesson_text` (1)
@@ -199,12 +209,13 @@
 ### Handoff Start Here
 - **Current ready state**: `vector_store/` contains 148 indexed UFLI curriculum records, transform/eval code now passes curriculum hits into adaptation, and curriculum-backed word steering is covered by tests.
 - **Current code state**: `rag/backfill.py` and `rag/eval.py` are implemented; curriculum-aware adaptation is now complete in `adapt/engine.py`; multimodal corpus audit is implemented in `corpus/ufli/audit.py` + `corpus/ufli/audit_schema.py`; focused audit verification is green (`9 passed`); live `rag/eval.py` has been verified against Vertex on one sample input.
-- **First task next session**: decide whether to add companion indexing paths that target the audit’s optional image/audio retrieval benchmark hooks, starting from `data/ufli/companion/images.jsonl` and `data/ufli/companion/audio.jsonl`.
-- **Second task after that**: run a wider multi-image live `rag/eval.py` sweep and inspect whether the new retrieval/curriculum metrics show any lift beyond ties in validator outcomes.
-- **Primary files to open first**: `corpus/ufli/audit.py`, `corpus/ufli/audit_schema.py`, `corpus/ufli/ingest.py`, `rag/eval.py`
+- **First task next session**: run the live Stage 1 micro-pilot only after setting a real `neutral_na_pilot` voice id in `data/ufli/companion/voice_profiles.yaml`, then review the generated packet under `data/ufli/companion/pilots/<timestamp>/` and choose the winning voice.
+- **Second task after that**: implement Stage 2 representative-pilot work: lesson-level aggregate documents, `audio_companion_clips`/`audio_companion_lessons` collection split, and `--granularity lessons|both`.
+- **Primary files to open first**: `corpus/ufli/audio_companion.py`, `corpus/ufli/audio_companion_schema.py`, `data/ufli/companion/voice_profiles.yaml`, `corpus/ufli/ingest.py`
 - **Useful verification commands**:
   - `.venv/bin/pytest -q tests/test_rag_backfill.py tests/test_rag_eval.py tests/test_rag_client.py tests/test_rag_embeddings.py tests/test_rag_retrieval.py tests/test_corpus_ingest.py tests/test_retrieval_curriculum.py`
   - `.venv/bin/pytest -q tests/test_corpus_audit.py tests/test_corpus_ingest.py`
+  - `.venv/bin/pytest -q tests/test_corpus_audio_companion.py tests/test_corpus_audit.py tests/test_corpus_ingest.py`
   - `.venv/bin/python -m corpus.ufli.ingest audit --data-dir data/ufli --db-path vector_store --output-dir data/ufli/audit --sample-size 20 --benchmark-size 50 --seed 42 --no-ai-judge`
   - `.venv/bin/python -c 'from rag.store import CURRICULUM, get_or_create_collection, get_store; print(get_or_create_collection(get_store("vector_store"), CURRICULUM).count())'`
 - **Environment note**: live Gemini embedding currently works via API-key auto-selection from `.env`. Vertex fallback remains supported in code but was not needed after backend hardening.
@@ -833,3 +844,50 @@ Note: index step requires GOOGLE_CLOUD_PROJECT=ws-builder-rag env var.
 - Integrate `curriculum_references` into `adapt/engine.py`
 - Decide whether `rag/eval.py` should replace or complement `ab_eval.py`
 - Run a real evaluation pass and, if useful, a live `rag.backfill` smoke run against saved outputs
+
+### Session 29 — 2026-03-15 (UFLI Audio Companion Research + Rollout Plan)
+**Participants:** User + Codex (GPT-5)
+**What happened:**
+- Completed a research pass using Perplexity, Exa, and Jina on:
+  - evidence-based early reading instruction for Ontario and BC primary learners
+  - ADHD-supportive classroom/audio design for ages 5–8
+  - ElevenLabs model and voice-setting guidance
+- Confirmed the audio companion path should be transcript-first, pilot-first, and treated as support for explicit reading instruction rather than as a replacement for decoding instruction.
+- Confirmed rollout scope is numeric UFLI lessons `1–128`, not `1–34`.
+- Wrote a staged rollout plan for a pilot-first UFLI audio companion pipeline:
+  - Stage 0 scaffold refinement
+  - Stage 1 micro-pilot (`1`, `14`, `95`) with two voice profiles
+  - Stage 2 representative pilot (`1`, `14`, `34`, `64`, `95`, `128`)
+  - Stage 3 controlled batch rollout by lesson band
+  - Stage 4 full corpus completion and hardening
+- Plan file created at `ufli-audio-companion-rollout-plan.md` in the project root.
+
+**Key decisions locked:**
+- Human signoff is required before scaling beyond the pilot.
+- Pilot set should be representative, not random.
+- Voice selection is part of the pilot; compare two voice profiles before committing.
+- Default TTS model for pilot should be `eleven_multilingual_v2`, with `eleven_flash_v2_5` as fallback.
+- Indexed clip taxonomy should focus on:
+  - `lesson_instruction`
+  - `phoneme_model`
+  - `word_model`
+  - `passage_sentence`
+  - `passage_full`
+  - `review`
+- `encouragement` should not be part of indexed lesson content.
+- Add committed config/data contracts for:
+  - pronunciation lexicon
+  - voice profiles
+  - pilot lesson sets
+
+**What’s next:**
+- Implement Stage 0 and Stage 1 only.
+- Do not run full-corpus generation until pilot review passes and user signs off.
+- Start by refining the existing `corpus/ufli/audio_companion.py` scaffold and CLI commands to match the rollout plan.
+
+**Primary files to open first next session:**
+- `ufli-audio-companion-rollout-plan.md`
+- `.claude/worksheet-project-context.md`
+- `corpus/ufli/audio_companion.py`
+- `corpus/ufli/audio_companion_schema.py`
+- `corpus/ufli/ingest.py`
