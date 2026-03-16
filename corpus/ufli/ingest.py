@@ -309,6 +309,73 @@ def index_audio(
     click.echo(f"Indexed {count} audio companion clips")
 
 
+@cli.command(name="judge-audio")
+@click.option("--data-dir", default="data/ufli", help="Data directory.")
+@click.option(
+    "--lesson-set",
+    type=click.Choice(["pilot_micro", "pilot_rep", "all", "range"]),
+    default="pilot_micro",
+    show_default=True,
+    help="Lesson selection mode.",
+)
+@click.option("--lesson", "lesson_id", default=None, help="Specific numeric lesson to judge.")
+@click.option("--lesson-min", default=1, help="Minimum numeric lesson for --lesson-set range.")
+@click.option("--lesson-max", default=128, help="Maximum numeric lesson for --lesson-set range.")
+@click.option(
+    "--voice-profile",
+    default=None,
+    help="Restrict judging to one generated voice profile.",
+)
+@click.option(
+    "--judge-model",
+    default="gemini-3-flash-preview",
+    show_default=True,
+    help="Gemini model used for transcript/script judging.",
+)
+@click.option(
+    "--output-dir",
+    default=None,
+    help="Optional output root. Defaults to data/ufli/companion/evals.",
+)
+@click.option(
+    "--clip-limit",
+    default=None,
+    type=int,
+    help="Optional limit for a smaller smoke run.",
+)
+def judge_audio(
+    data_dir: str,
+    lesson_set: str,
+    lesson_id: str | None,
+    lesson_min: int,
+    lesson_max: int,
+    voice_profile: str | None,
+    judge_model: str,
+    output_dir: str | None,
+    clip_limit: int | None,
+) -> None:
+    """Run Gemini LLM-judge eval over generated audio companion clips."""
+    from corpus.ufli.audio_judge import judge_audio_companion
+
+    summary = judge_audio_companion(
+        data_dir=data_dir,
+        lesson_set=lesson_set,
+        lesson_id=lesson_id,
+        lesson_min=lesson_min,
+        lesson_max=lesson_max,
+        voice_profile=voice_profile,
+        judge_model=judge_model,
+        output_dir=output_dir,
+        clip_limit=clip_limit,
+    )
+    click.echo(
+        "Audio judge summary: "
+        f"clips={summary.clip_count} "
+        f"blockers={summary.blocker_count} "
+        f"report_dir={summary.output_dir}"
+    )
+
+
 @cli.command()
 @click.option("--data-dir", default="data/ufli", help="Data directory.")
 @click.option("--db-path", default="vector_store", help="ChromaDB path.")

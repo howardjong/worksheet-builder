@@ -12,6 +12,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+import wave
 from collections import Counter
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -258,6 +259,11 @@ def generate_audio_companion(
             )
             target_path = companion_dir / clip.audio_path
             if target_path.exists() and not force:
+                clip.duration_ms = _measured_or_estimated_duration_ms(
+                    target_path,
+                    clip.tts_text,
+                    clip.segment_type,
+                )
                 clip.status = "generated"
                 skipped += 1
                 continue
@@ -272,6 +278,11 @@ def generate_audio_companion(
                 seed=_stable_seed(clip.segment_id),
             )
             target_path.write_bytes(audio_bytes)
+            clip.duration_ms = _measured_or_estimated_duration_ms(
+                target_path,
+                clip.tts_text,
+                clip.segment_type,
+            )
             clip.status = "generated"
             generated += 1
             log_entries.append(
@@ -1036,6 +1047,44 @@ def _estimate_duration_ms(text: str, audio_type: AudioClipKind) -> int:
     else:
         wpm = 92
     return max(int((word_count / wpm) * 60000) + 500, 900)
+
+
+def _measured_or_estimated_duration_ms(
+    audio_path: Path,
+    text: str,
+    audio_type: AudioClipKind,
+) -> int:
+    measured_duration = _measure_audio_duration_ms(audio_path)
+    if measured_duration is not None:
+        return measured_duration
+    return _estimate_duration_ms(text, audio_type)
+
+
+def _measure_audio_duration_ms(audio_path: Path) -> int | None:
+    if not audio_path.exists():
+        return None
+
+    suffix = audio_path.suffix.lower()
+    try:
+        if suffix == ".wav":
+            with wave.open(str(audio_path), "rb") as wav_file:
+                frames = wav_file.getnframes()
+                framerate = wav_file.getframerate()
+                if frames > 0 and framerate > 0:
+                    return max(int((frames / framerate) * 1000), 1)
+            return None
+        if suffix == ".mp3":
+            try:
+                from mutagen.mp3 import MP3
+            except ImportError:
+                logger.debug("mutagen is unavailable; falling back to estimated duration")
+                return None
+            audio = MP3(str(audio_path))
+            if audio.info.length > 0:
+                return max(int(audio.info.length * 1000), 1)
+    except Exception as exc:
+        logger.warning("Failed to measure audio duration for %s: %s", audio_path, exc)
+    return None
 
 
 def _audio_settings(voice_profile: VoiceProfile, audio_type: AudioClipKind) -> AudioVoiceSettings:

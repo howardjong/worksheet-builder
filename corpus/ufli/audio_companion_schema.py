@@ -23,6 +23,8 @@ ClipSourceField = Literal[
 ]
 GenerationStatus = Literal["planned", "generated", "skipped", "failed"]
 ReviewStatus = Literal["pending", "approved", "needs_revision"]
+JudgeRecommendation = Literal["use", "revise", "block"]
+PacingMeasurementSource = Literal["audio_file", "estimate_fallback"]
 
 
 class AudioVoiceSettings(BaseModel):
@@ -172,3 +174,55 @@ class PilotReviewRecord(BaseModel):
     helpfulness_score: int | None = None
     blocker: bool = False
     notes: str = ""
+
+
+class AudioJudgeClipResult(BaseModel):
+    """LLM-judge result for one generated audio companion clip."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    voice_profile: str
+    lesson_id: str
+    lesson_number: int
+    segment_id: str
+    segment_type: AudioClipKind
+    audio_path: str
+    actual_duration_ms: int = Field(ge=0, default=0)
+    actual_wpm: float = Field(ge=0.0, default=0.0)
+    expected_wpm_target: float = Field(ge=0.0, default=0.0)
+    expected_wpm_min: float = Field(ge=0.0, default=0.0)
+    expected_wpm_max: float = Field(ge=0.0, default=0.0)
+    pacing_measurement_source: PacingMeasurementSource = "estimate_fallback"
+    heard_text: str = ""
+    instructional_match_score: int = Field(ge=1, le=5)
+    target_accuracy_score: int = Field(ge=1, le=5)
+    decoding_support_score: int = Field(ge=1, le=5)
+    passage_neutrality_score: int | None = Field(default=None, ge=1, le=5)
+    adhd_supportiveness_score: int = Field(ge=1, le=5)
+    clarity_score: int = Field(ge=1, le=5)
+    pronunciation_accuracy_score: int = Field(ge=1, le=5)
+    pacing_suitability_score: int = Field(ge=1, le=5)
+    pacing_consistency_score: int = Field(ge=1, le=5)
+    blocker: bool = False
+    recommendation: JudgeRecommendation = "use"
+    strengths: list[str] = Field(default_factory=list)
+    concerns: list[str] = Field(default_factory=list)
+    rationale: str = ""
+
+
+class AudioJudgeSummary(BaseModel):
+    """Aggregate output for one audio judge run."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    generated_at: str
+    judge_model: str
+    data_dir: str
+    output_dir: str
+    voice_profile: str
+    lesson_ids: list[str] = Field(default_factory=list)
+    clip_count: int = 0
+    blocker_count: int = 0
+    recommendation_counts: dict[str, int] = Field(default_factory=dict)
+    median_scores: dict[str, float] = Field(default_factory=dict)
+    clip_results: list[AudioJudgeClipResult] = Field(default_factory=list)
