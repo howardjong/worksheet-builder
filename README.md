@@ -47,6 +47,12 @@ python -m rag.backfill --artifacts-dir ./samples/output --output-dir ./samples/o
 # Evaluate retrieval and baseline-vs-RAG behavior
 python -m rag.eval --test-dir ./samples/input --profile profiles/ian.yaml
 
+# Build Stage 1 UFLI audio companion lesson bundles
+python -m corpus.ufli.ingest build-audio --lesson-set pilot_micro
+
+# Estimate pilot audio generation cost and clip counts without calling ElevenLabs
+python -m corpus.ufli.ingest generate-audio --lesson-set pilot_micro --dry-run
+
 # View progress
 python complete.py --profile profiles/ian.yaml --progress
 ```
@@ -304,6 +310,74 @@ python complete.py --profile profiles/ian.yaml --buy space_helmet
 # Adjust accommodations
 python complete.py --profile profiles/ian.yaml --set-chunking small
 ```
+
+### UFLI audio companion
+
+The repo includes a pilot-first audio companion path for numeric UFLI lessons
+`1-128`. The audio is designed as support for explicit reading instruction, not a
+replacement for decoding instruction.
+
+Stage 1 scope is intentionally narrow:
+- Pilot lessons: `1`, `14`, `95`
+- Pilot voices: `dorothy`, `neutral_na_pilot`
+- Indexed clip taxonomy:
+  - `lesson_instruction`
+  - `phoneme_model`
+  - `word_model`
+  - `passage_sentence`
+  - `passage_full`
+  - `review`
+- `encouragement` is not indexed as lesson content
+- Generation stays offline by default unless `--live` is passed
+
+Committed companion config lives under `data/ufli/companion/`:
+- `pronunciation_lexicon.yaml`
+- `voice_profiles.yaml`
+- `pilot_lessons.yaml`
+
+Core commands:
+
+```bash
+# Build voice-neutral pilot lesson bundles
+python -m corpus.ufli.ingest build-audio --lesson-set pilot_micro
+
+# Dry-run estimation for both pilot voices
+python -m corpus.ufli.ingest generate-audio --lesson-set pilot_micro --dry-run
+
+# Live-generate one pilot voice after voice ids are configured
+python -m corpus.ufli.ingest generate-audio \
+  --lesson-set pilot_micro \
+  --voice-profile dorothy \
+  --live \
+  --review-packet
+
+# Index generated pilot clips
+python -m corpus.ufli.ingest index-audio \
+  --lesson-set pilot_micro \
+  --voice-profile dorothy \
+  --granularity clips
+```
+
+`generate-audio --review-packet` writes a timestamped packet under
+`data/ufli/companion/pilots/<timestamp>/` containing:
+- `review.md`
+- `review.csv`
+- `clips.json`
+- `playlist.m3u`
+- generated audio files
+
+### UFLI audio MVP test packet
+
+The smallest evaluation packet for checking whether the TTS companion is better
+than no TTS lives under `data/ufli/companion/mvp_test/`:
+
+- `facilitator_script.md`
+- `child_score_sheet.csv`
+- `adult_observation_rubric.md`
+- `summary_template.md`
+
+This packet is structured around a `No TTS` vs `TTS Companion` crossover test
+and explicitly preserves decoding-first instruction.
 
 ## Themes
 
