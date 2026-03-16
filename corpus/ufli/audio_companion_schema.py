@@ -37,6 +37,20 @@ class AudioVoiceSettings(BaseModel):
     style: float
     speed: float
 
+    @field_validator("stability", "similarity_boost", "style")
+    @classmethod
+    def _validate_unit_interval(cls, value: float) -> float:
+        if value < 0.0 or value > 1.0:
+            raise ValueError("voice setting must be between 0.0 and 1.0")
+        return value
+
+    @field_validator("speed")
+    @classmethod
+    def _validate_elevenlabs_speed(cls, value: float) -> float:
+        if value < 0.7 or value > 1.2:
+            raise ValueError("ElevenLabs speed must be between 0.7 and 1.2")
+        return value
+
 
 class PronunciationLexiconEntry(BaseModel):
     """Approved transcript/TTS text for a pronunciation target."""

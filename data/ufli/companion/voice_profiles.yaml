@@ -20,7 +20,7 @@ profiles:
         stability: 0.72
         similarity_boost: 0.78
         style: 0.0
-        speed: 0.58
+        speed: 0.7
       word_model:
         stability: 0.7
         similarity_boost: 0.78
@@ -61,7 +61,7 @@ profiles:
         stability: 0.72
         similarity_boost: 0.78
         style: 0.0
-        speed: 0.58
+        speed: 0.7
       word_model:
         stability: 0.7
         similarity_boost: 0.78

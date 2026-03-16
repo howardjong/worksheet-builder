@@ -15,6 +15,7 @@ from corpus.ufli.audio_companion import (
     generate_audio_companion,
     index_audio_companion,
     load_audio_bundles,
+    load_voice_profiles,
     validate_audio_companion,
 )
 from rag.store import AUDIO_COMPANION, get_or_create_collection, get_store
@@ -201,6 +202,17 @@ def test_generate_audio_dry_run_estimates_both_pilot_voices(tmp_path: Path) -> N
     assert summary["planned"] > 0
     assert set(summary["voice_profiles"]) == {"dorothy", "neutral_na_pilot"}
     assert summary["voice_profiles"]["dorothy"]["projected_costs_usd"]["eleven_multilingual_v2"] > 0
+
+
+def test_load_voice_profiles_rejects_invalid_elevenlabs_speed(tmp_path: Path) -> None:
+    _write_companion_configs(tmp_path)
+    voice_profiles_path = tmp_path / "companion" / "voice_profiles.yaml"
+    payload = yaml.safe_load(voice_profiles_path.read_text())
+    payload["profiles"]["dorothy"]["clip_settings"]["phoneme_model"]["speed"] = 0.69
+    voice_profiles_path.write_text(yaml.safe_dump(payload, sort_keys=False))
+
+    with pytest.raises(ValueError, match="ElevenLabs speed must be between 0.7 and 1.2"):
+        load_voice_profiles(voice_profiles_path)
 
 
 def test_generate_audio_rejects_non_pilot_live_scope(tmp_path: Path) -> None:
