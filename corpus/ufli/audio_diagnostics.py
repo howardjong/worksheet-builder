@@ -2,9 +2,19 @@
 
 from __future__ import annotations
 
+import base64
+import json
+import os
+import re
+import time
+import urllib.error
+import urllib.request
 from collections import defaultdict
 from collections.abc import Iterable
 from pathlib import Path
+
+import google.auth
+from google.auth.transport.requests import Request as GoogleAuthRequest
 
 from corpus.ufli.audio_companion import (
     _BUNDLE_DIR,
@@ -23,11 +33,15 @@ from corpus.ufli.audio_companion import (
 )
 from corpus.ufli.audio_companion_schema import (
     AudioClipDefinition,
+    AudioClipKind,
+    AudioInputFormat,
     AudioJudgeClipResult,
     AudioProbeFinding,
     AudioProbeRunSummary,
     AudioProbeVariant,
+    AudioSynthesisProvider,
     AudioVoiceSettings,
+    GoogleCloudTtsSettings,
     LessonAudioBundle,
     ProbeAssessment,
     PronunciationLexicon,
@@ -43,6 +57,24 @@ _DEFAULT_PROBE_SEGMENTS = (
     "lesson_014_passage_sentence_03",
     "lesson_095_passage_full",
 )
+_GOOGLE_CHIRP3_LEDA = "en-US-Chirp3-HD-Leda"
+_GEMINI_TTS_LEDA = "Leda"
+_GOOGLE_TTS_REGIONS = {
+    "global",
+    "us",
+    "eu",
+    "asia-southeast1",
+    "europe-west2",
+    "asia-northeast1",
+}
+_GOOGLE_SPEAKING_RATE_BY_CLIP: dict[AudioClipKind, float] = {
+    "lesson_instruction": 0.85,
+    "phoneme_model": 0.65,
+    "word_model": 0.78,
+    "passage_sentence": 0.85,
+    "passage_full": 0.85,
+    "review": 0.85,
+}
 
 
 def run_audio_probe_matrix(
@@ -53,10 +85,20 @@ def run_audio_probe_matrix(
     live: bool = False,
     judge: bool = False,
     judge_model: str = DEFAULT_JUDGE_MODEL,
+    provider_scope: str = "elevenlabs",
+    google_voice_name: str = _GOOGLE_CHIRP3_LEDA,
+    google_region: str | None = None,
+    google_speaking_rate: float | None = None,
+    google_model_name: str = "",
+    google_style_prompt: str = "",
+    google_sample_rate_hz: int = 0,
+    google_volume_gain_db: float = 0.0,
 ) -> AudioProbeRunSummary:
     """Generate controlled variants to separate input-shaping issues from TTS limits."""
     if judge and not live:
         raise RuntimeError("Audio probes must be live-generated before they can be judged")
+    if provider_scope not in {"elevenlabs", "google", "both"}:
+        raise ValueError(f"Unknown provider_scope: {provider_scope}")
 
     base = Path(data_dir)
     companion_dir = base / "companion"
@@ -71,6 +113,17 @@ def run_audio_probe_matrix(
         raise ValueError(f"Unknown voice profile: {selected_voice_name}")
     selected_voice = voice_catalog.profiles[selected_voice_name]
     lexicon = load_pronunciation_lexicon(companion_dir / _PRONUNCIATION_LEXICON)
+    google_settings: GoogleCloudTtsSettings | None = None
+    if provider_scope in {"google", "both"}:
+        google_settings = _google_canary_settings(
+            voice_name=google_voice_name,
+            region=google_region,
+            speaking_rate=google_speaking_rate,
+            model_name=google_model_name,
+            style_prompt=google_style_prompt,
+            sample_rate_hz=google_sample_rate_hz,
+            volume_gain_db=google_volume_gain_db,
+        )
 
     segment_map = _selected_segments(
         bundles=bundles,
@@ -94,13 +147,20 @@ def run_audio_probe_matrix(
                 clip=clip,
                 voice_profile=selected_voice,
                 lexicon=lexicon,
+                provider_scope=provider_scope,
+                google_settings=google_settings,
             )
         )
 
     if live:
-        api_key = _elevenlabs_api_key()
-        if not api_key:
-            raise RuntimeError("ELEVENLABS_API_KEY is required for live probe generation")
+        api_key = ""
+        if provider_scope in {"elevenlabs", "both"}:
+            api_key = _elevenlabs_api_key()
+            if not api_key:
+                raise RuntimeError(
+                    "ELEVENLABS_API_KEY is required for live "
+                    "ElevenLabs probe generation"
+                )
         for variant in variants:
             audio_bytes = _synthesize_probe_variant(
                 variant=variant,
@@ -171,8 +231,9 @@ def _build_probe_variants(
     clip: AudioClipDefinition,
     voice_profile: VoiceProfile,
     lexicon: PronunciationLexicon,
+    provider_scope: str,
+    google_settings: GoogleCloudTtsSettings | None,
 ) -> list[AudioProbeVariant]:
-    settings = _audio_settings(voice_profile, clip.segment_type)
     variants: list[AudioProbeVariant] = []
 
     def add_variant(
@@ -180,7 +241,11 @@ def _build_probe_variants(
         hypothesis: str,
         tts_text: str,
         model_id: str,
-        audio_settings: AudioVoiceSettings,
+        audio_settings: AudioVoiceSettings | GoogleCloudTtsSettings,
+        *,
+        provider: AudioSynthesisProvider = "elevenlabs",
+        provider_input: str | None = None,
+        input_format: AudioInputFormat = "text",
     ) -> None:
         variant_id = f"{clip.segment_id}__{variant_family}__{model_id}"
         variants.append(
@@ -193,65 +258,113 @@ def _build_probe_variants(
                 variant_family=variant_family,
                 hypothesis=hypothesis,
                 voice_profile=voice_profile.name,
+                provider=provider,
                 model_id=model_id,
                 transcript_text=clip.transcript_text,
                 tts_text=tts_text,
+                provider_input=provider_input or tts_text,
+                input_format=input_format,
                 audio_settings=audio_settings,
                 audio_path=f"audio/{clip.segment_id}/{variant_id}.mp3",
             )
         )
 
-    add_variant(
-        "current_pipeline",
-        "Current pipeline text with the default model.",
-        clip.tts_text,
-        voice_profile.default_model,
-        settings,
-    )
-    add_variant(
-        "current_pipeline",
-        "Current pipeline text with the fallback model to isolate model behavior.",
-        clip.tts_text,
-        voice_profile.fallback_model,
-        settings,
-    )
+    if provider_scope in {"elevenlabs", "both"}:
+        settings = _audio_settings(voice_profile, clip.segment_type)
+        add_variant(
+            "current_pipeline",
+            "Current pipeline text with the default model.",
+            clip.tts_text,
+            voice_profile.default_model,
+            settings,
+        )
+        add_variant(
+            "current_pipeline",
+            "Current pipeline text with the fallback model to isolate model behavior.",
+            clip.tts_text,
+            voice_profile.fallback_model,
+            settings,
+        )
 
-    if clip.segment_type in {"lesson_instruction", "review"}:
-        add_variant(
-            "exact_transcript",
-            "Remove pause shaping to test whether the input pacing markup is helping or hurting.",
-            clip.transcript_text,
-            voice_profile.default_model,
-            settings,
+        if clip.segment_type in {"lesson_instruction", "review"}:
+            add_variant(
+                "exact_transcript",
+                "Remove pause shaping to test whether the input pacing "
+                "markup is helping or hurting.",
+                clip.transcript_text,
+                voice_profile.default_model,
+                settings,
+            )
+        elif clip.segment_type in {"passage_sentence", "passage_full"}:
+            add_variant(
+                "exact_transcript",
+                "Use exact transcript text with no added pause shaping.",
+                clip.transcript_text,
+                voice_profile.default_model,
+                settings,
+            )
+            add_variant(
+                "clause_pause_only",
+                "Use punctuation-only clause pauses without mid-sentence inserted pauses.",
+                _clause_pause_only_tts(clip.transcript_text),
+                voice_profile.default_model,
+                settings,
+            )
+        elif clip.segment_type == "phoneme_model":
+            add_variant(
+                "approved_phoneme",
+                "Use the generic approved phoneme wording instead of the modeled override.",
+                _approved_phoneme_tts(bundle, clip, lexicon),
+                voice_profile.default_model,
+                settings,
+            )
+
+    if provider_scope in {"google", "both"} and google_settings is not None:
+        google_clip_settings = _google_settings_for_clip(google_settings, clip.segment_type)
+        controlled_text = _google_markup_from_tts_text(
+            clip.tts_text,
+            clip.segment_type,
+            google_clip_settings,
         )
-    elif clip.segment_type in {"passage_sentence", "passage_full"}:
-        add_variant(
-            "exact_transcript",
-            "Use exact transcript text with no added pause shaping.",
-            clip.transcript_text,
-            voice_profile.default_model,
-            settings,
+        google_input_format: AudioInputFormat = (
+            "text" if google_clip_settings.model_name.startswith("gemini-2.5-") else "markup"
+        )
+        google_label = (
+            f"{google_settings.model_name} / {google_settings.voice_name}"
+            if google_settings.model_name
+            else google_settings.voice_name
         )
         add_variant(
-            "clause_pause_only",
-            "Use punctuation-only clause pauses without mid-sentence inserted pauses.",
-            _clause_pause_only_tts(clip.transcript_text),
-            voice_profile.default_model,
-            settings,
+            "current_pipeline",
+            f"Current pipeline text translated into Google markup for {google_label}.",
+            clip.tts_text,
+            google_settings.voice_name,
+            google_clip_settings,
+            provider="google_cloud_tts",
+            provider_input=controlled_text,
+            input_format=google_input_format,
         )
-    elif clip.segment_type == "phoneme_model":
-        add_variant(
-            "approved_phoneme",
-            "Use the generic approved phoneme wording instead of the modeled override.",
-            _approved_phoneme_tts(bundle, clip, lexicon),
-            voice_profile.default_model,
-            settings,
-        )
+        if clip.segment_type in {
+            "lesson_instruction",
+            "review",
+            "passage_sentence",
+            "passage_full",
+        }:
+            add_variant(
+                "exact_transcript",
+                f"Exact transcript on {google_label} without provider-specific pause markup.",
+                clip.transcript_text,
+                google_settings.voice_name,
+                google_clip_settings,
+                provider="google_cloud_tts",
+                provider_input=clip.transcript_text,
+                input_format="text",
+            )
 
     deduped: list[AudioProbeVariant] = []
-    seen: set[tuple[str, str]] = set()
+    seen: set[tuple[str, str, str]] = set()
     for variant in variants:
-        key = (variant.model_id, variant.tts_text)
+        key = (variant.provider, variant.model_id, variant.provider_input or variant.tts_text)
         if key in seen:
             continue
         seen.add(key)
@@ -284,10 +397,23 @@ def _synthesize_probe_variant(
     voice_profile: VoiceProfile,
     api_key: str,
 ) -> bytes:
+    if variant.provider == "google_cloud_tts":
+        settings = variant.audio_settings
+        if not isinstance(settings, GoogleCloudTtsSettings):
+            raise TypeError("google_cloud_tts variants require GoogleCloudTtsSettings")
+        return _request_google_cloud_tts_audio(
+            text=variant.provider_input or variant.tts_text,
+            input_format=variant.input_format,
+            settings=settings,
+        )
+
     probe_profile = voice_profile.model_copy(deep=True)
-    probe_profile.clip_settings[variant.segment_type] = variant.audio_settings
+    settings = variant.audio_settings
+    if not isinstance(settings, AudioVoiceSettings):
+        raise TypeError("elevenlabs variants require AudioVoiceSettings")
+    probe_profile.clip_settings[variant.segment_type] = settings
     return _request_elevenlabs_audio(
-        text=variant.tts_text,
+        text=variant.provider_input or variant.tts_text,
         audio_type=variant.segment_type,
         voice_profile=probe_profile,
         api_key=api_key,
@@ -486,6 +612,148 @@ def _write_probe_report(path: Path, summary: AudioProbeRunSummary) -> None:
             )
         lines.append(
             f"- `{variant.variant_id}` family=`{variant.variant_family}`"
-            f" model=`{variant.model_id}` status=`{variant.generation_status}`{judge_bits}"
+            f" provider=`{variant.provider}` model=`{variant.model_id}`"
+            f" status=`{variant.generation_status}`{judge_bits}"
         )
     path.write_text("\n".join(lines) + "\n")
+
+
+def _google_canary_settings(
+    voice_name: str,
+    region: str | None,
+    speaking_rate: float | None,
+    model_name: str,
+    style_prompt: str,
+    sample_rate_hz: int,
+    volume_gain_db: float,
+) -> GoogleCloudTtsSettings:
+    target_region = _resolve_google_tts_region(region)
+    api_endpoint = (
+        "https://texttospeech.googleapis.com"
+        if target_region == "global"
+        else f"https://{target_region}-texttospeech.googleapis.com"
+    )
+    rate = speaking_rate if speaking_rate is not None else 1.0
+    return GoogleCloudTtsSettings(
+        api_endpoint=api_endpoint,
+        voice_name=voice_name,
+        speaking_rate=rate,
+        model_name=model_name,
+        style_prompt=style_prompt,
+        sample_rate_hz=sample_rate_hz,
+        volume_gain_db=volume_gain_db,
+    )
+
+
+def _resolve_google_tts_region(region: str | None) -> str:
+    candidate = (
+        (region or "").strip()
+        or os.environ.get("GOOGLE_TTS_LOCATION", "").strip()
+        or os.environ.get("GOOGLE_CLOUD_LOCATION", "").strip()
+    )
+    return candidate if candidate in _GOOGLE_TTS_REGIONS else "us"
+
+
+def _google_settings_for_clip(
+    base_settings: GoogleCloudTtsSettings,
+    clip_kind: AudioClipKind,
+) -> GoogleCloudTtsSettings:
+    return base_settings.model_copy(
+        update={
+            "speaking_rate": _GOOGLE_SPEAKING_RATE_BY_CLIP.get(
+                clip_kind,
+                base_settings.speaking_rate,
+            )
+            if base_settings.speaking_rate == 1.0
+            else base_settings.speaking_rate
+        }
+    )
+
+
+def _google_markup_from_tts_text(
+    text: str,
+    clip_kind: AudioClipKind,
+    settings: GoogleCloudTtsSettings | None = None,
+) -> str:
+    if settings is not None and settings.model_name.startswith("gemini-2.5-"):
+        pause_tag = "[long pause]" if clip_kind == "passage_full" else "[medium pause]"
+    else:
+        pause_tag = "[pause long]" if clip_kind == "passage_full" else "[pause]"
+    parts = [part.strip() for part in text.split("...")]
+    joined = f" {pause_tag} ".join(part for part in parts if part)
+    compact = re.sub(r"\s+", " ", joined).strip()
+    return compact or text
+
+
+def _request_google_cloud_tts_audio(
+    text: str,
+    input_format: str,
+    settings: GoogleCloudTtsSettings,
+) -> bytes:
+    credentials, project_id = google.auth.default(
+        scopes=["https://www.googleapis.com/auth/cloud-platform"]
+    )
+    if not credentials.valid:
+        credentials.refresh(GoogleAuthRequest())  # type: ignore[no-untyped-call]
+    token = credentials.token
+    if not token:
+        raise RuntimeError("Google Cloud TTS auth failed: missing access token")
+
+    input_payload: dict[str, object] = (
+        {"markup": text} if input_format == "markup" else {"text": text}
+    )
+    if settings.style_prompt:
+        input_payload["prompt"] = settings.style_prompt
+    payload = {
+        "input": input_payload,
+        "voice": {
+            "languageCode": settings.language_code,
+            "name": settings.voice_name,
+            **({"modelName": settings.model_name} if settings.model_name else {}),
+        },
+        "audioConfig": {
+            "audioEncoding": settings.audio_encoding,
+            "speakingRate": settings.speaking_rate,
+            **(
+                {"sampleRateHertz": settings.sample_rate_hz}
+                if settings.sample_rate_hz > 0
+                else {}
+            ),
+            "volumeGainDb": settings.volume_gain_db,
+        },
+    }
+    request = urllib.request.Request(
+        f"{settings.api_endpoint}/v1/text:synthesize",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type": "application/json",
+            **(
+                {"x-goog-user-project": project_id}
+                if project_id
+                else {}
+            ),
+        },
+        method="POST",
+    )
+    for attempt in range(3):
+        try:
+            with urllib.request.urlopen(request) as response:  # noqa: S310
+                response_payload = json.loads(response.read().decode("utf-8"))
+            break
+        except urllib.error.HTTPError as exc:  # pragma: no cover - exercised live only
+            body = exc.read().decode("utf-8", errors="ignore")
+            if exc.code >= 500 and attempt < 2:
+                time.sleep(2.0 * (attempt + 1))
+                continue
+            raise RuntimeError(f"Google Cloud TTS failed ({exc.code}): {body}") from exc
+        except urllib.error.URLError as exc:  # pragma: no cover - exercised live only
+            if attempt < 2:
+                time.sleep(2.0 * (attempt + 1))
+                continue
+            raise RuntimeError(f"Google Cloud TTS transport failed: {exc}") from exc
+
+    audio_content = response_payload.get("audioContent", "")
+    if not isinstance(audio_content, str) or not audio_content:
+        raise RuntimeError("Google Cloud TTS returned no audioContent")
+    return base64.b64decode(audio_content)

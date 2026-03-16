@@ -455,6 +455,58 @@ def judge_audio(
     show_default=True,
     help="Gemini model used for probe judging.",
 )
+@click.option(
+    "--provider-scope",
+    type=click.Choice(["elevenlabs", "google", "both"]),
+    default="elevenlabs",
+    show_default=True,
+    help="Which synthesis provider path to include in the canary matrix.",
+)
+@click.option(
+    "--google-voice-name",
+    default="en-US-Chirp3-HD-Leda",
+    show_default=True,
+    help="Google Cloud TTS Chirp 3 voice used when --provider-scope includes google.",
+)
+@click.option(
+    "--google-region",
+    default=None,
+    help=(
+        "Google Cloud TTS region/multi-region for Chirp 3. "
+        "Uses GOOGLE_TTS_LOCATION or a supported fallback if omitted."
+    ),
+)
+@click.option(
+    "--google-speaking-rate",
+    default=None,
+    type=float,
+    help=(
+        "Optional Google Cloud TTS speaking rate override. "
+        "If omitted, the canary uses conservative clip-family defaults."
+    ),
+)
+@click.option(
+    "--google-model-name",
+    default="",
+    help="Optional Google Cloud TTS model name such as gemini-2.5-pro-tts.",
+)
+@click.option(
+    "--google-style-prompt",
+    default="",
+    help="Optional Google Cloud TTS style prompt/system instruction.",
+)
+@click.option(
+    "--google-sample-rate-hz",
+    default=0,
+    type=int,
+    help="Optional Google Cloud TTS output sample rate in Hz.",
+)
+@click.option(
+    "--google-volume-gain-db",
+    default=0.0,
+    type=float,
+    help="Optional Google Cloud TTS volume gain in dB.",
+)
 def diagnose_audio(
     data_dir: str,
     voice_profile: str | None,
@@ -463,6 +515,14 @@ def diagnose_audio(
     live: bool,
     judge: bool,
     judge_model: str,
+    provider_scope: str,
+    google_voice_name: str,
+    google_region: str | None,
+    google_speaking_rate: float | None,
+    google_model_name: str,
+    google_style_prompt: str,
+    google_sample_rate_hz: int,
+    google_volume_gain_db: float,
 ) -> None:
     """Run controlled canary probes to separate input-shaping vs TTS-model issues."""
     from corpus.ufli.audio_diagnostics import run_audio_probe_matrix
@@ -475,6 +535,14 @@ def diagnose_audio(
         live=live,
         judge=judge,
         judge_model=judge_model,
+        provider_scope=provider_scope,
+        google_voice_name=google_voice_name,
+        google_region=google_region,
+        google_speaking_rate=google_speaking_rate,
+        google_model_name=google_model_name,
+        google_style_prompt=google_style_prompt,
+        google_sample_rate_hz=google_sample_rate_hz,
+        google_volume_gain_db=google_volume_gain_db,
     )
     click.echo(
         "Audio probe summary: "

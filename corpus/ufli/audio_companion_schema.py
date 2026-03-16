@@ -14,6 +14,8 @@ AudioClipKind = Literal[
     "passage_full",
     "review",
 ]
+AudioSynthesisProvider = Literal["elevenlabs", "google_cloud_tts"]
+AudioInputFormat = Literal["text", "markup"]
 ClipSourceField = Literal[
     "concept",
     "slide_text",
@@ -49,6 +51,43 @@ class AudioVoiceSettings(BaseModel):
     def _validate_elevenlabs_speed(cls, value: float) -> float:
         if value < 0.7 or value > 1.2:
             raise ValueError("ElevenLabs speed must be between 0.7 and 1.2")
+        return value
+
+
+class GoogleCloudTtsSettings(BaseModel):
+    """Experimental Cloud TTS settings for diagnostics-only canary probes."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    api_endpoint: str
+    voice_name: str
+    language_code: str = "en-US"
+    model_name: str = ""
+    style_prompt: str = ""
+    audio_encoding: Literal["MP3", "LINEAR16"] = "MP3"
+    speaking_rate: float = 1.0
+    sample_rate_hz: int = 0
+    volume_gain_db: float = 0.0
+
+    @field_validator("speaking_rate")
+    @classmethod
+    def _validate_speaking_rate(cls, value: float) -> float:
+        if value < 0.25 or value > 2.0:
+            raise ValueError("Google Cloud TTS speaking_rate must be between 0.25 and 2.0")
+        return value
+
+    @field_validator("sample_rate_hz")
+    @classmethod
+    def _validate_sample_rate_hz(cls, value: int) -> int:
+        if value < 0:
+            raise ValueError("Google Cloud TTS sample_rate_hz must be non-negative")
+        return value
+
+    @field_validator("volume_gain_db")
+    @classmethod
+    def _validate_volume_gain_db(cls, value: float) -> float:
+        if value < -96.0 or value > 16.0:
+            raise ValueError("Google Cloud TTS volume_gain_db must be between -96.0 and 16.0")
         return value
 
 
@@ -344,10 +383,13 @@ class AudioProbeVariant(BaseModel):
     variant_family: str
     hypothesis: str
     voice_profile: str
+    provider: AudioSynthesisProvider = "elevenlabs"
     model_id: str
     transcript_text: str
     tts_text: str
-    audio_settings: AudioVoiceSettings
+    provider_input: str = ""
+    input_format: AudioInputFormat = "text"
+    audio_settings: AudioVoiceSettings | GoogleCloudTtsSettings
     audio_path: str = ""
     generation_status: GenerationStatus = "planned"
     judge_result: AudioJudgeClipResult | None = None

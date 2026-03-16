@@ -14,9 +14,15 @@ from corpus.ufli.audio_companion_schema import (
     AudioJudgeClipResult,
     AudioProbeVariant,
     AudioVoiceSettings,
+    GoogleCloudTtsSettings,
     JudgeRecommendation,
 )
-from corpus.ufli.audio_diagnostics import _derive_probe_findings, run_audio_probe_matrix
+from corpus.ufli.audio_diagnostics import (
+    _derive_probe_findings,
+    _google_markup_from_tts_text,
+    _resolve_google_tts_region,
+    run_audio_probe_matrix,
+)
 
 
 def _write_normalized(path: Path, rows: list[dict[str, object]]) -> None:
@@ -203,6 +209,68 @@ def test_run_audio_probe_matrix_writes_probe_artifacts(
     assert (output_dir / "probe_results.jsonl").exists()
     assert (output_dir / "probe_report.md").exists()
     assert any(variant.audio_path for variant in summary.variants)
+
+
+def test_run_audio_probe_matrix_supports_google_only_dry_run(
+    tmp_path: Path,
+) -> None:
+    _write_companion_configs(tmp_path)
+    _write_normalized(tmp_path / "normalized.jsonl", _sample_rows())
+    build_audio_companion_manifests(data_dir=str(tmp_path))
+
+    summary = run_audio_probe_matrix(
+        data_dir=str(tmp_path),
+        voice_profile="dorothy",
+        segment_ids=["lesson_014_passage_sentence_01"],
+        provider_scope="google",
+        live=False,
+        judge=False,
+    )
+
+    assert summary.variant_count == 2
+    assert all(variant.provider == "google_cloud_tts" for variant in summary.variants)
+    current_variant = next(
+        variant for variant in summary.variants if variant.variant_family == "current_pipeline"
+    )
+    assert current_variant.input_format == "markup"
+    assert "[pause]" in current_variant.provider_input
+    assert isinstance(current_variant.audio_settings, GoogleCloudTtsSettings)
+    assert current_variant.audio_settings.voice_name == "en-US-Chirp3-HD-Leda"
+
+
+def test_google_markup_translation_preserves_words() -> None:
+    markup = _google_markup_from_tts_text(
+        '"This kitten is cute," ... said Boyd. ... The toy is in the box.',
+        "passage_full",
+    )
+
+    assert "[pause long]" in markup
+    assert "This kitten is cute" in markup
+    assert "said Boyd." in markup
+    assert "The toy is in the box." in markup
+
+
+def test_google_markup_uses_gemini_pause_tags_when_model_is_promptable() -> None:
+    markup = _google_markup_from_tts_text(
+        "Can the cat ... fit on the cot? ...",
+        "passage_sentence",
+        GoogleCloudTtsSettings(
+            api_endpoint="https://texttospeech.googleapis.com",
+            voice_name="Leda",
+            model_name="gemini-2.5-pro-tts",
+        ),
+    )
+
+    assert "[medium pause]" in markup
+    assert "[pause]" not in markup
+
+
+def test_resolve_google_tts_region_falls_back_from_unsupported_vertex_region(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "us-central1")
+
+    assert _resolve_google_tts_region(None) == "us"
 
 
 def test_probe_findings_treat_same_model_text_win_as_pipeline_issue() -> None:
