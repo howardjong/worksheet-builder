@@ -1127,11 +1127,13 @@ def _clause_pause_only_tts(text: str) -> str:
     shaped = _clean_text(text)
     if not shaped:
         return ""
-    shaped = re.sub(r",\s+", ", ... ", shaped)
-    shaped = re.sub(r"([;:])\s+", r"\1 ... ", shaped)
-    shaped = re.sub(r'([.!?]["”\']?)\s+', r"\1 ... ", shaped)
-    if re.search(r'[.!?]["”\']?$', shaped) and not shaped.endswith("..."):
-        shaped = f"{shaped} ..."
+    pause_marker = "[[pause]]"
+    shaped = re.sub(r',(["”\']?)\s+', rf',\1 {pause_marker} ', shaped)
+    shaped = re.sub(r'([;:])(["”\']?)\s+', rf'\1\2 {pause_marker} ', shaped)
+    shaped = re.sub(r'([.!?]["”\']?)\s+', rf'\1 {pause_marker} ', shaped)
+    if re.search(r'[.!?]["”\']?$', shaped):
+        shaped = f"{shaped} {pause_marker}"
+    shaped = re.sub(rf"(?:\s*{re.escape(pause_marker)}\s*)+", " ... ", shaped)
     return _clean_text(shaped)
 
 

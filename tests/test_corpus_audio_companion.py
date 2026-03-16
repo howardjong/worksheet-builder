@@ -12,6 +12,8 @@ import yaml
 pytest.importorskip("chromadb")
 
 from corpus.ufli.audio_companion import (
+    _clause_pause_only_tts,
+    _pause_shaped_passage_tts,
     build_audio_companion_manifests,
     generate_audio_companion,
     index_audio_companion,
@@ -217,6 +219,22 @@ def test_build_audio_uses_pause_shaped_tts_without_changing_transcript(tmp_path:
     )
     assert ". ... . ..." not in passage_full.tts_text
     assert ", . ..." not in passage_full.tts_text
+
+
+def test_clause_pause_shaping_avoids_duplicate_pause_tokens() -> None:
+    shaped = _clause_pause_only_tts(
+        "In February, Boyd and James had a choice to make."
+    )
+
+    assert shaped == "In February, ... Boyd and James had a choice to make. ..."
+    assert "... ..." not in shaped
+
+
+def test_passage_pause_shaping_handles_quoted_dialogue_clause_breaks() -> None:
+    shaped = _pause_shaped_passage_tts('"This kitten is cute," said Boyd.')
+
+    assert shaped == '"This kitten is cute," ... said Boyd. ...'
+    assert "is ... cute" not in shaped
 
 
 def test_build_audio_uses_exact_anchor_for_oy(tmp_path: Path) -> None:
