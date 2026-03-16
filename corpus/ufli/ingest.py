@@ -421,6 +421,70 @@ def judge_audio(
     )
 
 
+@cli.command(name="diagnose-audio")
+@click.option("--data-dir", default="data/ufli", help="Data directory.")
+@click.option(
+    "--voice-profile",
+    default=None,
+    help="Restrict diagnostic probes to one generated voice profile.",
+)
+@click.option(
+    "--segment-id",
+    "segment_ids",
+    multiple=True,
+    help="Specific segment ids to probe. Defaults to the committed canary set.",
+)
+@click.option(
+    "--output-dir",
+    default=None,
+    help="Optional output root. Defaults to data/ufli/companion/diagnostics/<timestamp>.",
+)
+@click.option(
+    "--live/--dry-run",
+    default=False,
+    help="Generate live probe audio. Dry-run only writes the planned variant matrix.",
+)
+@click.option(
+    "--judge/--no-judge",
+    default=False,
+    help="Judge generated probe variants with Gemini. Requires --live.",
+)
+@click.option(
+    "--judge-model",
+    default="gemini-3-flash-preview",
+    show_default=True,
+    help="Gemini model used for probe judging.",
+)
+def diagnose_audio(
+    data_dir: str,
+    voice_profile: str | None,
+    segment_ids: tuple[str, ...],
+    output_dir: str | None,
+    live: bool,
+    judge: bool,
+    judge_model: str,
+) -> None:
+    """Run controlled canary probes to separate input-shaping vs TTS-model issues."""
+    from corpus.ufli.audio_diagnostics import run_audio_probe_matrix
+
+    summary = run_audio_probe_matrix(
+        data_dir=data_dir,
+        voice_profile=voice_profile,
+        segment_ids=list(segment_ids) if segment_ids else None,
+        output_dir=output_dir,
+        live=live,
+        judge=judge,
+        judge_model=judge_model,
+    )
+    click.echo(
+        "Audio probe summary: "
+        f"variants={summary.variant_count} "
+        f"live={summary.live} "
+        f"judged={summary.judged} "
+        f"report_dir={summary.output_dir}"
+    )
+
+
 @cli.command()
 @click.option("--data-dir", default="data/ufli", help="Data directory.")
 @click.option("--db-path", default="vector_store", help="ChromaDB path.")

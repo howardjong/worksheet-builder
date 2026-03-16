@@ -2,18 +2,23 @@ phonemes:
   a_short:
     transcript_text: "/a/"
     approved_tts_text: "the short a sound"
+    modeling_tts_text: "the short a sound"
   e_short:
     transcript_text: "/e/"
     approved_tts_text: "the short e sound"
+    modeling_tts_text: "the e in bed"
   i_short:
     transcript_text: "/i/"
     approved_tts_text: "the short i sound"
+    modeling_tts_text: "the i in sit"
   o_short:
     transcript_text: "/o/"
     approved_tts_text: "the short o sound"
+    modeling_tts_text: "the o in hot"
   u_short:
     transcript_text: "/u/"
     approved_tts_text: "the short u sound"
+    modeling_tts_text: "the u in sun"
   k:
     transcript_text: "/k/"
     approved_tts_text: "the k sound"

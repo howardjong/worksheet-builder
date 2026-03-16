@@ -15,7 +15,7 @@ profiles:
         stability: 0.68
         similarity_boost: 0.76
         style: 0.0
-        speed: 0.78
+        speed: 0.7
       phoneme_model:
         stability: 0.72
         similarity_boost: 0.78
@@ -30,17 +30,17 @@ profiles:
         stability: 0.65
         similarity_boost: 0.75
         style: 0.0
-        speed: 0.72
+        speed: 0.7
       passage_full:
         stability: 0.65
         similarity_boost: 0.75
         style: 0.0
-        speed: 0.72
+        speed: 0.7
       review:
         stability: 0.68
         similarity_boost: 0.76
         style: 0.0
-        speed: 0.78
+        speed: 0.7
   neutral_na_pilot:
     name: neutral_na_pilot
     voice_id: TODO_SET_NEUTRAL_NA_PILOT_VOICE_ID
@@ -56,7 +56,7 @@ profiles:
         stability: 0.68
         similarity_boost: 0.76
         style: 0.0
-        speed: 0.78
+        speed: 0.7
       phoneme_model:
         stability: 0.72
         similarity_boost: 0.78
@@ -71,14 +71,14 @@ profiles:
         stability: 0.65
         similarity_boost: 0.75
         style: 0.0
-        speed: 0.72
+        speed: 0.7
       passage_full:
         stability: 0.65
         similarity_boost: 0.75
         style: 0.0
-        speed: 0.72
+        speed: 0.7
       review:
         stability: 0.68
         similarity_boost: 0.76
         style: 0.0
-        speed: 0.78
+        speed: 0.7

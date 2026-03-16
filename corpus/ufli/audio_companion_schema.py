@@ -289,3 +289,83 @@ class AudioJudgeSummary(BaseModel):
     pilot_gate_failures: list[str] = Field(default_factory=list)
     required_manual_review_segments: list[str] = Field(default_factory=list)
     clip_results: list[AudioJudgeClipResult] = Field(default_factory=list)
+
+
+class AudioGenerationLogEntry(BaseModel):
+    """One generated clip with the exact TTS inputs and settings used."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    timestamp: str
+    voice_profile: str
+    model_id: str
+    lesson_id: str
+    segment_id: str
+    segment_type: AudioClipKind
+    audio_path: str
+    character_count: int
+    transcript_text: str
+    tts_text: str
+    pronunciation_targets: list[str] = Field(default_factory=list)
+    source_fields: list[ClipSourceField] = Field(default_factory=list)
+    audio_settings: AudioVoiceSettings
+
+
+ProbeAssessment = Literal[
+    "pipeline_input_problem",
+    "model_or_voice_limitation",
+    "mixed_or_inconclusive",
+    "current_pipeline_preferred",
+]
+
+
+class AudioProbeFinding(BaseModel):
+    """Root-cause interpretation for one probe segment."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_segment_id: str
+    probable_cause: ProbeAssessment
+    best_variant_id: str = ""
+    evidence: list[str] = Field(default_factory=list)
+    recommended_next_step: str = ""
+
+
+class AudioProbeVariant(BaseModel):
+    """One controlled diagnostic variant for a generated audio clip."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    source_segment_id: str
+    variant_id: str
+    lesson_id: str
+    lesson_number: int
+    segment_type: AudioClipKind
+    variant_family: str
+    hypothesis: str
+    voice_profile: str
+    model_id: str
+    transcript_text: str
+    tts_text: str
+    audio_settings: AudioVoiceSettings
+    audio_path: str = ""
+    generation_status: GenerationStatus = "planned"
+    judge_result: AudioJudgeClipResult | None = None
+
+
+class AudioProbeRunSummary(BaseModel):
+    """Summary artifact for one controlled audio probe run."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    generated_at: str
+    output_dir: str
+    data_dir: str
+    voice_profile: str
+    judge_model: str = ""
+    live: bool = False
+    judged: bool = False
+    segment_ids: list[str] = Field(default_factory=list)
+    variant_count: int = 0
+    findings: list[AudioProbeFinding] = Field(default_factory=list)
+    variants: list[AudioProbeVariant] = Field(default_factory=list)

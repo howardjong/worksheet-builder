@@ -24,6 +24,7 @@ import yaml
 from corpus.ufli.audio_companion_schema import (
     AudioClipDefinition,
     AudioClipKind,
+    AudioGenerationLogEntry,
     AudioVoiceSettings,
     BundleValidationIssue,
     BundleValidationReport,
@@ -162,6 +163,7 @@ class _ConceptTarget:
     phoneme_key: str
     phoneme_display: str
     phoneme_tts: str
+    phoneme_modeling_tts: str
 
 
 def build_audio_companion_manifests(
@@ -355,15 +357,21 @@ def generate_audio_companion(
             clip.status = "generated"
             generated += 1
             log_entries.append(
-                {
-                    "timestamp": datetime.now(tz=UTC).isoformat(),
-                    "voice_profile": selected_voice.name,
-                    "model_id": model_id,
-                    "lesson_id": clip.lesson_id,
-                    "segment_id": clip.segment_id,
-                    "audio_path": clip.audio_path,
-                    "character_count": len(clip.tts_text),
-                }
+                AudioGenerationLogEntry(
+                    timestamp=datetime.now(tz=UTC).isoformat(),
+                    voice_profile=selected_voice.name,
+                    model_id=model_id,
+                    lesson_id=clip.lesson_id,
+                    segment_id=clip.segment_id,
+                    segment_type=clip.segment_type,
+                    audio_path=clip.audio_path,
+                    character_count=len(clip.tts_text),
+                    transcript_text=clip.transcript_text,
+                    tts_text=clip.tts_text,
+                    pronunciation_targets=clip.pronunciation_targets,
+                    source_fields=clip.source_fields,
+                    audio_settings=_audio_settings(selected_voice, clip.segment_type),
+                )
             )
             time.sleep(_GENERATE_DELAY_SECONDS)
 
@@ -595,6 +603,10 @@ def _derive_lesson_bundle(
     clips: list[AudioClipDefinition] = []
     sequence_index = 0
 
+    instruction_transcript, instruction_tts = _lesson_instruction_text(
+        concept_targets,
+        word_targets,
+    )
     clips.append(
         _clip(
             lesson_id=lesson.lesson_id,
@@ -603,8 +615,8 @@ def _derive_lesson_bundle(
             segment_type="lesson_instruction",
             sequence_index=sequence_index,
             audio_file_name="lesson_instruction.mp3",
-            transcript_text=_lesson_instruction_text(concept_targets, word_targets),
-            tts_text=_lesson_instruction_text(concept_targets, word_targets),
+            transcript_text=instruction_transcript,
+            tts_text=instruction_tts,
             pronunciation_targets=_bundle_pronunciation_targets(concept_targets),
             source_fields=["concept", "slide_text", "home_practice_text"],
         )
@@ -661,7 +673,7 @@ def _derive_lesson_bundle(
                     sequence_index=sequence_index,
                     audio_file_name=f"passage_sentence_{sentence_index:02d}.mp3",
                     transcript_text=sentence,
-                    tts_text=sentence,
+                    tts_text=_pause_shaped_passage_tts(sentence),
                     pronunciation_targets=[],
                     source_fields=["decodable_text"],
                 )
@@ -671,18 +683,19 @@ def _derive_lesson_bundle(
             _clip(
                 lesson_id=lesson.lesson_id,
                 lesson_number=lesson_number,
-                segment_id=f"{lesson_key}_passage_full",
-                segment_type="passage_full",
-                sequence_index=sequence_index,
-                audio_file_name="passage_full.mp3",
-                transcript_text=passage_text,
-                tts_text=passage_text,
-                pronunciation_targets=[],
-                source_fields=["decodable_text"],
+                    segment_id=f"{lesson_key}_passage_full",
+                    segment_type="passage_full",
+                    sequence_index=sequence_index,
+                    audio_file_name="passage_full.mp3",
+                    transcript_text=passage_text,
+                    tts_text=_clause_pause_only_tts(passage_text),
+                    pronunciation_targets=[],
+                    source_fields=["decodable_text"],
+                )
             )
-        )
         sequence_index += 1
 
+    review_transcript, review_tts = _review_text(concept_targets, word_targets)
     clips.append(
         _clip(
             lesson_id=lesson.lesson_id,
@@ -691,8 +704,8 @@ def _derive_lesson_bundle(
             segment_type="review",
             sequence_index=sequence_index,
             audio_file_name="review.mp3",
-            transcript_text=_review_text(concept_targets, word_targets),
-            tts_text=_review_text(concept_targets, word_targets),
+            transcript_text=review_transcript,
+            tts_text=review_tts,
             pronunciation_targets=_bundle_pronunciation_targets(concept_targets),
             source_fields=["concept", "home_practice_text", "decodable_text", "additional_text"],
         )
@@ -927,6 +940,9 @@ def _extract_concept_targets(
                 phoneme_key=phoneme_key,
                 phoneme_display=phoneme_entry.transcript_text,
                 phoneme_tts=phoneme_entry.approved_tts_text,
+                phoneme_modeling_tts=(
+                    phoneme_entry.modeling_tts_text or phoneme_entry.approved_tts_text
+                ),
             )
         )
 
@@ -945,6 +961,9 @@ def _extract_concept_targets(
             phoneme_key=fallback_grapheme,
             phoneme_display=phoneme_entry.transcript_text,
             phoneme_tts=phoneme_entry.approved_tts_text,
+            phoneme_modeling_tts=(
+                phoneme_entry.modeling_tts_text or phoneme_entry.approved_tts_text
+            ),
         )
     ]
 
@@ -978,18 +997,53 @@ def _lookup_lexicon_entry(
 def _lesson_instruction_text(
     concept_targets: list[_ConceptTarget],
     word_targets: list[str],
-) -> str:
+) -> tuple[str, str]:
     focus = _concept_focus_text(concept_targets)
     if focus != "the target sound":
-        return f"Listen. Tap the sounds. Then read the word. Focus on {focus}."
-    return "Listen. Tap the sounds. Then read the word."
+        transcript = f"Listen. Tap the sounds. Then read the word. Focus on {focus}."
+        tts = _pause_joined_tts(
+            [
+                "Listen.",
+                "Tap the sounds.",
+                "Then read the word.",
+                f"Focus on {focus}.",
+            ]
+        )
+        return transcript, tts
+    transcript = "Listen. Tap the sounds. Then read the word."
+    tts = _pause_joined_tts(
+        [
+            "Listen.",
+            "Tap the sounds.",
+            "Then read the word.",
+        ]
+    )
+    return transcript, tts
 
 
-def _review_text(concept_targets: list[_ConceptTarget], word_targets: list[str]) -> str:
+def _review_text(
+    concept_targets: list[_ConceptTarget],
+    word_targets: list[str],
+) -> tuple[str, str]:
     focus = _concept_focus_text(concept_targets)
     if focus != "the target sound":
-        return f"Check each sound. Read the word slowly. Focus on {focus}."
-    return "Check each sound. Read the word slowly."
+        transcript = f"Check each sound. Read the word slowly. Focus on {focus}."
+        tts = _pause_joined_tts(
+            [
+                "Check each sound.",
+                "Read the word slowly.",
+                f"Focus on {focus}.",
+            ]
+        )
+        return transcript, tts
+    transcript = "Check each sound. Read the word slowly."
+    tts = _pause_joined_tts(
+        [
+            "Check each sound.",
+            "Read the word slowly.",
+        ]
+    )
+    return transcript, tts
 
 
 def _concept_focus_text(concept_targets: list[_ConceptTarget]) -> str:
@@ -1007,8 +1061,66 @@ def _concept_focus_text(concept_targets: list[_ConceptTarget]) -> str:
 def _phoneme_clip_text(target: _ConceptTarget, example_word: str) -> tuple[str, str]:
     example_text = f" As in {example_word}." if example_word else ""
     transcript = f"{target.grapheme_display}. {target.phoneme_display}.{example_text}"
-    tts = f"{target.grapheme_tts}. {target.phoneme_tts}.{example_text}"
+    tts_parts = [
+        f"{target.grapheme_tts}.",
+        f"{target.phoneme_modeling_tts}.",
+    ]
+    if example_word and example_word.casefold() not in target.phoneme_modeling_tts.casefold():
+        tts_parts.append(f"As in {example_word}.")
+    tts = _pause_joined_tts(tts_parts)
     return transcript.strip(), tts.strip()
+
+
+def _pause_joined_tts(parts: list[str], trailing_pause: bool = True) -> str:
+    normalized_parts: list[str] = []
+    for part in parts:
+        cleaned = _clean_text(part)
+        if not cleaned:
+            continue
+        if cleaned[-1] not in ".!?":
+            cleaned = f"{cleaned}."
+        normalized_parts.append(cleaned)
+    if not normalized_parts:
+        return ""
+    joined = " ... ".join(normalized_parts)
+    if trailing_pause and not joined.endswith("..."):
+        joined = f"{joined} ..."
+    return joined
+
+
+def _pause_shaped_passage_tts(text: str) -> str:
+    shaped = _clause_pause_only_tts(text)
+    if not shaped:
+        return ""
+    if "..." not in shaped and len(re.findall(r"[A-Za-z0-9']+", shaped)) >= 6:
+        shaped = _insert_mid_sentence_pause(shaped, pause_after_words=3)
+    return _clean_text(shaped)
+
+
+def _clause_pause_only_tts(text: str) -> str:
+    shaped = _clean_text(text)
+    if not shaped:
+        return ""
+    shaped = re.sub(r",\s+", ", ... ", shaped)
+    shaped = re.sub(r"([;:])\s+", r"\1 ... ", shaped)
+    shaped = re.sub(r'([.!?]["”\']?)\s+', r"\1 ... ", shaped)
+    if re.search(r'[.!?]["”\']?$', shaped) and not shaped.endswith("..."):
+        shaped = f"{shaped} ..."
+    return _clean_text(shaped)
+
+
+def _insert_mid_sentence_pause(text: str, pause_after_words: int) -> str:
+    match = re.match(
+        rf"^((?:\S+\s+){{{pause_after_words}}})(?P<rest>.+)$",
+        text,
+    )
+    if match is None:
+        return text
+    prefix = match.group(1).rstrip()
+    rest = match.group("rest").lstrip()
+    if rest.startswith("..."):
+        return text
+    return f"{prefix} ... {rest}"
 
 
 def _resolve_anchor_word(
@@ -1474,18 +1586,32 @@ def _stable_seed(text: str) -> int:
     return value
 
 
-def _read_generation_log(path: Path) -> list[dict[str, Any]]:
+def _read_generation_log(path: Path) -> list[AudioGenerationLogEntry]:
     if not path.exists():
         return []
     payload = json.loads(path.read_text())
     if isinstance(payload, list):
-        return [item for item in payload if isinstance(item, dict)]
+        entries: list[AudioGenerationLogEntry] = []
+        for item in payload:
+            if not isinstance(item, dict):
+                continue
+            try:
+                entries.append(AudioGenerationLogEntry.model_validate(item))
+            except Exception:
+                continue
+        return entries
     return []
 
 
-def _write_generation_log(path: Path, entries: list[dict[str, Any]]) -> None:
+def _write_generation_log(path: Path, entries: list[AudioGenerationLogEntry]) -> None:
     _ensure_parent(path)
-    path.write_text(json.dumps(entries, indent=2, sort_keys=True))
+    path.write_text(
+        json.dumps(
+            [entry.model_dump(mode="json") for entry in entries],
+            indent=2,
+            sort_keys=True,
+        )
+    )
 
 
 def _write_audio_manifest(path: Path, bundles: list[LessonAudioBundle]) -> None:

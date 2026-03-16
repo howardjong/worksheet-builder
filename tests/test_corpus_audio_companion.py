@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -36,6 +37,10 @@ def _write_companion_configs(base: Path) -> None:
         "pilot_lessons.yaml",
     ):
         (target_dir / name).write_text((source_dir / name).read_text())
+
+
+def _normalized_words(text: str) -> list[str]:
+    return [token.lower() for token in re.findall(r"[A-Za-z']+", text)]
 
 
 def _sample_rows() -> list[dict[str, object]]:
@@ -121,6 +126,14 @@ def test_build_audio_bundles_use_stage1_taxonomy_and_pilot_scope(tmp_path: Path)
     assert "Can Cam fit on the cot?" in lesson_14.passage_text
     assert "read these words" not in lesson_1.clips[0].transcript_text.casefold()
     assert "with these words" not in lesson_1.clips[-1].transcript_text.casefold()
+    assert "..." in lesson_1.clips[0].tts_text
+    first_passage_sentence = next(
+        clip for clip in lesson_14.clips if clip.segment_type == "passage_sentence"
+    )
+    assert "..." in first_passage_sentence.tts_text
+    assert _normalized_words(first_passage_sentence.tts_text) == _normalized_words(
+        first_passage_sentence.transcript_text
+    )
     assert {"passage_sentence", "passage_full"}.issubset(
         {clip.segment_type for clip in lesson_14.clips}
     )
@@ -167,8 +180,41 @@ def test_build_audio_applies_lexicon_overrides_for_phonemes_and_words(tmp_path: 
         for clip in bundle.clips
         if clip.segment_type == "word_model" and clip.transcript_text == "February"
     )
-    assert "short a sound" in phoneme_clip.tts_text
+    assert "the short a sound" in phoneme_clip.tts_text
     assert word_clip.tts_text == "Feb roo air ee"
+
+
+def test_build_audio_uses_pause_shaped_tts_without_changing_transcript(tmp_path: Path) -> None:
+    _write_companion_configs(tmp_path)
+    _write_normalized(tmp_path / "normalized.jsonl", _sample_rows())
+
+    bundle = build_audio_companion_manifests(
+        data_dir=str(tmp_path),
+        lesson_id="14",
+    )[0]
+
+    instruction = next(clip for clip in bundle.clips if clip.segment_type == "lesson_instruction")
+    review = next(clip for clip in bundle.clips if clip.segment_type == "review")
+    passage_sentence = next(
+        clip for clip in bundle.clips if clip.segment_type == "passage_sentence"
+    )
+    passage_full = next(clip for clip in bundle.clips if clip.segment_type == "passage_full")
+
+    assert "..." not in instruction.transcript_text
+    assert "..." in instruction.tts_text
+    assert "..." not in review.transcript_text
+    assert "..." in review.tts_text
+    assert passage_sentence.tts_text != passage_sentence.transcript_text
+    assert "..." in passage_sentence.tts_text
+    assert _normalized_words(passage_sentence.tts_text) == _normalized_words(
+        passage_sentence.transcript_text
+    )
+    assert "..." in passage_full.tts_text
+    assert _normalized_words(passage_full.tts_text) == _normalized_words(
+        passage_full.transcript_text
+    )
+    assert ". ... . ..." not in passage_full.tts_text
+    assert ", . ..." not in passage_full.tts_text
 
 
 def test_build_audio_uses_exact_anchor_for_oy(tmp_path: Path) -> None:
