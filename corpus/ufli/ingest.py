@@ -421,6 +421,67 @@ def judge_audio(
     )
 
 
+@cli.command(name="classify-audio-fallback")
+@click.option("--data-dir", default="data/ufli", help="Data directory.")
+@click.option(
+    "--lesson-set",
+    type=click.Choice(["pilot_micro", "pilot_rep", "all", "range"]),
+    default="pilot_micro",
+    show_default=True,
+    help="Lesson selection mode.",
+)
+@click.option("--lesson", "lesson_id", default=None, help="Specific numeric lesson to classify.")
+@click.option("--lesson-min", default=1, help="Minimum numeric lesson for --lesson-set range.")
+@click.option("--lesson-max", default=128, help="Maximum numeric lesson for --lesson-set range.")
+@click.option(
+    "--voice-profile",
+    default=None,
+    help="Restrict classification to one generated voice profile.",
+)
+@click.option(
+    "--output-dir",
+    default=None,
+    help="Optional output root. Defaults to data/ufli/companion/fallbacks.",
+)
+@click.option(
+    "--clip-limit",
+    default=None,
+    type=int,
+    help="Optional limit for a smaller smoke run.",
+)
+def classify_audio_fallback(
+    data_dir: str,
+    lesson_set: str,
+    lesson_id: str | None,
+    lesson_min: int,
+    lesson_max: int,
+    voice_profile: str | None,
+    output_dir: str | None,
+    clip_limit: int | None,
+) -> None:
+    """Classify generated clips into heuristic fallback-policy buckets."""
+    from corpus.ufli.audio_fallback_policy import classify_audio_fallback_policy
+
+    summary = classify_audio_fallback_policy(
+        data_dir=data_dir,
+        lesson_set=lesson_set,
+        lesson_id=lesson_id,
+        lesson_min=lesson_min,
+        lesson_max=lesson_max,
+        voice_profile=voice_profile,
+        output_dir=output_dir,
+        clip_limit=clip_limit,
+    )
+    click.echo(
+        "Audio fallback summary: "
+        f"clips={summary.clip_count} "
+        f"auto_accept={summary.bucket_counts.get('auto_accept', 0)} "
+        f"gemini_fallback_eligible={summary.bucket_counts.get('gemini_fallback_eligible', 0)} "
+        f"manual_review={summary.bucket_counts.get('needs_llm_or_manual_review', 0)} "
+        f"report_dir={summary.output_dir}"
+    )
+
+
 @cli.command(name="diagnose-audio")
 @click.option("--data-dir", default="data/ufli", help="Data directory.")
 @click.option(

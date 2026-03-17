@@ -27,6 +27,26 @@ GenerationStatus = Literal["planned", "generated", "skipped", "failed"]
 ReviewStatus = Literal["pending", "approved", "needs_revision"]
 JudgeRecommendation = Literal["use", "revise", "block"]
 PacingMeasurementSource = Literal["audio_file", "estimate_fallback"]
+FallbackDecisionBucket = Literal[
+    "auto_accept",
+    "gemini_fallback_eligible",
+    "needs_llm_or_manual_review",
+]
+FallbackPacingRisk = Literal[
+    "within_band",
+    "near_band",
+    "too_fast",
+    "too_slow",
+    "missing_measurement",
+]
+GoogleTtsFailureCategory = Literal[
+    "http_retryable",
+    "http_non_retryable",
+    "transport",
+    "auth",
+    "response",
+    "unknown",
+]
 
 
 class AudioVoiceSettings(BaseModel):
@@ -350,6 +370,69 @@ class AudioGenerationLogEntry(BaseModel):
     audio_settings: AudioVoiceSettings
 
 
+class GeminiFallbackPlan(BaseModel):
+    """Recommended Gemini TTS request shape for a fallback-eligible clip."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    provider: AudioSynthesisProvider = "google_cloud_tts"
+    model_name: str = "gemini-2.5-pro-tts"
+    voice_name: str = "Leda"
+    transcript_strategy: Literal["exact_transcript"] = "exact_transcript"
+    prompt_guidance: str
+    prompt_target_wpm: float = Field(ge=0.0)
+    prompt_wpm_min: float = Field(ge=0.0)
+    prompt_wpm_max: float = Field(ge=0.0)
+
+
+class AudioFallbackClipDecision(BaseModel):
+    """Deterministic fallback-policy classification for one generated clip."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    voice_profile: str
+    lesson_id: str
+    lesson_number: int
+    segment_id: str
+    segment_type: AudioClipKind
+    audio_path: str
+    transcript_word_count: int = Field(ge=1, default=1)
+    actual_duration_ms: int = Field(ge=0, default=0)
+    actual_wpm: float = Field(ge=0.0, default=0.0)
+    expected_wpm_target: float = Field(ge=0.0, default=0.0)
+    expected_wpm_min: float = Field(ge=0.0, default=0.0)
+    expected_wpm_max: float = Field(ge=0.0, default=0.0)
+    pacing_measurement_source: PacingMeasurementSource = "estimate_fallback"
+    pacing_risk: FallbackPacingRisk = "missing_measurement"
+    pace_delta_wpm: float = 0.0
+    bucket: FallbackDecisionBucket
+    known_risk_segment: bool = False
+    tts_differs_from_transcript: bool = False
+    text_risk_markers: list[str] = Field(default_factory=list)
+    reasons: list[str] = Field(default_factory=list)
+    gemini_fallback_plan: GeminiFallbackPlan | None = None
+
+
+class AudioFallbackPolicySummary(BaseModel):
+    """Aggregate output for one deterministic audio fallback-policy run."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    generated_at: str
+    policy_name: str
+    execution_mode: Literal["manual_opt_in"] = "manual_opt_in"
+    data_dir: str
+    output_dir: str
+    voice_profile: str
+    lesson_ids: list[str] = Field(default_factory=list)
+    clip_count: int = 0
+    bucket_counts: dict[str, int] = Field(default_factory=dict)
+    family_bucket_counts: dict[str, dict[str, int]] = Field(default_factory=dict)
+    gemini_fallback_segments: list[str] = Field(default_factory=list)
+    required_manual_review_segments: list[str] = Field(default_factory=list)
+    clip_results: list[AudioFallbackClipDecision] = Field(default_factory=list)
+
+
 ProbeAssessment = Literal[
     "pipeline_input_problem",
     "model_or_voice_limitation",
@@ -391,6 +474,11 @@ class AudioProbeVariant(BaseModel):
     input_format: AudioInputFormat = "text"
     audio_settings: AudioVoiceSettings | GoogleCloudTtsSettings
     audio_path: str = ""
+    attempt_count: int = Field(ge=0, default=0)
+    failure_status_code: int | None = Field(default=None, ge=100, le=599)
+    failure_category: GoogleTtsFailureCategory | None = None
+    failure_message: str = ""
+    retry_exhausted: bool = False
     generation_status: GenerationStatus = "planned"
     judge_result: AudioJudgeClipResult | None = None
 

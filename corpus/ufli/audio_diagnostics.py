@@ -2,19 +2,11 @@
 
 from __future__ import annotations
 
-import base64
-import json
 import os
 import re
-import time
-import urllib.error
-import urllib.request
 from collections import defaultdict
 from collections.abc import Iterable
 from pathlib import Path
-
-import google.auth
-from google.auth.transport.requests import Request as GoogleAuthRequest
 
 from corpus.ufli.audio_companion import (
     _BUNDLE_DIR,
@@ -49,6 +41,12 @@ from corpus.ufli.audio_companion_schema import (
 )
 from corpus.ufli.audio_judge import DEFAULT_JUDGE_MODEL, _judge_clip_with_gemini
 from corpus.ufli.extract import LessonContent
+from corpus.ufli.google_tts_client import (
+    GoogleTtsRequestContext,
+    GoogleTtsSynthesisError,
+    build_google_tts_request_context,
+    synthesize_google_tts_audio,
+)
 from rag.client import get_rag_client
 
 _DEFAULT_PROBE_SEGMENTS = (
@@ -158,6 +156,7 @@ def run_audio_probe_matrix(
 
     if live:
         api_key = ""
+        google_request_context: GoogleTtsRequestContext | None = None
         if provider_scope in {"elevenlabs", "both"}:
             api_key = _elevenlabs_api_key()
             if not api_key:
@@ -165,15 +164,33 @@ def run_audio_probe_matrix(
                     "ELEVENLABS_API_KEY is required for live "
                     "ElevenLabs probe generation"
                 )
+        if provider_scope in {"google", "both"}:
+            try:
+                google_request_context = build_google_tts_request_context()
+            except GoogleTtsSynthesisError as exc:
+                raise RuntimeError(str(exc)) from exc
         for variant in variants:
-            audio_bytes = _synthesize_probe_variant(
-                variant=variant,
-                voice_profile=selected_voice,
-                api_key=api_key,
-            )
+            try:
+                audio_bytes, attempt_count = _synthesize_probe_variant(
+                    variant=variant,
+                    voice_profile=selected_voice,
+                    api_key=api_key,
+                    google_request_context=google_request_context,
+                )
+            except GoogleTtsSynthesisError as exc:
+                if exc.failure_category == "auth":
+                    raise RuntimeError(str(exc)) from exc
+                variant.generation_status = "failed"
+                variant.attempt_count = exc.attempt_count
+                variant.failure_status_code = exc.status_code
+                variant.failure_category = exc.failure_category
+                variant.failure_message = str(exc)
+                variant.retry_exhausted = exc.retry_exhausted
+                continue
             target_path = run_dir / variant.audio_path
             _ensure_parent(target_path)
             target_path.write_bytes(audio_bytes)
+            variant.attempt_count = attempt_count
             variant.generation_status = "generated"
 
     if judge:
@@ -402,29 +419,38 @@ def _synthesize_probe_variant(
     variant: AudioProbeVariant,
     voice_profile: VoiceProfile,
     api_key: str,
-) -> bytes:
+    google_request_context: GoogleTtsRequestContext | None = None,
+) -> tuple[bytes, int]:
     if variant.provider == "google_cloud_tts":
         settings = variant.audio_settings
         if not isinstance(settings, GoogleCloudTtsSettings):
             raise TypeError("google_cloud_tts variants require GoogleCloudTtsSettings")
-        return _request_google_cloud_tts_audio(
+        if google_request_context is None:
+            raise RuntimeError("Google Cloud TTS context is required for live google probes")
+        result = synthesize_google_tts_audio(
             text=variant.provider_input or variant.tts_text,
             input_format=variant.input_format,
             settings=settings,
+            context=google_request_context,
+            request_label=variant.variant_id,
         )
+        return result.audio_bytes, result.attempt_count
 
     probe_profile = voice_profile.model_copy(deep=True)
     settings = variant.audio_settings
     if not isinstance(settings, AudioVoiceSettings):
         raise TypeError("elevenlabs variants require AudioVoiceSettings")
     probe_profile.clip_settings[variant.segment_type] = settings
-    return _request_elevenlabs_audio(
-        text=variant.provider_input or variant.tts_text,
-        audio_type=variant.segment_type,
-        voice_profile=probe_profile,
-        api_key=api_key,
-        seed=_probe_seed(variant.variant_id),
-        model_id=variant.model_id,
+    return (
+        _request_elevenlabs_audio(
+            text=variant.provider_input or variant.tts_text,
+            audio_type=variant.segment_type,
+            voice_profile=probe_profile,
+            api_key=api_key,
+            seed=_probe_seed(variant.variant_id),
+            model_id=variant.model_id,
+        ),
+        1,
     )
 
 
@@ -616,10 +642,19 @@ def _write_probe_report(path: Path, summary: AudioProbeRunSummary) -> None:
                 f" blocker={variant.judge_result.blocker}"
                 f" wpm={variant.judge_result.actual_wpm}"
             )
+        failure_bits = ""
+        if variant.generation_status == "failed":
+            failure_bits = (
+                f" attempts={variant.attempt_count}"
+                f" status_code={variant.failure_status_code}"
+                f" category=`{variant.failure_category}`"
+                f" retry_exhausted={variant.retry_exhausted}"
+                f" failure=`{variant.failure_message}`"
+            )
         lines.append(
             f"- `{variant.variant_id}` family=`{variant.variant_family}`"
             f" provider=`{variant.provider}` model=`{variant.model_id}`"
-            f" status=`{variant.generation_status}`{judge_bits}"
+            f" status=`{variant.generation_status}`{judge_bits}{failure_bits}"
         )
     path.write_text("\n".join(lines) + "\n")
 
@@ -689,77 +724,3 @@ def _google_markup_from_tts_text(
     joined = f" {pause_tag} ".join(part for part in parts if part)
     compact = re.sub(r"\s+", " ", joined).strip()
     return compact or text
-
-
-def _request_google_cloud_tts_audio(
-    text: str,
-    input_format: str,
-    settings: GoogleCloudTtsSettings,
-) -> bytes:
-    credentials, project_id = google.auth.default(
-        scopes=["https://www.googleapis.com/auth/cloud-platform"]
-    )
-    if not credentials.valid:
-        credentials.refresh(GoogleAuthRequest())  # type: ignore[no-untyped-call]
-    token = credentials.token
-    if not token:
-        raise RuntimeError("Google Cloud TTS auth failed: missing access token")
-
-    input_payload: dict[str, object] = (
-        {"markup": text} if input_format == "markup" else {"text": text}
-    )
-    if settings.style_prompt:
-        input_payload["prompt"] = settings.style_prompt
-    payload = {
-        "input": input_payload,
-        "voice": {
-            "languageCode": settings.language_code,
-            "name": settings.voice_name,
-            **({"modelName": settings.model_name} if settings.model_name else {}),
-        },
-        "audioConfig": {
-            "audioEncoding": settings.audio_encoding,
-            "speakingRate": settings.speaking_rate,
-            **(
-                {"sampleRateHertz": settings.sample_rate_hz}
-                if settings.sample_rate_hz > 0
-                else {}
-            ),
-            "volumeGainDb": settings.volume_gain_db,
-        },
-    }
-    request = urllib.request.Request(
-        f"{settings.api_endpoint}/v1/text:synthesize",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json",
-            **(
-                {"x-goog-user-project": project_id}
-                if project_id
-                else {}
-            ),
-        },
-        method="POST",
-    )
-    for attempt in range(3):
-        try:
-            with urllib.request.urlopen(request) as response:  # noqa: S310
-                response_payload = json.loads(response.read().decode("utf-8"))
-            break
-        except urllib.error.HTTPError as exc:  # pragma: no cover - exercised live only
-            body = exc.read().decode("utf-8", errors="ignore")
-            if exc.code >= 500 and attempt < 2:
-                time.sleep(2.0 * (attempt + 1))
-                continue
-            raise RuntimeError(f"Google Cloud TTS failed ({exc.code}): {body}") from exc
-        except urllib.error.URLError as exc:  # pragma: no cover - exercised live only
-            if attempt < 2:
-                time.sleep(2.0 * (attempt + 1))
-                continue
-            raise RuntimeError(f"Google Cloud TTS transport failed: {exc}") from exc
-
-    audio_content = response_payload.get("audioContent", "")
-    if not isinstance(audio_content, str) or not audio_content:
-        raise RuntimeError("Google Cloud TTS returned no audioContent")
-    return base64.b64decode(audio_content)

@@ -23,6 +23,7 @@ from corpus.ufli.audio_diagnostics import (
     _resolve_google_tts_region,
     run_audio_probe_matrix,
 )
+from corpus.ufli.google_tts_client import GoogleTtsRequestContext, GoogleTtsSynthesisError
 
 
 def _write_normalized(path: Path, rows: list[dict[str, object]]) -> None:
@@ -142,7 +143,7 @@ def test_run_audio_probe_matrix_writes_probe_artifacts(
 
     monkeypatch.setattr(
         "corpus.ufli.audio_diagnostics._synthesize_probe_variant",
-        lambda **_: b"mp3",
+        lambda **_: (b"mp3", 1),
     )
     monkeypatch.setattr("corpus.ufli.audio_diagnostics._elevenlabs_api_key", lambda: "test-key")
 
@@ -209,6 +210,109 @@ def test_run_audio_probe_matrix_writes_probe_artifacts(
     assert (output_dir / "probe_results.jsonl").exists()
     assert (output_dir / "probe_report.md").exists()
     assert any(variant.audio_path for variant in summary.variants)
+
+
+def test_run_audio_probe_matrix_soft_fails_google_variant_and_skips_judging_it(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_companion_configs(tmp_path)
+    _write_normalized(tmp_path / "normalized.jsonl", _sample_rows())
+    build_audio_companion_manifests(data_dir=str(tmp_path))
+
+    monkeypatch.setattr(
+        "corpus.ufli.audio_diagnostics.build_google_tts_request_context",
+        lambda: GoogleTtsRequestContext(access_token="token", project_id="project"),
+    )
+
+    def _fake_synthesize_probe_variant(**kwargs: object) -> tuple[bytes, int]:
+        variant = kwargs["variant"]
+        if getattr(variant, "variant_family") == "exact_transcript":
+            raise GoogleTtsSynthesisError(
+                "Google Cloud TTS failed (502): upstream unavailable",
+                status_code=502,
+                failure_category="http_retryable",
+                attempt_count=5,
+                retryable=True,
+                retry_exhausted=True,
+            )
+        return b"mp3", 2
+
+    judged_variants: list[str] = []
+
+    def _fake_judge_probe_variant(**kwargs: object) -> AudioJudgeClipResult:
+        variant = kwargs["variant"]
+        judged_variants.append(getattr(variant, "variant_id"))
+        return AudioJudgeClipResult(
+            voice_profile=getattr(variant, "voice_profile"),
+            lesson_id=getattr(variant, "lesson_id"),
+            lesson_number=getattr(variant, "lesson_number"),
+            segment_id=getattr(variant, "variant_id"),
+            segment_type=getattr(variant, "segment_type"),
+            audio_path=getattr(variant, "audio_path"),
+            transcript_word_count=max(len(getattr(variant, "transcript_text").split()), 1),
+            actual_duration_ms=1200,
+            actual_wpm=95.0,
+            expected_wpm_target=108.0,
+            expected_wpm_min=92.0,
+            expected_wpm_max=122.0,
+            pacing_measurement_source="audio_file",
+            heard_text=getattr(variant, "transcript_text"),
+            clarity_score=5,
+            pronunciation_accuracy_score=5,
+            instructional_match_score=5,
+            target_accuracy_score=5,
+            decoding_support_score=5,
+            passage_neutrality_score=5,
+            adhd_supportiveness_score=5,
+            pacing_suitability_score=5,
+            pacing_consistency_score=5,
+            blocker=False,
+            recommendation="use",
+            strengths=["controlled"],
+            concerns=[],
+            rationale="Controlled probe result.",
+        )
+
+    monkeypatch.setattr(
+        "corpus.ufli.audio_diagnostics._synthesize_probe_variant",
+        _fake_synthesize_probe_variant,
+    )
+    monkeypatch.setattr(
+        "corpus.ufli.audio_diagnostics._judge_probe_variant",
+        _fake_judge_probe_variant,
+    )
+    monkeypatch.setattr("corpus.ufli.audio_diagnostics.get_rag_client", lambda: object())
+
+    summary = run_audio_probe_matrix(
+        data_dir=str(tmp_path),
+        voice_profile="dorothy",
+        segment_ids=["lesson_014_passage_sentence_01"],
+        provider_scope="google",
+        live=True,
+        judge=True,
+    )
+
+    failed_variant = next(
+        variant for variant in summary.variants if variant.variant_family == "exact_transcript"
+    )
+    generated_variant = next(
+        variant for variant in summary.variants if variant.variant_family == "current_pipeline"
+    )
+    output_dir = Path(summary.output_dir)
+    report_text = (output_dir / "probe_report.md").read_text()
+
+    assert generated_variant.generation_status == "generated"
+    assert generated_variant.attempt_count == 2
+    assert failed_variant.generation_status == "failed"
+    assert failed_variant.attempt_count == 5
+    assert failed_variant.failure_status_code == 502
+    assert failed_variant.failure_category == "http_retryable"
+    assert failed_variant.retry_exhausted is True
+    assert failed_variant.judge_result is None
+    assert judged_variants == [generated_variant.variant_id]
+    assert "status=`failed`" in report_text
+    assert "status_code=502" in report_text
 
 
 def test_run_audio_probe_matrix_supports_google_only_dry_run(
