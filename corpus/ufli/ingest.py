@@ -507,6 +507,16 @@ def judge_audio(
     type=float,
     help="Optional Google Cloud TTS volume gain in dB.",
 )
+@click.option(
+    "--google-variant-scope",
+    type=click.Choice(["both", "current_pipeline", "exact_transcript"]),
+    default="both",
+    show_default=True,
+    help=(
+        "Optional Google diagnostics variant filter to isolate "
+        "current_pipeline vs exact_transcript."
+    ),
+)
 def diagnose_audio(
     data_dir: str,
     voice_profile: str | None,
@@ -523,6 +533,7 @@ def diagnose_audio(
     google_style_prompt: str,
     google_sample_rate_hz: int,
     google_volume_gain_db: float,
+    google_variant_scope: str,
 ) -> None:
     """Run controlled canary probes to separate input-shaping vs TTS-model issues."""
     from corpus.ufli.audio_diagnostics import run_audio_probe_matrix
@@ -543,6 +554,7 @@ def diagnose_audio(
         google_style_prompt=google_style_prompt,
         google_sample_rate_hz=google_sample_rate_hz,
         google_volume_gain_db=google_volume_gain_db,
+        google_variant_scope=google_variant_scope,
     )
     click.echo(
         "Audio probe summary: "

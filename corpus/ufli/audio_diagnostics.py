@@ -93,12 +93,15 @@ def run_audio_probe_matrix(
     google_style_prompt: str = "",
     google_sample_rate_hz: int = 0,
     google_volume_gain_db: float = 0.0,
+    google_variant_scope: str = "both",
 ) -> AudioProbeRunSummary:
     """Generate controlled variants to separate input-shaping issues from TTS limits."""
     if judge and not live:
         raise RuntimeError("Audio probes must be live-generated before they can be judged")
     if provider_scope not in {"elevenlabs", "google", "both"}:
         raise ValueError(f"Unknown provider_scope: {provider_scope}")
+    if google_variant_scope not in {"both", "current_pipeline", "exact_transcript"}:
+        raise ValueError(f"Unknown google_variant_scope: {google_variant_scope}")
 
     base = Path(data_dir)
     companion_dir = base / "companion"
@@ -149,6 +152,7 @@ def run_audio_probe_matrix(
                 lexicon=lexicon,
                 provider_scope=provider_scope,
                 google_settings=google_settings,
+                google_variant_scope=google_variant_scope,
             )
         )
 
@@ -233,6 +237,7 @@ def _build_probe_variants(
     lexicon: PronunciationLexicon,
     provider_scope: str,
     google_settings: GoogleCloudTtsSettings | None,
+    google_variant_scope: str,
 ) -> list[AudioProbeVariant]:
     variants: list[AudioProbeVariant] = []
 
@@ -334,22 +339,23 @@ def _build_probe_variants(
             if google_settings.model_name
             else google_settings.voice_name
         )
-        add_variant(
-            "current_pipeline",
-            f"Current pipeline text translated into Google markup for {google_label}.",
-            clip.tts_text,
-            google_settings.voice_name,
-            google_clip_settings,
-            provider="google_cloud_tts",
-            provider_input=controlled_text,
-            input_format=google_input_format,
-        )
+        if google_variant_scope in {"both", "current_pipeline"}:
+            add_variant(
+                "current_pipeline",
+                f"Current pipeline text translated into Google markup for {google_label}.",
+                clip.tts_text,
+                google_settings.voice_name,
+                google_clip_settings,
+                provider="google_cloud_tts",
+                provider_input=controlled_text,
+                input_format=google_input_format,
+            )
         if clip.segment_type in {
             "lesson_instruction",
             "review",
             "passage_sentence",
             "passage_full",
-        }:
+        } and google_variant_scope in {"both", "exact_transcript"}:
             add_variant(
                 "exact_transcript",
                 f"Exact transcript on {google_label} without provider-specific pause markup.",

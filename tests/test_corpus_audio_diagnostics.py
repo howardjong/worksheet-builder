@@ -238,6 +238,30 @@ def test_run_audio_probe_matrix_supports_google_only_dry_run(
     assert current_variant.audio_settings.voice_name == "en-US-Chirp3-HD-Leda"
 
 
+def test_run_audio_probe_matrix_can_filter_google_exact_transcript_only(
+    tmp_path: Path,
+) -> None:
+    _write_companion_configs(tmp_path)
+    _write_normalized(tmp_path / "normalized.jsonl", _sample_rows())
+    build_audio_companion_manifests(data_dir=str(tmp_path))
+
+    summary = run_audio_probe_matrix(
+        data_dir=str(tmp_path),
+        voice_profile="dorothy",
+        segment_ids=["lesson_014_passage_sentence_01"],
+        provider_scope="google",
+        google_variant_scope="exact_transcript",
+        live=False,
+        judge=False,
+    )
+
+    assert summary.variant_count == 1
+    only_variant = summary.variants[0]
+    assert only_variant.provider == "google_cloud_tts"
+    assert only_variant.variant_family == "exact_transcript"
+    assert only_variant.provider_input == only_variant.transcript_text
+
+
 def test_google_markup_translation_preserves_words() -> None:
     markup = _google_markup_from_tts_text(
         '"This kitten is cute," ... said Boyd. ... The toy is in the box.',
