@@ -44,6 +44,15 @@ ADHD_SPACING: dict[str, float] = {
     "word_space": 1.5,          # extra word spacing (pts)
 }
 
+LAYOUT_SPACING: dict[str, float] = {
+    "section_gap": 8.0,
+    "item_gap": 10.0,
+    "box_gap": 12.0,
+    "divider_gap": 14.0,
+}
+
+PAGE_BREAK_BUFFER = 20
+
 _fonts_registered = False
 
 
@@ -80,12 +89,35 @@ def render_worksheet(
     if avatar_image:
         _draw_avatar(c, avatar_image, theme)
 
+    def start_new_page() -> None:
+        nonlocal y, page_num
+
+        _draw_footer(c, theme, adapted)
+        c.showPage()
+        page_num += 1
+        y = CONTENT_TOP
+        _apply_adhd_spacing(c, "body")
+        _draw_decorations(c, theme, adapted.theme_id)
+        if avatar_image:
+            _draw_avatar(c, avatar_image, theme)
+
     # Render each chunk
     use_scenes = (
         asset_manifest is not None
         and theme.avatar_position == "integrated"
     )
     for chunk_idx, chunk in enumerate(adapted.chunks):
+        required_height = _estimate_chunk_height(
+            chunk,
+            theme,
+            sizes,
+            asset_manifest=asset_manifest,
+            chunk_idx=chunk_idx,
+            use_scene=use_scenes,
+        )
+        if y - required_height < CONTENT_BOTTOM + PAGE_BREAK_BUFFER:
+            start_new_page()
+
         if use_scenes and asset_manifest is not None:
             y = _draw_chunk_with_scene(
                 c, chunk, adapted, theme, sizes, colors, y,
@@ -97,23 +129,18 @@ def render_worksheet(
                 asset_manifest=asset_manifest,
             )
 
-        # Check if we need a new page
-        if y < CONTENT_BOTTOM + 100:
-            _draw_footer(c, theme, adapted)
-            c.showPage()
-            page_num += 1
-            y = CONTENT_TOP
-            # Draw decorations on new pages too
-            _draw_decorations(c, theme, adapted.theme_id)
-            if avatar_image:
-                _draw_avatar(c, avatar_image, theme)
-
     # Brain break prompt (if multi-worksheet)
     if adapted.break_prompt:
+        required_height = _estimate_break_prompt_height(sizes)
+        if y - required_height < CONTENT_BOTTOM + PAGE_BREAK_BUFFER:
+            start_new_page()
         y = _draw_break_prompt(c, adapted.break_prompt, theme, sizes, y)
 
     # Self-assessment at the bottom
     if adapted.self_assessment:
+        required_height = _estimate_self_assessment_height(adapted.self_assessment, sizes)
+        if y - required_height < CONTENT_BOTTOM + PAGE_BREAK_BUFFER:
+            start_new_page()
         y = _draw_self_assessment(c, adapted.self_assessment, theme, sizes, y)
 
     # Footer with theme name
@@ -170,6 +197,133 @@ def _apply_adhd_spacing(c: Canvas, mode: str = "body") -> None:
 def _line_spacing(font_size: int) -> float:
     """Compute ADHD-optimized line spacing for a given font size."""
     return font_size * ADHD_SPACING["line_height_factor"]
+
+
+def _estimate_chunk_height(
+    chunk: ActivityChunk,
+    theme: ThemeConfig,
+    sizes: dict[str, int],
+    *,
+    asset_manifest: AssetManifest | None,
+    chunk_idx: int,
+    use_scene: bool,
+) -> float:
+    """Estimate how much vertical space a chunk needs before drawing it."""
+    col_width = CONTENT_WIDTH
+    scene_height = 0.0
+
+    if use_scene and asset_manifest is not None:
+        scene_path = asset_manifest.scene_paths.get(chunk.chunk_id)
+        if scene_path and Path(scene_path).exists():
+            scene_height = 128.0
+            gap = 10.0
+            scene_width = CONTENT_WIDTH * 0.32
+            col_width = CONTENT_WIDTH - scene_width - gap
+
+    body = sizes["body"]
+    small = sizes["small"]
+    height = _line_spacing(body)
+
+    if chunk.time_estimate:
+        height += _line_spacing(small)
+
+    height += len(chunk.instructions) * _line_spacing(body)
+    height += LAYOUT_SPACING["section_gap"]
+
+    if chunk.worked_example:
+        ex_max = max(1, int(col_width / (body * 0.5)))
+        ex_lines = len(_wrap_text(chunk.worked_example.content, ex_max))
+        content_height = sizes["small"] + 12 + ex_lines * (body + 6) + 8
+        shaded_box_height = body * 2 + 24
+        height += max(content_height, shaded_box_height)
+        height += LAYOUT_SPACING["box_gap"]
+
+    left = MARGIN
+    right = MARGIN + col_width
+    for item in chunk.items:
+        height += _estimate_item_height(item, theme, sizes, left, right, col_width)
+
+    height += LAYOUT_SPACING["divider_gap"] + 12
+    return max(height, scene_height)
+
+
+def _estimate_item_height(
+    item: ActivityItem,
+    theme: ThemeConfig,
+    sizes: dict[str, int],
+    left: float,
+    right: float,
+    col_width: float,
+) -> float:
+    """Estimate the vertical footprint for a single item renderer."""
+    body = sizes["body"]
+    max_chars = max(1, int(col_width / (body * 0.5)))
+
+    if item.metadata.get("display") == "chain":
+        line_count = len(_wrap_text(f"  {item.item_id}. {item.content}", max_chars))
+        return line_count * (body + 6) + body + 10 + LAYOUT_SPACING["item_gap"]
+
+    if item.response_format == "match":
+        return 76
+
+    if item.response_format == "trace":
+        trace_size = sizes["heading"] + 6
+        return trace_size + 22
+
+    if item.response_format == "circle" and item.options:
+        rows = _estimate_option_rows(item.options, sizes, left, right)
+        return body + 10 + max(rows - 1, 0) * (body + 16) + body + 16
+
+    if item.response_format == "fill_blank":
+        line_count = len(_wrap_text(f"{item.item_id}. {item.content}", max_chars))
+        height = line_count * (body + 6) + 6
+        if item.options:
+            height += body + 22
+        return height
+
+    if item.response_format == "read_aloud":
+        read_aloud_chars = max(1, int((col_width - 40) / (body * 0.5)))
+        line_count = len(_wrap_text(item.content, read_aloud_chars))
+        return line_count * (body + 6) + 32
+
+    line_count = len(_wrap_text(f"  {item.item_id}. {item.content}", max_chars))
+    height = line_count * (body + 6) + 4
+    if item.response_format in {"write", "circle"}:
+        height += body + 8
+    return height
+
+
+def _estimate_option_rows(
+    options: list[str],
+    sizes: dict[str, int],
+    left: float,
+    right: float,
+) -> int:
+    """Estimate how many visual rows a bubble-option item will occupy."""
+    body = sizes["body"]
+    x = left + 25
+    rows = 1
+
+    for word in options:
+        word_width = len(word) * body * 0.55 + 24
+        x += word_width + 8
+        if x > right - 30:
+            rows += 1
+            x = left + 25 + word_width + 8
+
+    return rows
+
+
+def _estimate_break_prompt_height(sizes: dict[str, int]) -> float:
+    """Estimate the movement-break box height."""
+    body = sizes["body"]
+    return body * 2 + 36
+
+
+def _estimate_self_assessment_height(items: list[str], sizes: dict[str, int]) -> float:
+    """Estimate the self-assessment block height."""
+    body = sizes["body"]
+    return len(items) * (body + 6) + body + 20
 
 
 def _draw_header(
@@ -267,11 +421,11 @@ def _draw_chunk(
         c.drawString(left + 10, y - sizes["body"], text)
         y -= _line_spacing(sizes["body"])
 
-    y -= 4
+    y -= LAYOUT_SPACING["section_gap"]
 
     # Worked example (shaded box)
     if chunk.worked_example:
-        box_height = sizes["body"] * 2 + 16
+        box_height = sizes["body"] * 2 + 24
         c.setFillColor(HexColor("#F0FDF4"))
         c.rect(
             left + 5, y - box_height,
@@ -282,8 +436,8 @@ def _draw_chunk(
         c.setFillColor(HexColor(theme_colors.examples))
         c.setFont(theme.fonts.primary, sizes["small"])
         ex_text = chunk.worked_example.instruction
-        c.drawString(left + 15, y - sizes["small"] - 4, ex_text)
-        y -= sizes["small"] + 8
+        c.drawString(left + 15, y - sizes["small"] - 6, ex_text)
+        y -= sizes["small"] + 12
 
         c.setFont(theme.fonts.primary, sizes["body"])
         ex_content = chunk.worked_example.content
@@ -291,8 +445,8 @@ def _draw_chunk(
         ex_max = int(col_width / (sizes["body"] * 0.5))
         for ln in _wrap_text(ex_content, ex_max):
             c.drawString(left + 15, y - sizes["body"] - 4, ln)
-            y -= sizes["body"] + 4
-        y -= 4
+            y -= sizes["body"] + 6
+        y -= LAYOUT_SPACING["box_gap"]
 
     # Activity items
     c.setFillColor(HexColor(theme_colors.text))
@@ -307,12 +461,12 @@ def _draw_chunk(
             chain_text = label + item.content
             for ln in _wrap_text(chain_text, max_chars):
                 c.drawString(left + 10, y - sizes["body"], ln)
-                y -= sizes["body"] + 4
+                y -= sizes["body"] + 6
             c.drawString(
                 left + 30, y - sizes["body"],
                 "Write: ____________________",
             )
-            y -= sizes["body"] + 6
+            y -= sizes["body"] + 10
         elif item.response_format == "match":
             y = _draw_match_item(
                 c, item, theme, sizes, y,
@@ -338,29 +492,28 @@ def _draw_chunk(
 
             for ln in lines:
                 c.drawString(left + 10, y - sizes["body"], ln)
-                y -= sizes["body"] + 4
+                y -= sizes["body"] + 6
 
             if item.response_format == "write":
                 c.drawString(
                     left + 30, y - sizes["body"],
                     "____________________",
                 )
-                y -= sizes["body"] + 4
+                y -= sizes["body"] + 8
             elif item.response_format == "circle":
                 c.drawString(
                     left + 30, y - sizes["body"], "(circle one)",
                 )
-                y -= sizes["body"] + 4
+                y -= sizes["body"] + 8
 
-            y += 4
-            y -= 6
+            y -= LAYOUT_SPACING["item_gap"]
 
     # Chunk divider
-    y -= 8
+    y -= LAYOUT_SPACING["divider_gap"]
     c.setStrokeColor(HexColor(theme_colors.chunk_border))
     c.setLineWidth(0.5)
     c.line(left + 20, y, right - 20, y)
-    y -= 12
+    y -= LAYOUT_SPACING["divider_gap"]
 
     return y
 
@@ -404,7 +557,7 @@ def _draw_match_item(
     lx = left if left is not None else MARGIN
     rx = right if right is not None else (PAGE_WIDTH - MARGIN)
     col_width = rx - lx
-    pic_size = 50  # square picture tile
+    pic_size = 56  # square picture tile
 
     # Word label on the left (large, bold)
     c.setFont(theme.fonts.heading, body + 4)
@@ -452,7 +605,7 @@ def _draw_match_item(
     )
     c.setDash()
 
-    y -= pic_size + 12
+    y -= pic_size + 18
     c.setFont(theme.fonts.primary, body)
     return y
 
@@ -479,7 +632,7 @@ def _draw_trace_item(
     line_width = len(item.content) * trace_size * 0.6
     c.line(lx + 20, line_y, lx + 20 + max(line_width, 100), line_y)
 
-    y -= trace_size + 14
+    y -= trace_size + 20
     c.setFont(theme.fonts.primary, sizes["body"])
     return y
 
@@ -502,7 +655,7 @@ def _draw_circle_item(
     c.setFont(theme.fonts.primary, body)
     c.setFillColor(HexColor(theme.colors.text))
     c.drawString(lx + 10, y - body, f"  {item.item_id}. {item.content}")
-    y -= body + 8
+    y -= body + 10
 
     # Draw word bubbles in a row
     if item.options:
@@ -524,9 +677,9 @@ def _draw_circle_item(
             x += word_width + 8
             if x > rx - 30:
                 x = lx + 25
-                y -= body + 14
+                y -= body + 16
 
-        y -= body + 12
+        y -= body + 16
 
     return y
 
@@ -552,8 +705,8 @@ def _draw_fill_blank_item(
     item_text = f"{item.item_id}. {item.content}"
     for ln in _wrap_text(item_text, max_ch):
         c.drawString(lx + 15, y - body - 2, ln)
-        y -= body + 4
-    y -= 4
+        y -= body + 6
+    y -= 6
 
     # Word bank (options) in a shaded box
     if item.options:
@@ -569,7 +722,7 @@ def _draw_fill_blank_item(
         c.setFont(theme.fonts.primary, sizes["small"])
         bank_text = "Word bank: " + "   ".join(item.options)
         c.drawString(bx + 10, y - body - 2, bank_text)
-        y -= bank_height + 6
+        y -= bank_height + 10
 
     c.setFont(theme.fonts.primary, body)
     return y
@@ -591,9 +744,7 @@ def _draw_read_aloud_item(
     max_chars = int((cw - 40) / (body * 0.5))
     lines = _wrap_text(item.content, max_chars)
 
-    box_height = len(lines) * (body + 4) + 20
-    if y - box_height < CONTENT_BOTTOM:
-        box_height = y - CONTENT_BOTTOM - 10
+    box_height = len(lines) * (body + 6) + 24
 
     # Light blue reading box
     rx, rw = lx + 10, cw - 20
@@ -613,9 +764,9 @@ def _draw_read_aloud_item(
         if inner_y < y - box_height + 8:
             break
         c.drawString(lx + 20, inner_y - body, line)
-        inner_y -= body + 4
+        inner_y -= body + 6
 
-    y -= box_height + 8
+    y -= box_height + 12
     return y
 
 

@@ -934,8 +934,6 @@ Note: index step requires GOOGLE_CLOUD_PROJECT=ws-builder-rag env var.
 - `corpus/ufli/audio_companion_schema.py`
 - `corpus/ufli/ingest.py`
 
-<<<<<<< ours
-
 ### Session 30 — 2026-03-16 (UFLI Child MVP Audio Remediation Report Consolidation)
 **Participants:** User + Codex (GPT-5.2-Codex)
 **What happened:**
@@ -975,8 +973,8 @@ Note: index step requires GOOGLE_CLOUD_PROJECT=ws-builder-rag env var.
 3. Reduce pacing in `data/ufli/companion/voice_profiles.yaml` for high-risk clip families.
 4. Tighten pronunciation anchor handling (`pronunciation_lexicon.yaml`, target-selection helpers).
 5. Regenerate pilot clips and rerun `judge-audio` for lessons `1`, `14`, and `95`.
-=======
-### Session 30 — 2026-03-16 (CI workflow dependency fix)
+
+### Session 31 — 2026-03-16 (CI workflow dependency fix)
 **Participants:** User + Codex (GPT-5)
 **What happened:**
 - Investigated likely CI failure path and confirmed OpenCV imports require system GL runtime.
@@ -986,4 +984,52 @@ Note: index step requires GOOGLE_CLOUD_PROJECT=ws-builder-rag env var.
 **What’s next:**
 - Re-run CI on GitHub to confirm the missing shared-library failure is resolved.
 - If CI still fails, share the exact failing job log so we can address the next blocker directly.
->>>>>>> theirs
+
+### Session 32 — 2026-03-17 (Lesson 74 Roblox Worksheets + PDF Pagination/Spacing Fix)
+**Participants:** User + Codex (GPT-5)
+**What happened:**
+- Produced ADHD-adapted, Roblox-themed lesson 74 worksheet outputs for:
+  - `data/ufli/raw/74/decodable_passage_pdf.pdf`
+  - `data/ufli/raw/74/home_practice_pdf.pdf`
+- Rendered source PDFs to page PNGs for inspection, but the image-first transform path was unreliable on the decodable source because Gemini vision returned no regions and OCR produced an empty/unknown extraction.
+- Switched to a curated lesson-content path using strict `LiteracySkillModel` inputs built from the already-extracted UFLI lesson text so the output preserved the intended lesson 74 targets:
+  - decodable passage skill: `decodable_text_y_as_long_e`
+  - home practice skill: `y_as_long_e`
+- Regenerated final outputs under:
+  - `output/pdf/ufli_lesson74_roblox/decodable_passage_curated/`
+  - `output/pdf/ufli_lesson74_roblox/home_practice_curated/`
+- Confirmed the worksheet asset generation path uses `gemini-3.1-flash-image-preview` in `render/asset_gen.py`. The final `*_with_images.pdf` outputs now embed generated Roblox companion scene art, and the lesson-74 regeneration summary lives at:
+  - `output/pdf/ufli_lesson74_roblox/regeneration_summary.json`
+- Fixed a real pagination defect in `render/pdf.py`:
+  - the renderer previously decided to paginate after drawing a chunk, so content could run off the bottom of the page
+  - the fix now estimates chunk height up front and starts a new page before overflow
+  - related lesson-74 outputs were rerendered after the fix
+- Improved worksheet visual separation in `render/pdf.py`:
+  - increased section spacing after instructions and examples
+  - increased per-item spacing in match/trace/circle/fill-blank/read-aloud layouts
+  - widened chunk divider spacing
+  - kept chunk-height estimation in sync so the extra spacing does not reintroduce clipping
+- Added render regression coverage in `tests/test_render.py` to ensure integrated-scene layouts move the next chunk onto a fresh page before bottom clipping.
+
+**Validation run:**
+- `.venv/bin/ruff check render/pdf.py tests/test_render.py` → clean
+- `.venv/bin/mypy render/pdf.py tests/test_render.py` → clean
+- `.venv/bin/pytest -q tests/test_render.py` → `21 passed`
+
+**Current output status:**
+- Final PDFs to open:
+  - `output/pdf/ufli_lesson74_roblox/decodable_passage_curated/decodable_passage_curated_1of2_with_images.pdf`
+  - `output/pdf/ufli_lesson74_roblox/decodable_passage_curated/decodable_passage_curated_2of2_with_images.pdf`
+  - `output/pdf/ufli_lesson74_roblox/home_practice_curated/home_practice_curated_1of3_with_images.pdf`
+  - `output/pdf/ufli_lesson74_roblox/home_practice_curated/home_practice_curated_2of3_with_images.pdf`
+  - `output/pdf/ufli_lesson74_roblox/home_practice_curated/home_practice_curated_3of3_with_images.pdf`
+- Matching preview PNGs were regenerated in the same directories.
+- Page splitting is now explicit where needed (for example, the home-practice `Word Discovery` worksheet now cleanly pushes `Trace 4 words` to page 2 instead of clipping it at the bottom of page 1).
+
+**Gotchas/notes for next session:**
+- The original image-first transform path for lesson 74 decodable input (`transform.py` on the rendered page PNG) is still brittle because Gemini vision can return zero regions for some source pages and OCR may not recover enough structure; the curated skill-model path produced the usable outputs for this session.
+- Some home-practice picture matches were regenerated from the lesson-specific asset pipeline, but if the user wants even richer word-specific picture coverage for every match tile, the next pass should focus specifically on `plan_word_pictures()` / `generate_worksheet_assets()` outputs for those worksheets rather than on pagination/layout.
+
+**What’s next:**
+- If the user wants more polish, continue tuning `render/pdf.py` spacing with side-by-side preview review against the lesson-74 regenerated PNGs.
+- If the user wants richer match-tile imagery, explicitly inspect the lesson-74 home-practice asset cache directories from `regeneration_summary.json` and regenerate or backfill any missing word pictures.

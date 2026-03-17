@@ -5,6 +5,8 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
+import fitz
+
 from adapt.engine import adapt_activity, adapt_lesson
 from companion.schema import Accommodations, LearnerProfile
 from render.pdf import (
@@ -17,6 +19,7 @@ from render.pdf import (
 )
 from skill.schema import LiteracySkillModel, SourceItem
 from theme.engine import load_theme
+from theme.schema import AssetManifest
 from validate.print_checks import validate_print_quality
 
 
@@ -218,6 +221,67 @@ def _ufli_59_skill() -> LiteracySkillModel:
     )
 
 
+def _lesson74_home_skill() -> LiteracySkillModel:
+    return LiteracySkillModel(
+        grade_level="1",
+        domain="phonics",
+        specific_skill="y_as_long_e",
+        learning_objectives=[
+            "Read and spell words where final y says long e.",
+            "Build new words by changing sounds in a word chain.",
+            "Read connected sentences with the target pattern.",
+        ],
+        target_words=[
+            "sunny",
+            "funny",
+            "bunny",
+            "buddy",
+            "happy",
+            "hoppy",
+            "poppy",
+            "puppy",
+            "muddy",
+            "penny",
+            "lady",
+            "tiny",
+            "forty",
+            "teddy",
+            "baby",
+        ],
+        response_types=["match", "trace", "circle", "fill_blank", "write", "read_aloud"],
+        source_items=[
+            SourceItem(
+                item_type="word_list",
+                content="sunny muddy penny puppy lady tiny",
+                source_region_index=0,
+            ),
+            SourceItem(
+                item_type="word_chain",
+                content="sunny -> funny -> bunny -> buddy",
+                source_region_index=1,
+            ),
+            SourceItem(
+                item_type="word_chain",
+                content="happy -> hoppy -> poppy -> puppy",
+                source_region_index=2,
+            ),
+            SourceItem(item_type="sight_words", content="forty", source_region_index=3),
+            SourceItem(
+                item_type="sentence",
+                content="The woman is not forty.",
+                source_region_index=4,
+            ),
+            SourceItem(
+                item_type="sentence",
+                content="I will bring a teddy for the baby.",
+                source_region_index=5,
+            ),
+        ],
+        extraction_confidence=0.99,
+        template_type="ufli_word_work",
+    )
+
+
 class TestMultiWorksheetRender:
     def test_render_match_items(self) -> None:
         """Word-picture matching items should render without error."""
@@ -321,4 +385,33 @@ class TestMultiWorksheetRender:
             pdf_path = f.name
         render_worksheet(adapted, theme, pdf_path)
         assert Path(pdf_path).stat().st_size > 0
+        Path(pdf_path).unlink()
+
+    def test_chunk_starts_on_new_page_before_bottom_clip(self) -> None:
+        """Integrated-scene layouts should move the next chunk to a new page before clipping."""
+        worksheets = adapt_lesson(_lesson74_home_skill(), _profile(), theme_id="roblox_obby")
+        discovery = [ws for ws in worksheets if ws.worksheet_title == "Word Discovery"]
+        assert len(discovery) == 1
+
+        theme = load_theme("roblox_obby")
+        scene_path = str(Path("assets/characters/rainbow_roblox.png"))
+        manifest = AssetManifest(
+            scene_paths={1: scene_path, 2: scene_path, 3: scene_path},
+            word_picture_paths={},
+            cache_dir="assets/characters",
+        )
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            pdf_path = f.name
+
+        render_worksheet(discovery[0], theme, pdf_path, asset_manifest=manifest)
+
+        doc = fitz.open(pdf_path)
+        assert doc.page_count >= 2
+        first_page = doc.load_page(0).get_text()
+        second_page = doc.load_page(1).get_text()
+        doc.close()
+
+        assert "Trace 4 words" not in first_page
+        assert "Trace 4 words" in second_page
         Path(pdf_path).unlink()
