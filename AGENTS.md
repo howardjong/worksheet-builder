@@ -8,7 +8,7 @@ This file provides guidance to Codex when working with code in this repository.
 
 **Repository:** `https://github.com/howardjong/worksheet-builder.git`
 
-**Full implementation plan:** `worksheet-builder-consolidated-plan.md`
+**Full implementation plan:** `plans/worksheet-builder-consolidated-plan.md`
 
 **Running context doc:** `.claude/worksheet-project-context.md` — READ THIS FIRST for current state, decisions, and handoff notes.
 

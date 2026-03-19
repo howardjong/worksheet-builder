@@ -20,6 +20,8 @@ from typing import Any
 from PIL import Image
 
 from companion.catalog import CATALOG
+from companion.schema import CharacterStyleSheet
+from theme.schema import CharacterSpec
 
 logger = logging.getLogger(__name__)
 
@@ -36,8 +38,8 @@ _JUDGE_MODEL_OPENAI = "gpt-5.4"
 
 MAX_JUDGE_RETRIES = 5
 
-# Base character description for consistency prompting
-_CHARACTER_DESC = (
+# Fallback character description — used only when no style sheet is available
+_FALLBACK_CHARACTER_DESC = (
     "a cute blocky Roblox-style character with rainbow-colored spiky hair "
     "(red, orange, yellow, green, blue, purple), a simple smiling face with "
     "dot eyes and a curved mouth, a peach/skin-colored square head and hands, "
@@ -60,13 +62,27 @@ _ITEM_DESCRIPTIONS: dict[str, str] = {
 }
 
 
-def _build_variant_prompt(equipped_items: dict[str, str]) -> str:
+def _build_variant_prompt(
+    equipped_items: dict[str, str],
+    style_sheet: CharacterStyleSheet | None = None,
+) -> str:
     """Build a prompt to regenerate the character with equipped items."""
+    char_desc = (
+        style_sheet.character_block
+        if style_sheet and style_sheet.character_block
+        else _FALLBACK_CHARACTER_DESC
+    )
+
+    # Item style context from style sheet
+    style_context = ""
+    if style_sheet and style_sheet.item_style_notes:
+        style_context = f" {style_sheet.item_style_notes}"
+
     if not equipped_items:
         return (
-            f"Generate an image of {_CHARACTER_DESC} "
+            f"Generate an image of {char_desc} "
             f"White background. Cartoon style, clean lines, bright colors. "
-            f"Full body, centered, same pose as the reference image."
+            f"Full body, centered, same pose as the reference image.{style_context}"
         )
 
     item_changes: list[str] = []
@@ -78,17 +94,18 @@ def _build_variant_prompt(equipped_items: dict[str, str]) -> str:
     changes_text = ", and ".join(item_changes)
 
     return (
-        f"Generate an image of exactly this same Roblox character from the reference image, "
+        f"Generate an image of exactly this same character from the reference image, "
         f"but {changes_text}. "
-        f"Keep the character's rainbow spiky hair, square blocky body shape, simple smiling "
-        f"face, T-pose, and cartoon Roblox style exactly the same as the reference. "
-        f"Only change the specific items mentioned. "
+        f"Keep the character's body shape, face, pose, and art style exactly the same "
+        f"as the reference. Only change the specific items mentioned. "
         f"White background. Full body, centered. Same proportions and art style."
+        f"{style_context}"
     )
 
 
 def _generate_single_variant(
     equipped_items: dict[str, str],
+    style_sheet: CharacterStyleSheet | None = None,
 ) -> bytes | None:
     """Generate a single character variant image, returning raw PNG bytes."""
     api_key = os.environ.get("GEMINI_API_KEY", "")
@@ -105,7 +122,7 @@ def _generate_single_variant(
         with open(_BASE_PATH, "rb") as f:
             ref_bytes = f.read()
 
-        prompt = _build_variant_prompt(equipped_items)
+        prompt = _build_variant_prompt(equipped_items, style_sheet)
 
         contents = [
             types.Part(text=prompt),
@@ -134,35 +151,57 @@ def _generate_single_variant(
         return None
 
 
-def _build_judge_prompt(equipped_items: dict[str, str]) -> str:
-    """Build the prompt for the AI judge."""
+def _build_judge_prompt(
+    equipped_items: dict[str, str],
+    character_spec: CharacterSpec | None = None,
+) -> str:
+    """Build the prompt for the AI judge, including theme fidelity criteria."""
     item_changes: list[str] = []
     for slot, item_id in equipped_items.items():
         desc = _ITEM_DESCRIPTIONS.get(item_id, item_id)
         item_changes.append(desc)
     changes_text = ", and ".join(item_changes) if item_changes else "no changes"
 
+    base_criteria = (
+        "- CHARACTER CONSISTENCY: Does it look like the same character? Same hair, "
+        "body shape, face, and overall appearance?\n"
+        "- ITEM ACCURACY: Are the requested items visible and correctly placed?\n"
+        "- ART STYLE: Does it match the style of the reference?\n"
+        "- IMAGE QUALITY: Clean lines, no artifacts, no distortion, no screen effects?\n"
+        "- BACKGROUND: Is the background clean white (no patterns, gradients, or noise)?\n"
+    )
+
+    # Add theme fidelity criteria if a character spec is provided
+    theme_criteria = ""
+    if character_spec and character_spec.judge_criteria:
+        checks = "\n".join(f"  - {c}" for c in character_spec.judge_criteria)
+        theme_criteria = (
+            f"- THEME FIDELITY: Does the character look like it belongs in the "
+            f"{character_spec.art_style or 'theme'} universe?\n"
+            f"  Specific checks:\n{checks}\n"
+        )
+
     return (
         "You are a quality judge for character-consistent image generation. "
         "You are given two images:\n"
         "1. The REFERENCE image (original character)\n"
         "2. The GENERATED image (character with modifications)\n\n"
-        f"The generated image should show the same Roblox character but {changes_text}.\n\n"
-        "Judge the generated image on these criteria:\n"
-        "- CHARACTER CONSISTENCY: Does it look like the same character? Same rainbow hair, "
-        "blocky Roblox body, square head, simple face, T-pose?\n"
-        "- ITEM ACCURACY: Are the requested items visible and correctly placed?\n"
-        "- ART STYLE: Does it match the cartoon Roblox style of the reference?\n"
-        "- IMAGE QUALITY: Clean lines, no artifacts, no distortion, no screen effects?\n"
-        "- BACKGROUND: Is the background clean white (no patterns, gradients, or noise)?\n\n"
+        f"The generated image should show the same character but {changes_text}.\n\n"
+        f"Judge the generated image on these criteria:\n"
+        f"{base_criteria}"
+        f"{theme_criteria}\n"
         "Respond with ONLY JSON (no markdown fences):\n"
         '{"passed": true/false, "score": 1-10, "issues": ["issue1", "issue2"]}\n'
-        "Score 7+ means acceptable. Be strict about character consistency and clean output."
+        "Score 7+ means acceptable. Be strict about character consistency, "
+        "theme fidelity, and clean output."
     )
 
 
 def _judge_with_gemini(
-    ref_bytes: bytes, generated_bytes: bytes, equipped_items: dict[str, str]
+    ref_bytes: bytes,
+    generated_bytes: bytes,
+    equipped_items: dict[str, str],
+    character_spec: CharacterSpec | None = None,
 ) -> dict[str, Any] | None:
     """Judge using Gemini 3.1 Flash Lite."""
     api_key = os.environ.get("GEMINI_API_KEY", "")
@@ -174,7 +213,7 @@ def _judge_with_gemini(
         from google.genai import types
 
         client = genai.Client(api_key=api_key)
-        prompt = _build_judge_prompt(equipped_items)
+        prompt = _build_judge_prompt(equipped_items, character_spec)
 
         contents = [
             types.Part(text=prompt),
@@ -202,7 +241,10 @@ def _judge_with_gemini(
 
 
 def _judge_with_openai(
-    ref_bytes: bytes, generated_bytes: bytes, equipped_items: dict[str, str]
+    ref_bytes: bytes,
+    generated_bytes: bytes,
+    equipped_items: dict[str, str],
+    character_spec: CharacterSpec | None = None,
 ) -> dict[str, Any] | None:
     """Judge using OpenAI GPT-5.4 as fallback."""
     import base64
@@ -215,7 +257,7 @@ def _judge_with_openai(
         import openai
 
         client = openai.OpenAI(api_key=api_key)
-        prompt = _build_judge_prompt(equipped_items)
+        prompt = _build_judge_prompt(equipped_items, character_spec)
 
         ref_b64 = base64.b64encode(ref_bytes).decode("utf-8")
         gen_b64 = base64.b64encode(generated_bytes).decode("utf-8")
@@ -256,19 +298,26 @@ def _judge_with_openai(
 
 
 def _judge_variant(
-    ref_bytes: bytes, generated_bytes: bytes, equipped_items: dict[str, str]
+    ref_bytes: bytes,
+    generated_bytes: bytes,
+    equipped_items: dict[str, str],
+    character_spec: CharacterSpec | None = None,
 ) -> dict[str, Any]:
     """Judge a generated variant, trying Gemini first, then OpenAI.
 
     Returns a dict with "passed", "score", and "issues" keys.
     Falls back to auto-pass if both judges fail.
     """
-    result = _judge_with_gemini(ref_bytes, generated_bytes, equipped_items)
+    result = _judge_with_gemini(
+        ref_bytes, generated_bytes, equipped_items, character_spec,
+    )
     if result and "passed" in result:
         logger.info(f"  Judge (Gemini): score={result.get('score')}, passed={result['passed']}")
         return result
 
-    result = _judge_with_openai(ref_bytes, generated_bytes, equipped_items)
+    result = _judge_with_openai(
+        ref_bytes, generated_bytes, equipped_items, character_spec,
+    )
     if result and "passed" in result:
         logger.info(f"  Judge (OpenAI): score={result.get('score')}, passed={result['passed']}")
         return result
@@ -299,11 +348,14 @@ def _extract_json(text: str) -> str:
 def generate_variant(
     equipped_items: dict[str, str],
     output_path: Path,
+    style_sheet: CharacterStyleSheet | None = None,
+    character_spec: CharacterSpec | None = None,
 ) -> Path | None:
     """Generate a character variant with AI judge validation loop.
 
     Generates the character image, then runs an AI judge to check consistency
-    and quality. Retries up to MAX_JUDGE_RETRIES times if the judge rejects it.
+    and quality (including theme fidelity when character_spec is provided).
+    Retries up to MAX_JUDGE_RETRIES times if the judge rejects it.
 
     Returns the output path on success, None on failure.
     """
@@ -319,13 +371,15 @@ def generate_variant(
     for attempt in range(1, MAX_JUDGE_RETRIES + 1):
         logger.info(f"Generating character variant (attempt {attempt}/{MAX_JUDGE_RETRIES})...")
 
-        generated_bytes = _generate_single_variant(equipped_items)
+        generated_bytes = _generate_single_variant(equipped_items, style_sheet)
         if generated_bytes is None:
             logger.error(f"  Generation failed on attempt {attempt}")
             continue
 
-        # Judge the result
-        verdict = _judge_variant(ref_bytes, generated_bytes, equipped_items)
+        # Judge the result (with theme fidelity criteria if spec available)
+        verdict = _judge_variant(
+            ref_bytes, generated_bytes, equipped_items, character_spec,
+        )
         score = int(verdict.get("score", 0))
 
         # Track best result so far

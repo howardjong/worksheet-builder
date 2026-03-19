@@ -106,6 +106,10 @@ def _extract_word_work(source: SourceWorksheetModel) -> LiteracySkillModel:
             if m:
                 lesson_number = int(m.group(1))
 
+    # Fallback: infer lesson number from concept text via corpus
+    if lesson_number is None and concept_text:
+        lesson_number = _infer_lesson_from_concept(concept_text)
+
     # Determine specific phonics skill from concept label
     specific_skill = "phonics_pattern"
     if concept_text:
@@ -133,7 +137,7 @@ def _extract_word_work(source: SourceWorksheetModel) -> LiteracySkillModel:
     # Confidence: average of region confidences, weighted down if concept label missing
     extraction_confidence = _compute_confidence(confidences, has_concept=bool(concept_text))
 
-    return LiteracySkillModel(
+    model = LiteracySkillModel(
         grade_level=grade_level,
         domain="phonics",
         specific_skill=specific_skill,
@@ -143,7 +147,14 @@ def _extract_word_work(source: SourceWorksheetModel) -> LiteracySkillModel:
         source_items=source_items,
         extraction_confidence=extraction_confidence,
         template_type=source.template_type,
+        lesson_number=lesson_number,
     )
+
+    # Enrich from corpus (decodable passage, Roll and Read word list)
+    if lesson_number is not None:
+        model = _enrich_from_corpus(model, lesson_number)
+
+    return model
 
 
 def _extract_decodable_story(source: SourceWorksheetModel) -> LiteracySkillModel:
@@ -222,6 +233,7 @@ def _extract_decodable_story(source: SourceWorksheetModel) -> LiteracySkillModel
         source_items=source_items,
         extraction_confidence=extraction_confidence,
         template_type=source.template_type,
+        lesson_number=lesson_number,
     )
 
 
@@ -286,6 +298,135 @@ def _extract_generic(source: SourceWorksheetModel) -> LiteracySkillModel:
         extraction_confidence=extraction_confidence,
         template_type=source.template_type,
     )
+
+
+# --- Corpus enrichment ---
+
+
+_CONCEPT_CACHE: dict[str, int] | None = None
+
+
+def _infer_lesson_from_concept(concept_text: str) -> int | None:
+    """Try to match a concept label to a lesson number via the corpus."""
+    global _CONCEPT_CACHE
+
+    if _CONCEPT_CACHE is None:
+        _CONCEPT_CACHE = _build_concept_cache()
+
+    normalized = concept_text.strip().lower()
+    # Try exact match first, then simplified
+    result = _CONCEPT_CACHE.get(normalized)
+    if result is not None:
+        return result
+    simplified = _simplify_concept(normalized)
+    return _CONCEPT_CACHE.get(simplified)
+
+
+def _build_concept_cache() -> dict[str, int]:
+    """Build a mapping from normalized concept text to lesson number.
+
+    Indexes both the raw concept string and a simplified form
+    (IPA symbols replaced with descriptive text) so OCR-produced
+    concept labels like "y as long i" match corpus "y /ī/".
+    """
+    from corpus.ufli.lookup import lookup_lesson
+
+    cache: dict[str, int] = {}
+    for lesson_num in range(1, 129):
+        result = lookup_lesson(lesson_num)
+        if result and result.concept:
+            raw = result.concept.strip().lower()
+            cache[raw] = lesson_num
+            # Also index a simplified version
+            simplified = _simplify_concept(raw)
+            if simplified != raw:
+                cache[simplified] = lesson_num
+    return cache
+
+
+# IPA → descriptive text for concept matching
+_IPA_MAP = {
+    "/ī/": "long i", "/ē/": "long e", "/ā/": "long a",
+    "/ō/": "long o", "/ū/": "long u",
+    "/ă/": "short a", "/ĕ/": "short e", "/ĭ/": "short i",
+    "/ŏ/": "short o", "/ŭ/": "short u",
+    "/j/": "j sound", "/k/": "k sound", "/s/": "s sound",
+    "/z/": "z sound",
+}
+
+
+def _simplify_concept(text: str) -> str:
+    """Replace IPA notation with descriptive text for fuzzy matching."""
+    result = text
+    for ipa, desc in _IPA_MAP.items():
+        result = result.replace(ipa, desc)
+    # Also handle "as long X" pattern from OCR → "long X"
+    result = re.sub(r"\bas\s+(long|short)\s+", r"\1 ", result)
+    return result.strip()
+
+
+_COPYRIGHT_RE = re.compile(r"©\s*\d{4}.*?Institute\s*", re.IGNORECASE)
+_LESSON_HEADER_RE = re.compile(r"Lesson\s+\d+.*?\n", re.IGNORECASE)
+_ILLUSTRATE_RE = re.compile(r"Illustrate the story here:?\s*", re.IGNORECASE)
+
+
+def _enrich_from_corpus(
+    model: LiteracySkillModel, lesson_number: int
+) -> LiteracySkillModel:
+    """Enrich a skill model with corpus data (decodable passage, Roll and Read)."""
+    from corpus.ufli.lookup import lookup_lesson
+
+    result = lookup_lesson(lesson_number)
+    if result is None:
+        return model
+
+    new_items = list(model.source_items)
+    has_passage = any(si.item_type == "passage" for si in model.source_items)
+
+    # Inject decodable passage if model has none
+    if not has_passage and result.decodable_text.strip():
+        cleaned = _clean_corpus_passage(result.decodable_text)
+        if cleaned:
+            new_items.append(
+                SourceItem(
+                    item_type="passage",
+                    content=cleaned,
+                    source_region_index=-1,
+                    metadata={"source": "corpus"},
+                )
+            )
+
+    # Inject Roll and Read word list
+    if result.additional_text.strip():
+        new_items.append(
+            SourceItem(
+                item_type="roll_and_read",
+                content=result.additional_text.strip(),
+                source_region_index=-1,
+                metadata={"source": "corpus"},
+            )
+        )
+
+    if len(new_items) == len(model.source_items):
+        return model  # nothing added
+
+    return model.model_copy(update={"source_items": new_items})
+
+
+def _clean_corpus_passage(text: str) -> str:
+    """Strip corpus boilerplate from a decodable passage, keeping title + narrative."""
+    cleaned = text.strip()
+    cleaned = _COPYRIGHT_RE.sub("", cleaned)
+    cleaned = _LESSON_HEADER_RE.sub("", cleaned)
+    cleaned = _ILLUSTRATE_RE.sub("", cleaned)
+    # Collapse excessive whitespace
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    cleaned = cleaned.strip()
+    # Trim to ~200 words for worksheet display
+    words = cleaned.split()
+    if len(words) > 200:
+        cleaned = " ".join(words[:200]) + "..."
+    return cleaned
 
 
 # --- Helpers ---

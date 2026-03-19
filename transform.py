@@ -436,10 +436,21 @@ def _run_multi_worksheet_pipeline(
 
         asset_manifest = None
         try:
-            scenes = plan_scenes(adapted)
+            # Pass theme character spec for theme-aware scene prompts
+            char_spec = theme.character_spec if theme.character_spec.art_style else None
+            scenes = plan_scenes(adapted, character_spec=char_spec)
             word_prompts = plan_word_pictures(adapted)
             ws_hash = compute_worksheet_hash(adapted.source_hash, i, theme_id)
-            asset_manifest = generate_worksheet_assets(scenes, word_prompts, ws_hash)
+
+            # Pass style sheet for theme-accurate character rendering
+            style_sheet = None
+            if profile.avatar and profile.avatar.style_sheet:
+                style_sheet = profile.avatar.style_sheet
+
+            asset_manifest = generate_worksheet_assets(
+                scenes, word_prompts, ws_hash,
+                style_sheet=style_sheet, character_spec=char_spec,
+            )
         except Exception as exc:
             logger.warning("  Asset generation skipped: %s", exc)
 

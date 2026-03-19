@@ -297,7 +297,15 @@ class TestMultiWorksheetRender:
 
     def test_render_trace_items(self) -> None:
         """Trace items (dotted letters) should render without error."""
-        worksheets = adapt_lesson(_ufli_59_skill(), _profile())
+        # Use a profile that explicitly allows trace format
+        profile = LearnerProfile(
+            name="Test",
+            grade_level="1",
+            accommodations=Accommodations(
+                response_format_prefs=["write", "trace", "circle"],
+            ),
+        )
+        worksheets = adapt_lesson(_ufli_59_skill(), profile)
         discovery = [ws for ws in worksheets if ws.worksheet_title == "Word Discovery"]
         assert len(discovery) == 1
         # Verify trace items exist
@@ -409,9 +417,14 @@ class TestMultiWorksheetRender:
         doc = fitz.open(pdf_path)
         assert doc.page_count >= 2
         first_page = doc.load_page(0).get_text()
-        second_page = doc.load_page(1).get_text()
+        # Trace chunk should appear on a subsequent page (not necessarily page 2
+        # since a phonemic awareness warm-up may also precede it)
+        later_pages_text = "".join(
+            doc.load_page(p).get_text() for p in range(1, doc.page_count)
+        )
         doc.close()
 
-        assert "Trace 4 words" not in first_page
-        assert "Trace 4 words" in second_page
+        # Default profile has no "trace" in prefs, so discovery uses "write"
+        assert "Write 4 words" not in first_page
+        assert "Write 4 words" in later_pages_text
         Path(pdf_path).unlink()

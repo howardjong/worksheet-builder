@@ -106,7 +106,13 @@ def test_format_mix_rotation_from_rag() -> None:
     discovery = [ws for ws in worksheets if ws.worksheet_title == "Word Discovery"][0]
 
     chunk_formats = [chunk.response_format for chunk in discovery.chunks]
-    assert chunk_formats[:2] == ["trace", "match"]
+    # Warmup (sound_box) may be prepended for grades K-1
+    non_warmup = [f for f in chunk_formats if f != "sound_box"]
+    # Profile prefs are [write, circle, match] — no "trace", so trace is
+    # substituted with "write".  Default becomes [match, write, circle].
+    # Prior formats {match, trace, circle} ≠ new default {match, write, circle},
+    # so rotation does not trigger — order stays as default.
+    assert non_warmup[:2] == ["match", "write"]
 
 
 def test_curriculum_prioritizes_supported_target_words() -> None:
@@ -138,7 +144,9 @@ def test_curriculum_prioritizes_supported_target_words() -> None:
     ]
 
     assert match_words[:3] == ["grade", "slide", "quite"]
-    assert discovery.chunks[0].items[0].metadata["curriculum_supported"] is True
+    # Find the match chunk (skip optional warmup chunk)
+    match_chunk = next(ch for ch in discovery.chunks if ch.response_format == "match")
+    assert match_chunk.items[0].metadata["curriculum_supported"] is True
 
 
 def test_curriculum_requires_multiple_matches_before_reordering() -> None:

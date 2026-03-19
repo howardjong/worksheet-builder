@@ -10,8 +10,148 @@
 
 **Status:** Core product milestones remain complete. Gemini Embedding 2 RAG Phase 7 is implemented and the curriculum-aware adaptation follow-up is now wired through `adapt/engine.py`. UFLI corpus pipeline is fully executed: crawl complete (148 lessons), acquire complete (539 files), extract complete (148 normalized), index complete (148 curriculum records in `vector_store/`). UFLI multimodal corpus audit is now implemented too: `corpus/ufli/ingest.py` has a new offline `audit` subcommand, `corpus/ufli/audit.py` + `corpus/ufli/audit_schema.py` produce timestamped Markdown/JSON/CSV reports, optional companion manifests (`data/ufli/companion/images.jsonl`, `data/ufli/companion/audio.jsonl`) are audited without requiring companion indexes, and missing companion retrieval sections are marked `skipped`. UFLI audio companion Stage 0 and Stage 1 are now implemented in a pilot-first shape: `corpus/ufli/audio_companion.py` + `corpus/ufli/audio_companion_schema.py` now build voice-neutral lesson bundles, enforce numeric lessons `1-128`, enforce Stage 1 live generation/indexing to pilot lessons `1`, `14`, and `95`, load committed companion configs from `data/ufli/companion/pronunciation_lexicon.yaml`, `voice_profiles.yaml`, and `pilot_lessons.yaml`, use the refined clip taxonomy (`lesson_instruction`, `phoneme_model`, `word_model`, `passage_sentence`, `passage_full`, `review`), keep `encouragement` out of indexed lesson clips, support `dorothy` and `neutral_na_pilot` voice profiles, default offline generation to dry-run, and emit timestamped review packets under `data/ufli/companion/pilots/<timestamp>/`. Pilot-remediation hardening is now implemented in the source/build path too: `corpus/ufli/audio_companion_schema.py` now defines `BundleValidationIssue`/`BundleValidationReport` plus explicit pronunciation anchor fields, validates ElevenLabs voice settings against provider limits (including `speed` between `0.7` and `1.2`), `corpus/ufli/audio_companion.py` now sanitizes `word_targets` from student-facing lists only, denies teacher-metadata targets, rewrites instruction/review prompts to decoding-first process prompts, resolves phoneme exemplars from exact lexicon anchors instead of loose first-match fallbacks, applies pause-shaped `tts_text` separately from clean `transcript_text` for instruction/review/passage clips, wires lexicon `modeling_tts_text` into phoneme modeling, persists a typed `generation_log.json`, and validates bundles both during `build-audio` and in the new `validate-audio` CLI before any TTS generation. `data/ufli/companion/pronunciation_lexicon.yaml` now carries exact anchor words for `a`, `c`, `oi`, and `oy`; the short-`a` modeling override has been updated from `the a in cat` to `the short a sound`, which the canary and the later full rerun both showed is materially better for Dorothy. `corpus/ufli/audio_companion.py` also now uses a safer `clause_pause_only` path for `passage_full` clips, no longer recursively rewrites its own inserted ellipses, uses safer review wording for the hard `/k/` case (`Focus on c in cat.` instead of relying on raw phoneme notation in review text), and adds a true mid-sentence pause to long passage-sentence clips when punctuation alone is not enough. A narrower follow-up landed on 2026-03-16 to make this pause shaping more generalizable without broad retuning: `_clause_pause_only_tts()` now uses a temporary pause marker so comma and quote handling no longer duplicates its own inserted ellipses, and quoted dialogue such as `“This kitten is cute,” said Boyd.` now becomes `“This kitten is cute,” ... said Boyd. ...` instead of splitting the clause mid-phrase. This looks like a safe source-side fix rather than pilot-only tuning because it corrects malformed TTS input generation for ordinary commas and quote-adjacent clause breaks. These changes matter beyond the pilot because they live at the source-build stage and reduce bad generation inputs before TTS cost is incurred, but the exact passage pacing heuristics are still partly pilot/provider-tuned and should not yet be treated as globally validated defaults. `data/ufli/companion/voice_profiles.yaml` still slows Dorothy’s `lesson_instruction`, `review`, `phoneme_model`, `passage_sentence`, and `passage_full` clip families to the lowest practical provider-supported settings, with `phoneme_model.speed` corrected to the slowest valid ElevenLabs value (`0.7`) after a live provider rejection at `0.58`. `corpus/ufli/ingest.py` now exposes pilot-aware `build-audio`, `validate-audio`, `generate-audio`, `index-audio`, `judge-audio`, and `diagnose-audio` flags for lesson-set selection, voice-profile selection, dry-run estimation, review-packet generation, Stage-1-only clip indexing, transcript/script LLM judging, and controlled canary probes. `corpus/ufli/audio_judge.py` now runs a `gemini-3-flash-preview` judge over generated clips and writes timestamped `judge_summary.json`, `judge_results.csv`, and `judge_report.md` artifacts under `data/ufli/companion/evals/<timestamp>/`. The judge is no longer transcript-only: it now reads the actual generated audio file, asks Gemini for a best-effort heard transcript, scores audio clarity from the real clip, measures actual clip duration from the MP3/WAV, computes actual WPM, scores pacing suitability/consistency against conservative child-directed clip-family bands, and now also scores model-based acoustic pronunciation accuracy for the actual spoken phoneme/grapheme/word targets. It also now reports family-level pacing summaries, explicit pilot gate failures, required manual-review segments, and relaxes WPM false positives for single-word `word_model` clips and one-word `passage_sentence` interjections without widening the fast-clip guardrails for instructional families. Those pace bands are an inference, not a hard clinical standard: they were set conservatively below the `150 WPM` TTS rate reported in older-student reading-difficulty studies and informed by synthetic-speech intelligibility literature showing slower rate and simpler prosody can improve intelligibility, plus child-listener findings that synthetic speech is less intelligible than live speech and benefits from context. The earlier full live Dorothy judge run on 2026-03-16 wrote `data/ufli/companion/evals/20260316_121249`: `57` clips judged across lessons `1`, `14`, and `95`, with `47 use`, `3 revise`, `7 block`, and `9` blocker-marked clips. After the audio-based clarity/pacing update, a live three-clip sample run at `data/ufli/companion/evals/20260316_122938` confirmed that the judge could now catch timing problems from the actual Dorothy MP3 files: `lesson_001_phoneme_01_a` was clear but too fast for a phoneme-model clip (`100.6 WPM` vs target band `35-75 WPM`), while `lesson_001_word_cat` remained clear and appropriately paced (`71.9 WPM`). After the acoustic-pronunciation upgrade, the new full live rerun at `data/ufli/companion/evals/20260316_124158` became much stricter: `57` clips judged, `10 use`, `40 revise`, `7 block`, and `31` blocker-marked clips. The first remediation rerun was `data/ufli/companion/evals/20260316_145837`, generated from fresh Dorothy audio rebuilt with `build-audio` + `validate-audio` clean and a review packet at `data/ufli/companion/pilots/20260316_144854`: `53` clips judged, `23 use`, `30 revise`, `0 block`, `12 blocker-marked clips`, and `pilot_ready=False`. The second remediation rerun at `data/ufli/companion/evals/20260316_152838`, generated from fresh Dorothy audio rebuilt with the first pause-shaped TTS pass and a review packet at `data/ufli/companion/pilots/20260316_151233`, reached `53` clips judged, `30 use`, `21 revise`, `2 block`, `8 blocker-marked clips`, and `pilot_ready=False`. The first full rerun after the short-`a` source change but before the punctuation-recursion bug fix was `data/ufli/companion/evals/20260316_160656`: blockers improved slightly from `8` to `7`, but the intended `passage_full` improvement did not show up because the malformed pause script still reached generation, and the run remained `pilot_ready=False`. A controlled root-cause probe harness is now implemented in `corpus/ufli/audio_diagnostics.py` and exercised through `python -m corpus.ufli.ingest diagnose-audio`. The first full canary run at `data/ufli/companion/diagnostics/20260316_154844` showed the remaining issues were mixed rather than purely provider-caused: `lesson_001_phoneme_01_a` was a pipeline-input problem, `lesson_095_passage_full` was a pipeline-input problem, `lesson_014_review` was unstable, and `lesson_014_passage_sentence_03` still failed across all tested text/model variants, which remains the strongest current evidence of a real Dorothy/ElevenLabs limitation under the exact-text constraint. After the short-`a` and passage-full source fixes landed, a follow-up canary at `data/ufli/companion/diagnostics/20260316_161215` (see `probe_report_corrected.md`) showed that `lesson_001_phoneme_01_a` is now clean on both ElevenLabs models (`use` at `61.8 WPM` on `eleven_multilingual_v2`, `use` at `50.6 WPM` on `eleven_flash_v2_5`), and `lesson_095_passage_full` is now clean on Dorothy’s preferred `eleven_multilingual_v2` path (`use` at `124.7 WPM` with no added fillers). After the review-wording and sentence-pause source fixes landed, a narrower canary at `data/ufli/companion/diagnostics/20260316_174257` showed that `lesson_014_review` is now fixed on both ElevenLabs models (`use` at `97.1 WPM` on `eleven_multilingual_v2`, `use` at `78.8 WPM` on `eleven_flash_v2_5`), while `lesson_014_passage_sentence_03` improved substantially (`178.6` -> `135.1 WPM`) but still remained outside the target band, which further strengthens the view that the remaining passage-sentence issue is largely a Dorothy/ElevenLabs limitation rather than a bad pipeline input. The latest full official rerun is now `data/ufli/companion/evals/20260316_175300`, generated from fresh Dorothy audio with the review-wording and sentence-pause fixes plus a review packet at `data/ufli/companion/pilots/20260316_174419`: `53` clips judged, `35 use`, `18 revise`, `0 block`, `0 blocker-marked clips`, and `pilot_ready=False`. This is the first run with zero blocker-marked clips. It also confirms that the remaining failures are almost entirely pacing-band misses rather than instructional-content defects: `review` family blockers dropped from `1` to `0`, `passage_sentence` blockers dropped from `5` to `0`, `passage_full` blockers dropped from `1` to `0`, but the pilot gate still fails because too many required instructional passage clips remain `revise`, and `passage_sentence`/`passage_full` family medians are still below the pilot-ready threshold. A focused live follow-up canary after the punctuation cleanup now lives at `data/ufli/companion/diagnostics/20260316_181439`. It probed the four Lesson 95 passage sentences most directly affected by malformed comma/quote shaping (`lesson_095_passage_sentence_01`, `_06`, `_08`, `_16`). All four now judged `use` on Dorothy’s preferred `eleven_multilingual_v2` current-pipeline path, and the diagnostics labeled the cleaned current pipeline as the preferred controlled variant for each clip. The direct gain is that these particular pacing/supportiveness misses should no longer be treated as active pipeline defects; the remaining higher-risk passage failures still concentrate in other segments, especially Lesson 14 sentence/full passage pacing. A Google TTS canary path is now implemented only inside the diagnostics harness, not the main generation flow. `corpus/ufli/audio_diagnostics.py` can now run `diagnose-audio` with `--provider-scope google|both`, use official Cloud Text-to-Speech ADC auth via `google.auth`, hit a supported Chirp 3 endpoint, translate the current pause-shaped pipeline text into provider-appropriate Google markup (`[pause]` / `[pause long]`), and judge the result with the existing Gemini audio judge. `corpus/ufli/audio_companion_schema.py` now adds diagnostics-only `GoogleCloudTtsSettings` plus provider/input-format fields on `AudioProbeVariant`; the main `VoiceProfile` and `generate-audio` path remain ElevenLabs-specific on purpose. Context7 on the Google Gen AI SDK confirmed the current Vertex env-variable pattern (`GOOGLE_GENAI_USE_VERTEXAI`, project, location), but the concrete official Chirp 3 / Leda synthesis path was clearer in Google’s Cloud Text-to-Speech docs than in the Gen AI SDK docs: `en-US-Chirp3-HD-Leda` is a supported voice, current docs describe Chirp 3 pace/pause controls via `speaking_rate` and `markup`, and the regional endpoint docs indicate Chirp 3 should use `global`, `us`, `eu`, `asia-southeast1`, `europe-west2`, or `asia-northeast1` rather than `us-central1`. A small live Google-only canary was run at `data/ufli/companion/diagnostics/20260316_203756` against four hard passage clips (`lesson_014_passage_sentence_03`, `lesson_014_passage_full`, `lesson_095_passage_sentence_02`, `lesson_095_passage_sentence_11`) using `GOOGLE_APPLICATION_CREDENTIALS=~/.config/gcloud/adc-personal.json`, project `ws-builder-rag`, `GOOGLE_CLOUD_LOCATION=us-central1`, `GOOGLE_TTS_LOCATION=us`, `SSL_CERT_FILE` pointed at the venv `certifi` bundle, and `en-US-Chirp3-HD-Leda`. The result was mixed but informative: the provider-appropriate current-pipeline Google markup variant beat raw exact transcript text for all four clips, which supports preserving the recent source-side pause-shaping gains, but only `lesson_014_passage_full` reached `use` (`111.5 WPM`, versus Dorothy baseline `166.3 WPM` on the official full rerun). The tested Google passage sentences remained `revise` and were generally as fast or faster than Dorothy (`lesson_014_passage_sentence_03` `147.1` vs Dorothy `143.6`, `lesson_095_passage_sentence_02` `182.0` vs Dorothy `139.4`, `lesson_095_passage_sentence_11` `143.2` vs Dorothy `138.9`). This suggests the remaining sentence-family failures are still more likely provider/voice pacing limits than active pipeline bugs, while full-passage pacing may benefit from provider-specific pause controls. One caveat from the live logs: even with `personal-on` and Vertex env vars set, the judge path still initialized its RAG client on the existing API-key backend rather than the repo’s Vertex backend, although the judge requests themselves still went to `aiplatform.googleapis.com`; this did not affect the Google TTS synthesis evidence but is worth keeping in mind if the repo later standardizes all live calls on Vertex. The numeric lesson scope for companion audio remains explicitly corrected to lessons `1-128` rather than `1-34`, while alpha lessons remain excluded from this path. RAG client now supports API-key or Vertex backends plus embedding-model fallback (`gemini-embedding-exp-03-07` -> `gemini-embedding-2-preview` -> `text-embedding-005`). Curriculum retrieval now flows through `transform.py` and `ab_eval.py` into adaptation so word choices can be steered toward exact UFLI lesson content when overlap is strong enough. Validation for the audit follow-up passed: focused `ruff`/`mypy` on touched files, focused audit/ingest tests green (`9 passed`), and today’s offline repo audit wrote reports to `data/ufli/audit/20260315_204339` with text benchmark `Hit@1=0.78`, `Hit@3=0.93`, `Hit@5=0.96`, `MRR=0.85`, `grade correctness=0.96`, plus image/audio retrieval cleanly skipped because companion manifests are not present yet. Validation for the Stage 0/1 audio rollout is also green: focused `ruff`, `mypy`, and `pytest -q tests/test_corpus_audio_companion.py tests/test_corpus_audit.py tests/test_corpus_ingest.py` all passed on 2026-03-15 (`16 passed`). Validation for the new remediation gate is also green on 2026-03-16: focused `ruff check corpus/ufli/audio_companion.py corpus/ufli/audio_companion_schema.py corpus/ufli/audio_judge.py corpus/ufli/ingest.py tests/test_corpus_audio_companion.py tests/test_corpus_audio_judge.py`, focused `mypy` on the same files, and `pytest -q tests/test_corpus_audio_companion.py tests/test_corpus_audio_judge.py` all passed (`15 passed`) before the provider-limit patch, and the targeted follow-up after the pause-shaping pass also passed with `.venv/bin/ruff check corpus/ufli/audio_companion.py corpus/ufli/audio_companion_schema.py tests/test_corpus_audio_companion.py tests/test_corpus_audio_judge.py`, `.venv/bin/mypy corpus/ufli/audio_companion.py corpus/ufli/audio_companion_schema.py tests/test_corpus_audio_companion.py tests/test_corpus_audio_judge.py`, and `.venv/bin/pytest -q tests/test_corpus_audio_companion.py tests/test_corpus_audio_judge.py` (`17 passed`). The new diagnostics harness also now passes focused verification with `.venv/bin/ruff check corpus/ufli/audio_companion.py corpus/ufli/audio_companion_schema.py corpus/ufli/audio_diagnostics.py corpus/ufli/ingest.py tests/test_corpus_audio_companion.py tests/test_corpus_audio_judge.py tests/test_corpus_audio_diagnostics.py`, `.venv/bin/mypy` on the same files, and `.venv/bin/pytest -q tests/test_corpus_audio_companion.py tests/test_corpus_audio_judge.py tests/test_corpus_audio_diagnostics.py` (`20 passed`). After the punctuation-recursion fix, the narrower follow-up verification also passed with `.venv/bin/ruff check corpus/ufli/audio_companion.py tests/test_corpus_audio_companion.py`, `.venv/bin/mypy corpus/ufli/audio_companion.py tests/test_corpus_audio_companion.py`, and `.venv/bin/pytest -q tests/test_corpus_audio_companion.py tests/test_corpus_audio_diagnostics.py` (`16 passed`). After the review-wording and sentence-pause changes, the next narrow pass also passed with the same focused `ruff`, `mypy`, and `pytest -q tests/test_corpus_audio_companion.py tests/test_corpus_audio_diagnostics.py` (`17 passed`). The punctuation-cleanup follow-up also passed with `.venv/bin/ruff check corpus/ufli/audio_companion.py tests/test_corpus_audio_companion.py`, `.venv/bin/mypy corpus/ufli/audio_companion.py tests/test_corpus_audio_companion.py`, and `.venv/bin/pytest -q tests/test_corpus_audio_companion.py tests/test_corpus_audio_diagnostics.py` (`19 passed`). The Google canary implementation also passed focused verification with `.venv/bin/ruff check corpus/ufli/audio_diagnostics.py corpus/ufli/audio_companion_schema.py corpus/ufli/ingest.py tests/test_corpus_audio_diagnostics.py`, `.venv/bin/mypy corpus/ufli/audio_diagnostics.py corpus/ufli/audio_companion_schema.py corpus/ufli/ingest.py tests/test_corpus_audio_diagnostics.py`, and `.venv/bin/pytest -q tests/test_corpus_audio_diagnostics.py tests/test_corpus_audio_companion.py tests/test_corpus_audio_judge.py` (`26 passed`). `.venv/bin/python -m corpus.ufli.ingest build-audio --data-dir data/ufli --lesson-set pilot_rep` now succeeds and `.venv/bin/python -m corpus.ufli.ingest validate-audio --data-dir data/ufli --lesson-set pilot_rep` now reports `bundles=6 issues=0 passed=True`. The live remediation loop also now runs successfully end-to-end with `SSL_CERT_FILE` pointed at the venv `certifi` bundle, which was required on this macOS/Python 3.13 environment to avoid TLS trust-store failures during ElevenLabs, Google TTS, and Gemini calls. CI failure investigation on 2026-03-15 found a strict-mypy regression in `tests/test_vision.py`: three pytest fixture parameters lacked annotations, so repo-wide `mypy .` failed even though runtime behavior was unchanged; adding `MonkeyPatch` and `LogCaptureFixture` annotations fixed the issue, and local verification now passes with `.venv/bin/ruff check .`, `.venv/bin/mypy .`, and `.venv/bin/pytest tests/ -v --ignore=tests/test_e2e.py` (`308 passed`). Gemini access investigation on 2026-03-15 confirmed `.env` config is present and direct Gemini API access works outside the sandbox; prior live eval failures were caused by sandbox DNS/network restrictions, not missing credentials. OCR crash investigation on 2026-03-15 found the remaining stability risk is local PaddleOCR fallback on macOS/Python 3.13, not the RAG code itself: one `PaddleOCR(lang="en")` init raised RSS from ~163 MB to ~862 MB, and one real OCR pass on `samples/input/IMG_0004.JPG` peaked at `ru_maxrss=10432413696` (~10.4 GB on macOS) while processing only the first image. Eval hardening is now implemented enough for safe live runs: `ab_eval.py` and `rag/eval.py` default to `--extract-mode vision_only` so live evals fail fast instead of silently falling back to Paddle, `ab_eval.py` now requires explicit `--seed --extract-mode auto` for the old seed-and-fallback flow, and `extract/ocr.py` reuses a single PaddleOCR instance per process. Phase 14 batch indexing is now implemented too: batch workers return `RunArtifacts` payloads and the main thread performs sequential RAG indexing after worker completion. Harness split is now explicit: `rag/eval.py` is the primary experiment harness with retrieval-health and efficiency metrics, while `ab_eval.py` is the narrower causal check for whether retrieval beats no-RAG and an intentionally weak retrieval control.
 **Branch:** `codex/feature-gemini-embedding-2-rag`
-**Plan version:** 1.5.0 + `gemini-embedding-2-rag-plan.md` (v2)
-**Last Updated:** 2026-03-17 (post-Gemini DOE and fallback-policy framing)
+**Plan version:** 1.5.0 + `plans/gemini-embedding-2-rag-plan.md` (v2)
+**Last Updated:** 2026-03-18 (PDF layout, scene coverage, and format preference fixes)
+
+### 2026-03-18 PDF Layout, Scene Coverage & Learner Format Preferences
+
+**Status:** Implemented and verified. All 360 tests pass.
+
+Three rendering/adaptation quality issues were identified during visual review of lesson 72 worksheets and fixed:
+
+**1. Avatar scenes now render on all chunks (`render/pdf.py`)**
+
+Previously, chunks with ≤2 items skipped scene layout ("scene isn't worth the column narrowing"). This meant Word Builder chain-step chunks and single-item circle chunks had no avatar image. The threshold was removed — all chunks now get scene images showing the avatar doing activity-relevant actions. The avatar-in-context association (avatar doing things related to the worksheet task) was confirmed still working via `render/pose_planner.py` theme-specific poses and content-word prompts.
+
+**2. Blank page elimination (`render/pdf.py`)**
+
+Two changes to prevent blank/sparse pages:
+- **Chunk-level page break** now only triggers when the chunk header + first item won't fit (not the entire chunk). Previously a tall chunk like Word Builder (5 chain-step items + worked example) would push everything to page 2, stranding the header on a blank page 1.
+- **Per-item page breaks** added inside `_draw_chunk()` via a `page_break_fn` callback. Items flow naturally across pages instead of forcing entire chunks to new pages. Added `_estimate_chunk_header_height()` helper.
+- Result: Home practice Word Builder went from 4 pages (blank first page) to 3 well-packed pages.
+
+**3. Trace→Write format substitution (`adapt/engine.py`)**
+
+`_build_discovery_chunks()` hardcoded `["match", "trace", "circle"]` regardless of learner preferences. Ian's profile has `response_format_prefs: [write, circle]` (no "trace"), but got dotted tracing anyway. Fix:
+- Discovery format selection now checks `rules.allowed_response_formats` — when "trace" isn't in the learner's prefs, "write" is substituted.
+- Added "write" format handler in `_build_discovery_chunks()` (micro_goal "Write N words", instructions "Say each word out loud / Write the word on the line").
+- Backfill guard prevents "trace" from re-appearing when "write" already substitutes for it.
+- Tests updated: `test_format_mix_rotation_from_rag`, `test_render_trace_items`, `test_chunk_starts_on_new_page_before_bottom_clip`.
+
+**Files changed:** `render/pdf.py`, `adapt/engine.py`, `tests/test_render.py`, `tests/test_rag_adapt.py`
+
+### 2026-03-18 Theme-Aware Avatar Creation & Consistency Pipeline
+
+**Plan file:** `plans/theme-aware-avatar-pipeline.md`
+**Status:** Implemented and verified. All 360 tests pass (16 new).
+
+**Problem:** Worksheet characters looked generically "cartoon blocky" instead of matching Ian's Roblox theme. The `_CHARACTER_DESC` was hardcoded in two files, scene prompts were theme-agnostic, and the Gemini judge didn't evaluate theme fidelity.
+
+**Architecture: "Research Once, Enforce Cheap"**
+
+Phase 1 (expensive, one-time): When a profile is created or theme changes, MCP research (perplexity-ask) fetches the theme's authentic visual language, Gemini generates a reference image pack, and a frozen `CharacterStyleSheet` is persisted on the profile.
+
+Phase 2 (cheap, per-image): Every worksheet render reads the style sheet's `character_block` instead of hardcoded `_CHARACTER_DESC`. Scene prompts include theme environment context. The judge evaluates theme fidelity criteria. Zero MCP calls.
+
+**Changes implemented:**
+
+1. **`theme/schema.py`**: Added `CharacterSpec` model (art_style, style_description, body/face/scene descriptions, color_palette, reference_keywords, judge_criteria). Added to `ThemeConfig`.
+
+2. **`theme/engine.py`**: `_parse_theme_config()` now loads `character_spec` from YAML.
+
+3. **`theme/themes/roblox_obby/config.yaml`**: Populated with researched Roblox visual DNA — R15 rig proportions, 2D decal face, flat cell-shading, obby environment elements, 8 judge criteria. Based on perplexity/exa research of Roblox character specs and obby design.
+
+4. **`companion/schema.py`**: Added `CharacterStyleSheet` model (frozen character_block prompt, reference_image_dir, scene_guidelines, item_style_notes). Linked to `AvatarConfig` via `style_sheet` field.
+
+5. **`companion/character_research.py`** (new): One-time research module. `research_character_style()` loads theme's `CharacterSpec`, optionally enriches via Perplexity API, composes a frozen `character_block` prompt, generates reference image pack via Gemini. CLI: `python -m companion.character_research --profile profiles/ian.yaml --theme roblox_obby`. Works without API keys (falls back to static spec). Caches results.
+
+6. **`render/asset_gen.py`**: Replaced hardcoded `_CHARACTER_DESC` with `_FALLBACK_CHARACTER_DESC`. `generate_worksheet_assets()` accepts `style_sheet` and `character_spec`. `_generate_scene()` uses style sheet's `character_block` + theme's `scene_environment`. Loads reference images from style sheet pack when available.
+
+7. **`render/pose_planner.py`**: `plan_scenes()` accepts optional `CharacterSpec`. Added `_THEMED_POSES` dict with theme-aware pose variants (e.g., Roblox: "standing on a floating platform pointing at word signs" vs generic "pointing at word signs on a wall").
+
+8. **`companion/generate_overlays.py`**: Replaced hardcoded `_CHARACTER_DESC`. `_build_variant_prompt()`, `_generate_single_variant()`, `generate_variant()` accept `CharacterStyleSheet`. `_build_judge_prompt()`, `_judge_with_gemini()`, `_judge_with_openai()`, `_judge_variant()` accept `CharacterSpec` for theme fidelity criteria.
+
+9. **`companion/avatar.py`**: `_get_or_generate_variant()` loads theme and passes `style_sheet` + `character_spec` to `generate_variant()`.
+
+10. **`transform.py`**: Multi-worksheet pipeline passes `character_spec` to `plan_scenes()` and `style_sheet` + `character_spec` to `generate_worksheet_assets()`.
+
+### 2026-03-18 PDF Layout & Rendering Quality Pass
+
+After implementing the missing literacy activities, a visual review of all generated PDF pages identified and fixed several layout, rendering, and data quality issues:
+
+**`render/pdf.py` layout fixes:**
+- **Blank first page elimination**: Scene-column fallback logic now checks whether content fits in the *remaining* page space (not just absolute max page height). If scene layout doesn't fit below the header but full-width does, it drops to full-width instead of pushing content to a new page. This was causing blank title-only pages on Word Builder and Story Time.
+- **Passage full-width rendering**: Read-aloud passage chunks (decodable stories) always render full-width, bypassing scene-column layout. Dense passage text wraps badly in narrow columns and becomes hard for a child to read.
+- **Small chunk optimization**: Chunks with ≤2 items skip scene layout. The decorative scene image isn't worth the column narrowing and vertical waste for small content blocks.
+- **Fluency word renderer**: New `_draw_fluency_word_item()` renders Roll and Read words as large, clean text instead of individual blue "Read Aloud" boxes. Each word gets `heading + 4` pt font for rapid reading practice.
+- **Combined tail elements**: Break prompt + self-assessment are treated as a single block for page-break decisions. Previously each independently checked for space and could end up on separate mostly-blank pages. Now they share a page.
+
+**`adapt/engine.py` data quality fixes:**
+- **Sentence deduplication**: Home practice PDFs often contain duplicated content (same sentences appear twice in OCR regions). Sentences are now deduplicated by normalized lowercase text before adaptation, eliminating repeated fill-in-the-blank items.
+- **Roll and Read artifact filter**: `_parse_roll_and_read()` now filters known OCR extraction artifacts (`la`, `le`, `re`, `de`, `el`, `al`) that appear in corpus word lists but aren't real target-pattern words.
+
+**Page count improvements for lesson 73:**
+- Word Builder: 4 pages → 2 pages
+- Story Time: 3 pages → 2 pages
+- Word Discovery: 3 pages (unchanged — match section genuinely needs its own page due to picture tiles)
+
+All 344 tests pass. `ruff` and `mypy` clean on all changed files. All PDF validations (skill parity, age band, ADHD compliance, print quality) pass.
+
+### 2026-03-18 Missing Literacy Activities — Implemented
+
+**Plan file:** `plans/add-missing-literacy-activities.md`
+**Status:** Implemented and verified. All 344 tests pass. Lesson 73 pipeline produces all 3 new activity types.
+
+Lesson 73 worksheets were missing reading/passage sections. Root cause: `_extract_word_work()` never created `passage` source items because the home practice PDF doesn't contain the decodable story, and `lesson_number` was extracted but discarded before corpus lookup could happen.
+
+**Changes implemented:**
+
+1. **`skill/schema.py`**: Added `lesson_number: int | None = None` field to `LiteracySkillModel`
+
+2. **`corpus/ufli/lookup.py`** (new): Deterministic corpus lookup module. `lookup_lesson(N)` reads `normalized.jsonl` and returns `CorpusLookupResult` with `decodable_text`, `additional_text`, `concept`. Module-level caching for batch mode.
+
+3. **`skill/extractor.py`**:
+   - `_extract_word_work()` and `_extract_decodable_story()` now pass `lesson_number` to `LiteracySkillModel`
+   - `_infer_lesson_from_concept()`: Fallback for when OCR doesn't find a "Lesson N" title — matches concept text ("y as long i") to corpus concepts ("y /ī/") via IPA-to-descriptive normalization
+   - `_enrich_from_corpus()`: After skill extraction, looks up corpus and injects `passage` and `roll_and_read` source items if missing
+   - `_clean_corpus_passage()`: Strips copyright, lesson headers, "Illustrate the story here:" boilerplate
+
+4. **`adapt/engine.py`**:
+   - Categorization loop handles new `roll_and_read` item type via `_parse_roll_and_read()`
+   - `_build_warmup_chunk()`: Phonemic awareness sound boxes (Elkonin boxes) for grades K-1 only. 3 target words, phoneme segmentation via `_segment_phonemes()`. Prepended to Word Discovery chunks.
+   - `_segment_phonemes()`: Grapheme-to-phoneme segmentation handling common digraphs/trigraphs (sh, ch, th, ck, ai, ay, ee, igh, ar, er, etc.) and silent e
+   - `_build_roll_and_read_chunk()`: Fluency practice with 5 words (mix of base + inflected forms). Appended to Word Builder chunks. Reuses existing `read_aloud` renderer.
+
+5. **`render/pdf.py`**:
+   - `_draw_sound_box_item()`: Target word in large type + row of centered empty rounded-rect boxes (one per phoneme, ~0.8" square)
+   - Height estimator added for `sound_box` format
+
+**Lesson 73 results (grade 2, so no warmup):**
+- Word Discovery: match + trace + circle (unchanged)
+- Word Builder: chain steps + sight words + **Roll and Read** (5 fluency words)
+- Story Time: sentence fill-blank + **"Plane Race" decodable passage** + **comprehension questions**
+
+Sound box warmup activates for K-1 lessons (verified in test suite).
+
+### 2026-03-17 Worksheet Rendering & Adaptation Quality Fixes
+
+Lesson 73 UFLI worksheets generated from `data/ufli/raw/73/` (decodable passage + home practice PDFs). Six worksheets output to `output/lesson73_decodable/` and `output/lesson73_home_practice/`. During review, several rendering and adaptation quality issues were identified and fixed:
+
+**adapt/engine.py changes:**
+- **Word Builder chain-step redesign:** `_build_builder_chunks()` no longer creates items identical to the worked example. Added `_parse_chain_steps()` and `_find_letter_change()` helpers that decompose word chains into individual letter-substitution steps. The worked example shows the first step (e.g., `cry → try (change the "c" to "t")`), and activity items are interactive — each gives a starting word, the letter to change, and a writing line for the answer. Duplicate steps from repeated source chains are deduplicated.
+- **Match picture shuffling:** `_build_discovery_chunks()` now uses `_shuffled_mismatch()` (deterministic derangement) to shuffle picture order so no picture aligns with its word in the match activity. Each item stores the shuffled picture word in `options[0]` and the correct answer in `answer`.
+- **Research-based distractors:** `_generate_distractors()` replaced generic common-word list with graduated phonetic near-miss distractors (per PMC8862114/PMC5902514). ~Half near-miss words sharing features with targets (e.g., "funny"/"happy" for y-as-long-i targets), ~half clearly different CVC words.
+
+**render/pdf.py changes:**
+- **Match picture lookup fix:** `_draw_match_item()` now uses `item.options[0]` (shuffled picture word) for asset cache lookup instead of `item.content`, so pictures actually render in shuffled order.
+- **Dotted trace letters:** `_draw_trace_item()` now uses `setTextRenderMode(1)` (stroke-only outline) with `setDash(1, 2)` for dotted letter outlines instead of solid light-gray fill.
+- **Circle items de-bubbled:** `_draw_circle_item()` no longer draws `roundRect` bubbles around words. Words render as plain text with 28pt spacing between them, giving children room to draw their own circles.
+- **Fill-in-the-blank spacing:** `_draw_fill_blank_item()` now uses larger display text (`body + 4`pt), adds a dedicated writing line with `write_line_height = max(body * 2, 32)` (~0.45" for grade 1).
+- **Write item spacing:** All write-format items (regular, chain, chain_step) now use proper ruled writing lines with the same generous `write_line_height` instead of inline underscore characters. Added `_draw_chain_step_item()` dedicated renderer.
+- **Scene layout overflow fix:** Chunks that exceed `max_page_height` when estimated with scene columns now fall back to full-width layout instead of creating blank pages. This prevented the Word Builder and Story Time worksheets from rendering as blank first pages.
+- **Height estimators updated:** All item height estimators updated to account for larger writing areas and new renderers, ensuring correct page breaks.
+
+All 344 tests pass. PDF validation (skill parity, age band, ADHD compliance, print quality) passes on all generated worksheets.
 
 ### 2026-03-16 Audio Canary Update
 - A diagnostics-only Google provider path now exists in `corpus/ufli/audio_diagnostics.py` and `corpus/ufli/ingest.py` without changing the main ElevenLabs generation path. The canary path now supports both Chirp 3 HD voices and Google Cloud TTS Gemini-TTS model experiments, while keeping our existing source-side `tts_text` shaping and judge flow intact.
@@ -43,10 +183,9 @@
 
 ### Active Workstream: Gemini Embedding 2 RAG + UFLI Corpus (2026-03-14)
 - **Plan files:**
-  - `gemini-embedding-2-rag-plan.md` — RAG architecture and phases (Phases 1-7 code implemented; curriculum-aware adaptation follow-up now complete)
-  - `vertex-ai-gemini-migration-plan.md` — future repo-wide Gemini-to-Vertex migration plan; not yet implemented
-  - `.claude/plans/reactive-mixing-riddle.md` — UFLI corpus ingestion plan (auto-loaded by Claude Code). Covers crawl/acquire/extract/ingest phases, file inventory, and verification steps
-  - `worksheet-builder-consolidated-plan.md` — original product plan (v1.4.0, all 15 checkpoints complete)
+  - `plans/gemini-embedding-2-rag-plan.md` — RAG architecture and phases (Phases 1-7 code implemented; curriculum-aware adaptation follow-up now complete)
+  - `plans/vertex-ai-gemini-migration-plan.md` — future repo-wide Gemini-to-Vertex migration plan; not yet implemented
+  - `plans/worksheet-builder-consolidated-plan.md` — original product plan (v1.4.0, all 15 checkpoints complete)
 - **Completed in branch**:
   - RAG package created: `rag/client.py`, `rag/embeddings.py`, `rag/store.py`, `rag/retrieval.py`, `rag/indexer.py`
   - RAG backend hardening: `rag/client.py` now supports `RAG_GEMINI_BACKEND=auto|api_key|vertex`, `rag/embeddings.py` retries across fallback embedding models, `corpus/ufli/ingest.py` loads `.env` for direct CLI runs
@@ -160,10 +299,10 @@
     - Add an OCR smoke/benchmark command that records elapsed time and peak RSS on one sample image before launching long evals.
     - Align the local OCR runtime with the supported matrix before depending on Paddle locally; current dev env is Python 3.13.1 while CI remains Python 3.11.
 - **Future follow-up plan**:
-  - `vertex-ai-gemini-migration-plan.md` captures the repo-wide Gemini auth/client migration to Vertex AI as a separate workstream after current evals and RAG hardening
+  - `plans/vertex-ai-gemini-migration-plan.md` captures the repo-wide Gemini auth/client migration to Vertex AI as a separate workstream after current evals and RAG hardening
 
 ### What Exists Now
-- `worksheet-builder-consolidated-plan.md` — full implementation plan (v1.4.0, 15 checkpoints)
+- `plans/worksheet-builder-consolidated-plan.md` — full implementation plan (v1.4.0, 15 checkpoints)
 - `CLAUDE.md` — project guidance for Claude Code
 - `.gitignore` — excludes data dirs, python artifacts, IDE files, samples/input/
 - `.claude/` — context doc, commands, skills
@@ -222,7 +361,7 @@
 - `extract/vision.py` — Gemini vision fallback: sends image to Gemini when OCR quality is poor (>80 fragments or <0.5 avg confidence)
 - `.env` — API keys (gitignored): OPENAI_API_KEY, GEMINI_API_KEY
 - `README.md` — project documentation
-- `gemini-embedding-2-rag-plan.md` — Gemini Embedding 2 RAG architecture and implementation plan (v2)
+- `plans/gemini-embedding-2-rag-plan.md` — Gemini Embedding 2 RAG architecture and implementation plan (v2)
 - `rag/` — new RAG package (Vertex AI client, embedding service, vector store, retrieval, indexer)
 - `batch.py` — batch processing CLI: multi-threaded orchestration with rate limiting, retry, graceful shutdown, manifest-based skip detection
 - `batch_utils.py` — batch utilities: FileResult, RateLimiter (token-bucket), ProgressTracker, file collection, manifest I/O, report generation
@@ -265,7 +404,7 @@
 - **OCR note (2026-03-15)**: the local macOS dev env currently has PaddleOCR 3.4.0 / Paddle 3.3.0 on Python 3.13.1 and no `tesseract` binary in `PATH`. Treat local Paddle fallback as memory-unsafe until the eval harness is hardened or the runtime is aligned.
 - **Vertex auth note (2026-03-15)**: personal ADC now works for Vertex on `ws-builder-rag` when using `personal-on` (`GOOGLE_APPLICATION_CREDENTIALS=~/.config/gcloud/adc-personal.json`, `GOOGLE_CLOUD_PROJECT=ws-builder-rag`, `GOOGLE_CLOUD_LOCATION=us-central1`). Live repo verification succeeded with `RAG_GEMINI_BACKEND=vertex`; prior failures were caused by ADC authenticating as `hjong@verily.health` instead of `howiejong@gmail.com`.
 
-**Priority 1: Remaining RAG work** (see `gemini-embedding-2-rag-plan.md`)
+**Priority 1: Remaining RAG work** (see `plans/gemini-embedding-2-rag-plan.md`)
 - Decide how `rag/eval.py` and `ab_eval.py` should coexist or converge
 - Expand live eval coverage beyond the verified single-image run if broader evidence is needed
 
@@ -902,7 +1041,7 @@ Note: index step requires GOOGLE_CLOUD_PROJECT=ws-builder-rag env var.
   - Stage 2 representative pilot (`1`, `14`, `34`, `64`, `95`, `128`)
   - Stage 3 controlled batch rollout by lesson band
   - Stage 4 full corpus completion and hardening
-- Plan file created at `ufli-audio-companion-rollout-plan.md` in the project root.
+- Plan file created at `plans/ufli-audio-companion-rollout-plan.md`.
 
 **Key decisions locked:**
 - Human signoff is required before scaling beyond the pilot.
@@ -928,7 +1067,7 @@ Note: index step requires GOOGLE_CLOUD_PROJECT=ws-builder-rag env var.
 - Start by refining the existing `corpus/ufli/audio_companion.py` scaffold and CLI commands to match the rollout plan.
 
 **Primary files to open first next session:**
-- `ufli-audio-companion-rollout-plan.md`
+- `plans/ufli-audio-companion-rollout-plan.md`
 - `.claude/worksheet-project-context.md`
 - `corpus/ufli/audio_companion.py`
 - `corpus/ufli/audio_companion_schema.py`

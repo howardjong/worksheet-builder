@@ -9,7 +9,7 @@ Target checkpoint: $ARGUMENTS
 
 Instructions:
 
-1. Read `worksheet-builder-consolidated-plan.md` and find the checkpoint section for "$ARGUMENTS".
+1. Read `plans/worksheet-builder-consolidated-plan.md` and find the checkpoint section for "$ARGUMENTS".
 2. Extract all acceptance criteria (the `- [ ]` checklist items).
 3. For each criterion, investigate the codebase to determine if it is met:
    - Read the relevant source files

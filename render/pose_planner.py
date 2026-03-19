@@ -3,17 +3,21 @@
 from __future__ import annotations
 
 from adapt.schema import ActivityChunk, AdaptedActivityModel
+from theme.schema import CharacterSpec
 
 
-def plan_scenes(adapted: AdaptedActivityModel) -> list[ScenePlan]:
+def plan_scenes(
+    adapted: AdaptedActivityModel,
+    character_spec: CharacterSpec | None = None,
+) -> list[ScenePlan]:
     """Analyze worksheet content and plan character scenes for each chunk.
 
     Returns a ScenePlan per chunk with scene descriptions driven by actual
-    worksheet content (words, activity type).
+    worksheet content (words, activity type) and theme-specific context.
     """
     plans: list[ScenePlan] = []
     for chunk in adapted.chunks:
-        scene = _plan_chunk_scene(chunk, adapted)
+        scene = _plan_chunk_scene(chunk, adapted, character_spec)
         plans.append(scene)
     return plans
 
@@ -34,7 +38,7 @@ class ScenePlan:
         self.activity_context = activity_context
 
 
-# Map response formats to character poses/activities
+# Map response formats to character poses/activities (generic fallback)
 _FORMAT_TO_POSE: dict[str, tuple[str, str]] = {
     "match": ("pointing", "pointing at word signs on a wall"),
     "trace": ("writing", "carefully tracing letters with a pencil"),
@@ -44,14 +48,39 @@ _FORMAT_TO_POSE: dict[str, tuple[str, str]] = {
     "read_aloud": ("reading", "reading a large storybook"),
 }
 
+# Theme-aware pose variants — keyed by art_style
+_THEMED_POSES: dict[str, dict[str, tuple[str, str]]] = {
+    "roblox_3d_cartoon": {
+        "match": ("pointing", "standing on a floating platform pointing at word signs"),
+        "trace": ("writing", "sitting on a neon block carefully tracing letters"),
+        "circle": ("thinking", "standing at an obby checkpoint thinking carefully"),
+        "fill_blank": ("building", "placing letter blocks into slots on a platform"),
+        "write": ("writing", "writing on a clipboard while standing on a rainbow path"),
+        "read_aloud": ("reading", "sitting on a giant book block reading a storybook"),
+        "sound_box": ("listening", "cupping hand to ear listening for sounds"),
+    },
+}
+
 
 def _plan_chunk_scene(
     chunk: ActivityChunk,
     adapted: AdaptedActivityModel,
+    character_spec: CharacterSpec | None = None,
 ) -> ScenePlan:
     """Generate a scene plan for a single chunk."""
     format_key = chunk.response_format
-    pose, activity_desc = _FORMAT_TO_POSE.get(format_key, ("standing", "learning"))
+
+    # Try theme-specific poses first, fall back to generic
+    pose_map = _FORMAT_TO_POSE
+    if character_spec and character_spec.art_style:
+        themed = _THEMED_POSES.get(character_spec.art_style)
+        if themed:
+            pose_map = themed
+
+    pose, activity_desc = pose_map.get(
+        format_key,
+        _FORMAT_TO_POSE.get(format_key, ("standing", "learning")),
+    )
 
     # Extract key words from chunk content for context
     content_words = []

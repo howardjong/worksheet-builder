@@ -16,3 +16,60 @@ avatar_position: "integrated"
 decorative_elements:
   max_per_page: 2
   assets: []
+character_spec:
+  art_style: "roblox_3d_cartoon"
+  style_description: >
+    Roblox-style 3D cartoon character rendered in low-poly blocky geometry with
+    flat cell-shading, hard edges, and no gradients. The character should look
+    like it came directly from a Roblox game — matching the R15 humanoid rig
+    proportions with segmented rectangular limbs, a large cubic head with rounded
+    edges, and a compact blocky torso. The rendering style is clean, toy-like,
+    with bright saturated colors and minimal shadows. Think 3D plastic toy
+    figure, not 2D illustration.
+  body_description: >
+    Roblox R15 rig: large square head (roughly 1/3 of total height) on a narrow
+    rectangular torso split into upper and lower segments. Arms and legs are
+    segmented rectangular tubes (upper arm, lower arm, hand as separate blocks).
+    Hands are flat block shapes. Feet are flat rectangular blocks. Overall
+    proportions are stubby and toy-like with a large head-to-body ratio.
+    The character has a boxy silhouette — no curves, no organic shapes.
+  face_description: >
+    Classic Roblox smiley face rendered as a 2D decal texture on the front of
+    the cubic head: two simple black oval eyes, a small dot nose, and a wide
+    curved smile. The face is flat (not 3D modeled) — it looks painted or
+    printed onto the block head surface.
+  scene_environment: >
+    Roblox obby (obstacle course) environment with floating geometric block
+    platforms, neon-edged checkpoints, spinning collectible coins, rainbow-striped
+    paths, jump pads with glowing arrows, and a bright gradient skybox. The
+    environment is built from simple geometric shapes (cubes, cylinders, wedges)
+    in bright saturated colors — like a Roblox Studio build.
+  scene_elements:
+    - "floating neon block platforms"
+    - "spinning yellow coins"
+    - "rainbow-striped path segments"
+    - "glowing checkpoint pillars"
+    - "jump pad with upward arrow"
+    - "lava pit with orange glow"
+    - "star collectibles"
+  color_palette: >
+    Bright saturated primaries and neons. Character skin is peach/warm beige,
+    hair in vivid rainbow (red, orange, yellow, green, blue, purple). Clothing
+    in bold solid colors (blue, red, green). Environment uses neon greens,
+    hot pinks, electric blues, bright yellows against a light blue gradient sky.
+    No pastels, no muted tones, no gradients on character surfaces.
+  reference_keywords:
+    - "Roblox character"
+    - "Roblox obby obstacle course"
+    - "Roblox R15 avatar"
+    - "blocky 3D game character"
+    - "Roblox game screenshot"
+  judge_criteria:
+    - "Character has blocky rectangular body parts — no smooth curves or organic shapes"
+    - "Head is a large cube/block shape, roughly 1/3 of total character height"
+    - "Face is a flat 2D decal (painted on), not 3D modeled features"
+    - "Rendering is flat cell-shaded with hard edges, no soft gradients on the character"
+    - "Proportions match Roblox R15 rig — large head, stubby segmented limbs"
+    - "Environment elements (if any) use geometric block shapes like Roblox Studio"
+    - "Colors are bright and saturated, not muted or pastel"
+    - "A child who plays Roblox would recognize this as a Roblox character"

@@ -7,7 +7,7 @@ You are validating the worksheet-builder codebase against its implementation pla
 
 Focus area: $ARGUMENTS
 
-Read `worksheet-builder-consolidated-plan.md` and `.claude/worksheet-project-context.md`, then evaluate the codebase:
+Read `plans/worksheet-builder-consolidated-plan.md` and `.claude/worksheet-project-context.md`, then evaluate the codebase:
 
 1. **Pipeline integrity:**
    - Are all 8 stages implemented (or stubbed) in the correct order?
