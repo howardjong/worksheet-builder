@@ -48,7 +48,7 @@ ADHD_SPACING: dict[str, float] = {
 LAYOUT_SPACING: dict[str, float] = {
     "section_gap": 18.0,
     "item_gap": 16.0,
-    "box_gap": 20.0,
+    "box_gap": 32.0,
     "divider_gap": 22.0,
 }
 
@@ -271,7 +271,7 @@ def _draw_writing_line(
     x: float,
     y: float,
     color: str,
-    max_width: float = 220,
+    max_width: float = 300,
     col_width: float = CONTENT_WIDTH,
 ) -> None:
     """Draw a writing line with start marker tick.
@@ -296,7 +296,7 @@ def _estimate_chunk_header_height(
     small = sizes["small"]
     height = _line_spacing(body)  # micro_goal
     if chunk.time_estimate:
-        height += _line_spacing(small)
+        height += _line_spacing(small) + 8
     height += len(chunk.instructions) * _line_spacing(body)
     height += LAYOUT_SPACING["section_gap"]
     if chunk.worked_example:
@@ -332,7 +332,7 @@ def _estimate_chunk_height(
     height = _line_spacing(body)
 
     if chunk.time_estimate:
-        height += _line_spacing(small)
+        height += _line_spacing(small) + 8
 
     height += len(chunk.instructions) * _line_spacing(body)
     height += LAYOUT_SPACING["section_gap"]
@@ -366,7 +366,7 @@ def _estimate_item_height(
     body = sizes["body"]
     max_chars = max(1, int(col_width / (body * 0.5)))
 
-    write_line_height = max(body * 2, 32)
+    write_line_height = max(int(body * 2.5), 40)
 
     if item.metadata.get("display") == "chain":
         line_count = len(_wrap_text(f"  {item.item_id}. {item.content}", max_chars))
@@ -548,6 +548,7 @@ def _draw_chunk(
         c.setFillColor(HexColor(theme_colors.directions))
         c.drawString(left + 10, y - sizes["small"], chunk.time_estimate)
         y -= _line_spacing(sizes["small"])
+        y -= 8  # Breathing room before instructions
 
     # Instructions (bold step numbers for scannable anchors)
     c.setFillColor(HexColor(theme_colors.directions))
@@ -602,7 +603,7 @@ def _draw_chunk(
     max_chars = int(col_width / (sizes["body"] * 0.5))
 
     # Child-print write line height: generous for young writers (ages 5-8)
-    write_line_height = max(sizes["body"] * 2, 32)
+    write_line_height = max(int(sizes["body"] * 2.5), 40)
 
     for item in chunk.items:
         # Per-item page break: if this item won't fit, start a new page
@@ -730,7 +731,7 @@ def _draw_chain_step_item(
     y: float,
     left: float | None = None,
     col_width: float | None = None,
-    write_line_height: float = 32,
+    write_line_height: float = 40,
 ) -> float:
     """Draw a chain-step item: instruction text + writing line for the answer."""
     body = sizes["body"]
@@ -913,7 +914,7 @@ def _draw_fill_blank_item(
     lx = left if left is not None else MARGIN
     cw = col_width if col_width is not None else CONTENT_WIDTH
     # Child-print line height: generous for young writers
-    write_line_height = max(body * 2, 32)
+    write_line_height = max(int(body * 2.5), 40)
 
     # Content with blank — display at large size for readability
     display_size = body + 4

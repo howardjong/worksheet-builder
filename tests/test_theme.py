@@ -39,6 +39,7 @@ class TestLoadTheme:
         theme = load_theme("space")
         assert theme.name == "Space Adventure"
         assert theme.style == "calm"
+        assert theme.multi_worksheet is True
 
     def test_load_underwater_theme(self) -> None:
         theme = load_theme("underwater")

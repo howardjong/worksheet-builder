@@ -1,5 +1,6 @@
 name: "Dino Discovery"
 style: calm
+multi_worksheet: true
 fonts:
   primary: "Helvetica"
   heading: "Helvetica-Bold"

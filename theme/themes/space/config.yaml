@@ -1,5 +1,6 @@
 name: "Space Adventure"
 style: calm
+multi_worksheet: true
 fonts:
   primary: "Helvetica"
   heading: "Helvetica-Bold"
@@ -11,9 +12,33 @@ colors:
   background: "#FAFAFA"
   text: "#1F2937"
   chunk_border: "#E5E7EB"
-avatar_position: "bottom-right"
+avatar_position: "integrated"
 decorative_elements:
   max_per_page: 2
   assets:
     - "rocket.png"
     - "planet.png"
+character_spec:
+  art_style: "space_cartoon"
+  style_description: "cute cartoon astronaut character, soft rounded shapes, friendly proportions"
+  body_description: "spacesuit with round helmet, compact proportions, large head"
+  face_description: "visible through helmet visor, simple expressive features"
+  scene_environment: "outer space with colorful planets, stars, rocket ships, space stations"
+  scene_elements:
+    - "rocket ship"
+    - "planets"
+    - "stars"
+    - "space helmet"
+    - "asteroid"
+    - "moon"
+  color_palette: "deep purples and blues for space, bright accent colors for character"
+  reference_keywords:
+    - "cartoon astronaut"
+    - "space adventure"
+    - "kid space explorer"
+  judge_criteria:
+    - "Character wears a round-helmet spacesuit with visor"
+    - "Art style is soft cartoon with rounded shapes"
+    - "Space environment includes planets or stars"
+    - "Colors use deep purples/blues with bright accents"
+    - "Character has friendly child-appropriate proportions"

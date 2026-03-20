@@ -28,10 +28,10 @@ class TestCharacterSpec:
         assert len(theme.character_spec.judge_criteria) >= 5
         assert len(theme.character_spec.scene_elements) >= 3
 
-    def test_space_theme_has_default_spec(self) -> None:
+    def test_space_theme_has_character_spec(self) -> None:
         theme = load_theme("space")
-        assert theme.character_spec.art_style == ""
-        assert theme.character_spec.style_description == ""
+        assert theme.character_spec.art_style == "space_cartoon"
+        assert theme.character_spec.style_description != ""
 
     def test_spec_needs_research_empty(self) -> None:
         assert _spec_needs_research(CharacterSpec())
@@ -159,11 +159,13 @@ class TestResearchCharacterStyle:
         assert sheet.generated_at != ""
 
     def test_empty_theme_produces_fallback(self) -> None:
-        theme = load_theme("space")
+        from theme.schema import ThemeConfig
+
+        theme = ThemeConfig(name="empty")
         profile = LearnerProfile(name="Test", grade_level="1")
         sheet = research_character_style(
-            profile, theme, "space",
+            profile, theme, "empty",
             skip_images=True, skip_research=True,
         )
-        assert sheet.theme_id == "space"
+        assert sheet.theme_id == "empty"
         assert "cartoon" in sheet.character_block.lower()
