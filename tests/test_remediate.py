@@ -6,11 +6,17 @@ import hashlib
 import json
 import os
 from pathlib import Path
+from typing import cast
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from corpus.ufli.audit_schema import AuditFlag, CorpusAuditSummary
+from corpus.ufli.audit_schema import (
+    AuditFlag,
+    AuditSeverity,
+    CorpusAuditSummary,
+    RecordType,
+)
 from corpus.ufli.extract import LessonContent
 from corpus.ufli.remediate import (
     STRATEGY_AUDIO_REGEN,
@@ -32,8 +38,8 @@ from corpus.ufli.remediate import (
 def _make_flag(
     code: str,
     lesson_id: str = "43",
-    record_type: str = "text",
-    severity: str = "fail",
+    record_type: RecordType = "text",
+    severity: AuditSeverity = "fail",
     message: str = "test flag",
 ) -> AuditFlag:
     return AuditFlag(
@@ -440,10 +446,10 @@ class _RaiseOnReplace:
         self._original = os.replace
 
     def __enter__(self) -> None:
-        os.replace = self._raise  # type: ignore[assignment]
+        setattr(os, "replace", cast(object, self._raise))
 
     def __exit__(self, *args: object) -> None:
-        os.replace = self._original  # type: ignore[assignment]
+        setattr(os, "replace", self._original)
 
     @staticmethod
     def _raise(src: str, dst: str) -> None:

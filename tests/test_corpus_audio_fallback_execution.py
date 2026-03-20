@@ -5,13 +5,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from types import SimpleNamespace
+from typing import cast
 
 import pytest
 
 pytest.importorskip("chromadb")
 
 from corpus.ufli.audio_companion import build_audio_companion_manifests, load_audio_bundles
-from corpus.ufli.audio_companion_schema import AudioJudgeClipResult
+from corpus.ufli.audio_companion_schema import AudioClipDefinition, AudioJudgeClipResult
 from corpus.ufli.audio_fallback_policy import execute_gemini_fallback
 from corpus.ufli.audio_judge import _PacingMetrics
 
@@ -163,7 +164,7 @@ def test_live_synthesizes_and_replaces_when_improved(
     )
 
     def _fake_judge(**kwargs: object) -> AudioJudgeClipResult:
-        clip = kwargs["clip"]
+        clip = cast(AudioClipDefinition, kwargs["clip"])
         return AudioJudgeClipResult(
             voice_profile="dorothy",
             lesson_id=clip.lesson_id,
@@ -257,7 +258,7 @@ def test_keeps_original_when_not_improved(
     )
 
     def _judge_revise(**kwargs: object) -> AudioJudgeClipResult:
-        clip = kwargs["clip"]
+        clip = cast(AudioClipDefinition, kwargs["clip"])
         return AudioJudgeClipResult(
             voice_profile="dorothy",
             lesson_id=clip.lesson_id,

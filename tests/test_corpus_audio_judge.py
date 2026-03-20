@@ -11,7 +11,11 @@ import pytest
 pytest.importorskip("chromadb")
 
 from corpus.ufli.audio_companion import build_audio_companion_manifests, load_audio_bundles
-from corpus.ufli.audio_companion_schema import AudioJudgeClipResult, AudioJudgeSummary
+from corpus.ufli.audio_companion_schema import (
+    AudioJudgeClipResult,
+    AudioJudgeSummary,
+    JudgeRecommendation,
+)
 from corpus.ufli.audio_judge import (
     _judge_clip_with_gemini,
     _parse_judge_response,
@@ -335,7 +339,11 @@ def test_apply_judge_verdicts_writes_back_to_bundles(tmp_path: Path) -> None:
 
     clip_results = []
     for clip in bundle.clips:
-        recommendation = "use" if clip.segment_type != "word_model" else "revise"
+        recommendation: JudgeRecommendation
+        if clip.segment_type != "word_model":
+            recommendation = "use"
+        else:
+            recommendation = "revise"
         clip_results.append(
             AudioJudgeClipResult(
                 voice_profile="dorothy",

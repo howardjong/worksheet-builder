@@ -11,7 +11,7 @@ import tempfile
 from dataclasses import asdict
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from pydantic import BaseModel, Field
 
@@ -396,7 +396,7 @@ def _load_manifest_lookup(data_dir: str) -> dict[str, dict[str, Any]]:
         if not line:
             continue
         try:
-            rec = json.loads(line)
+            rec = cast(dict[str, Any], json.loads(line))
             lid = rec.get("lesson_id", "")
             if lid:
                 lookup[lid] = rec
@@ -415,7 +415,7 @@ def _read_normalized_record(data_dir: str, lesson_id: str) -> dict[str, Any] | N
         if not line:
             continue
         try:
-            rec = json.loads(line)
+            rec = cast(dict[str, Any], json.loads(line))
             if rec.get("lesson_id") == lesson_id:
                 return rec
         except json.JSONDecodeError:

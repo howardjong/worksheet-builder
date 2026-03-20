@@ -1365,3 +1365,34 @@ Note: index step requires GOOGLE_CLOUD_PROJECT=ws-builder-rag env var.
 **What’s next:**
 - If the user wants more polish, continue tuning `render/pdf.py` spacing with side-by-side preview review against the lesson-74 regenerated PNGs.
 - If the user wants richer match-tile imagery, explicitly inspect the lesson-74 home-practice asset cache directories from `regeneration_summary.json` and regenerate or backfill any missing word pictures.
+
+### Session 33 — 2026-03-20 (CI lint/typecheck repair)
+**Participants:** User + Codex (GPT-5)
+**What happened:**
+- Investigated the current CI failures and confirmed they were no longer caused by missing Ubuntu runtime packages. The workflow already installs `tesseract-ocr`, `libgl1`, and `libglib2.0-0`.
+- Reproduced the CI steps locally and found the actual blockers were repository-level quality gates:
+  - `ruff` failed on an unused local in `adapt/engine.py`
+  - `mypy` failed on strict typing regressions in the new remediation, Google TTS, audio judge, and fallback test coverage
+- Fixed the failing code paths with narrow changes only:
+  - removed the unused `basic_count` local in `adapt/engine.py`
+  - tightened `json.loads()` typing in `corpus/ufli/remediate.py`
+  - updated tests to satisfy strict mypy requirements for literals, mocked HTTP headers/context-manager return types, and typed clip access in fallback/judge helpers
+- Did not modify the CI workflow file in this pass because the active failures were inside the branch contents rather than the runner setup.
+
+**Validation run:**
+- `.venv/bin/ruff check .` → clean
+- `.venv/bin/mypy .` → clean
+- `.venv/bin/pytest tests/ -v --ignore=tests/test_e2e.py` → `413 passed`
+
+**Files changed:**
+- `adapt/engine.py`
+- `corpus/ufli/remediate.py`
+- `tests/test_corpus_google_tts_client.py`
+- `tests/test_corpus_audio_companion.py`
+- `tests/test_remediate.py`
+- `tests/test_corpus_audio_judge.py`
+- `tests/test_corpus_audio_fallback_execution.py`
+
+**What’s next:**
+- Push this commit and re-run GitHub Actions to confirm the hosted CI jobs now pass on the branch.
+- If any GitHub job still fails, use the exact failing step/log rather than assuming the previous OpenCV-runtime issue recurred.

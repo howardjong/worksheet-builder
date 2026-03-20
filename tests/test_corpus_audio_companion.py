@@ -626,7 +626,7 @@ def test_index_clips_only_indexes_approved(
     bundle = _prepare_generated_bundle(tmp_path, lesson_number=14)
 
     # Approve only the first clip
-    bundle.clips[0].review_status = "approved"  # type: ignore[assignment]
+    bundle.clips[0].review_status = "approved"
     (tmp_path / "companion" / "lessons" / f"{bundle.lesson_key}.json").write_text(
         bundle.model_dump_json(indent=2)
     )

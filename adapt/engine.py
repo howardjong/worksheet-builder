@@ -965,8 +965,6 @@ def _generate_distractors(
 
     # Pick near-miss first (half the count), then fill with basic CVC
     near_count = max(1, count // 2)
-    basic_count = count - near_count
-
     selected: list[str] = []
 
     # Try near-miss pools in order

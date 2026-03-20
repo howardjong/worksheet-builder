@@ -6,6 +6,8 @@ import base64
 import io
 import json
 import urllib.error
+from email.message import Message
+from typing import Literal
 
 import pytest
 
@@ -24,7 +26,9 @@ class _FakeResponse:
     def __enter__(self) -> _FakeResponse:
         return self
 
-    def __exit__(self, exc_type: object, exc: object, tb: object) -> bool:
+    def __exit__(
+        self, exc_type: object, exc: object, tb: object
+    ) -> Literal[False]:
         return False
 
     def read(self) -> bytes:
@@ -55,11 +59,14 @@ def _http_error(
     body: str = "boom",
     headers: dict[str, str] | None = None,
 ) -> urllib.error.HTTPError:
+    message = Message()
+    for key, value in (headers or {}).items():
+        message[key] = value
     return urllib.error.HTTPError(
         url="https://texttospeech.googleapis.com/v1/text:synthesize",
         code=code,
         msg="error",
-        hdrs=headers or {},
+        hdrs=message,
         fp=io.BytesIO(body.encode("utf-8")),
     )
 
@@ -69,7 +76,7 @@ def test_google_tts_client_retries_499_then_succeeds(
 ) -> None:
     calls: list[int] = []
     sleeps: list[float] = []
-    responses: list[object] = [_http_error(499), _success_response()]
+    responses: list[_FakeResponse | Exception] = [_http_error(499), _success_response()]
 
     def _fake_urlopen(_request: object, timeout: float) -> _FakeResponse:
         calls.append(int(timeout))
@@ -101,7 +108,7 @@ def test_google_tts_client_retries_502_then_succeeds(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     sleeps: list[float] = []
-    responses: list[object] = [_http_error(502), _success_response()]
+    responses: list[_FakeResponse | Exception] = [_http_error(502), _success_response()]
 
     def _fake_urlopen(_request: object, timeout: float) -> _FakeResponse:
         item = responses.pop(0)
@@ -129,7 +136,7 @@ def test_google_tts_client_retries_429_and_honors_retry_after(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     sleeps: list[float] = []
-    responses: list[object] = [
+    responses: list[_FakeResponse | Exception] = [
         _http_error(429, headers={"Retry-After": "7"}),
         _success_response(),
     ]
@@ -159,7 +166,7 @@ def test_google_tts_client_retries_urlerror_then_succeeds(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     sleeps: list[float] = []
-    responses: list[object] = [
+    responses: list[_FakeResponse | Exception] = [
         urllib.error.URLError("temporary network"),
         _success_response(),
     ]
