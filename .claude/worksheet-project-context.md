@@ -29,6 +29,12 @@
 
 **Non-changes:** Individual worksheet layout/spacing/themes unchanged. Validation runs on individual PDFs before merge. RAG indexing gets single merged path. `batch.py` continues to work unchanged.
 
+**Live verification (UFLI Lesson 71):** Ran both `home_practice_pdf.pdf` and `decodable_passage_pdf.pdf` through the full pipeline with `roblox_obby` theme. Results:
+- **Home Practice** → `lesson_1eec2680ff1b.pdf` (9 pages): cover with AI Roblox obby scene + "Word Adventure: itch, match, fetch!" title + 3-item "What's Inside" list, 8 content pages with "Page 1 of 8" through "Page 8 of 8" stamped bottom-right, individual worksheet PDFs cleaned up after merge.
+- **Decodable Passage** → `lesson_99eedfa44651.pdf` (6 pages): cover with "Robin and Stitch!" title (derived from decodable story name), 5 content pages with "Page 1 of 5" through "Page 5 of 5". Cover images are theme-appropriate Roblox obby platformer scenes.
+- Input PDFs required conversion to PNG first (capture stage only handles images). Used PyMuPDF at 300 DPI.
+- Minor validation warnings (expected): age band mismatch on decodable passage (adapted grade 2 vs target 1), missing worked example on Story Time chunks, missing self-assessment on Word Builder.
+
 ### 2026-03-20 Gemini Model Standardization
 
 Replaced all `gemini-3.1-flash-lite-preview` references with `gemini-3-flash-preview` for consistency and robustness. The lite model hallucinated fabricated UFLI content during vision extraction testing.
