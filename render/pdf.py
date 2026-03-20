@@ -46,11 +46,14 @@ ADHD_SPACING: dict[str, float] = {
 }
 
 LAYOUT_SPACING: dict[str, float] = {
-    "section_gap": 8.0,
-    "item_gap": 10.0,
-    "box_gap": 12.0,
-    "divider_gap": 14.0,
+    "section_gap": 18.0,
+    "item_gap": 16.0,
+    "box_gap": 20.0,
+    "divider_gap": 22.0,
 }
+
+# Avatar clearance: pts above MARGIN to clear avatar (70pt) + speech bubble (18pt) + gap
+AVATAR_CLEARANCE = 90
 
 PAGE_BREAK_BUFFER = 20
 
@@ -79,6 +82,15 @@ def render_worksheet(
     y = CONTENT_TOP
     page_num = 1
 
+    # Avatar-aware content floor: raise effective bottom when avatar is in a bottom corner
+    content_bottom = CONTENT_BOTTOM
+    if avatar_image and theme.avatar_position in ("bottom-right", "bottom-left"):
+        content_bottom = MARGIN + AVATAR_CLEARANCE
+
+    # Page background
+    c.setFillColor(HexColor(theme.colors.background))
+    c.rect(0, 0, PAGE_WIDTH, PAGE_HEIGHT, fill=True, stroke=False)
+
     # Apply ADHD-optimized spacing
     _apply_adhd_spacing(c, "body")
 
@@ -97,6 +109,9 @@ def render_worksheet(
         c.showPage()
         page_num += 1
         y = CONTENT_TOP
+        # Page background
+        c.setFillColor(HexColor(theme.colors.background))
+        c.rect(0, 0, PAGE_WIDTH, PAGE_HEIGHT, fill=True, stroke=False)
         _apply_adhd_spacing(c, "body")
         _draw_decorations(c, theme, adapted.theme_id)
         if avatar_image:
@@ -126,7 +141,7 @@ def render_worksheet(
             chunk_idx=chunk_idx,
             use_scene=chunk_use_scene,
         )
-        available_space = y - CONTENT_BOTTOM - PAGE_BREAK_BUFFER
+        available_space = y - content_bottom - PAGE_BREAK_BUFFER
         if chunk_use_scene and required_height > available_space:
             # Scene layout won't fit in the remaining space — try full-width
             # before resorting to a page break (avoids blank pages)
@@ -156,7 +171,7 @@ def render_worksheet(
             chunk_header_height += _estimate_item_height(
                 first_item, theme, sizes, MARGIN, PAGE_WIDTH - MARGIN, col_w,
             )
-        if chunk_idx > 0 and y - chunk_header_height < CONTENT_BOTTOM + PAGE_BREAK_BUFFER:
+        if chunk_idx > 0 and y - chunk_header_height < content_bottom + PAGE_BREAK_BUFFER:
             start_new_page()
 
         if chunk_use_scene and asset_manifest is not None:
@@ -169,6 +184,7 @@ def render_worksheet(
                 c, chunk, adapted, theme, sizes, colors, y,
                 asset_manifest=asset_manifest,
                 page_break_fn=start_new_page,
+                effective_bottom=content_bottom,
             )
 
     # Brain break + self-assessment: treat as a combined block to avoid
@@ -179,14 +195,20 @@ def render_worksheet(
     if adapted.self_assessment:
         tail_height += _estimate_self_assessment_height(adapted.self_assessment, sizes)
 
-    if tail_height > 0 and y - tail_height < CONTENT_BOTTOM + PAGE_BREAK_BUFFER:
+    if tail_height > 0 and y - tail_height < content_bottom + PAGE_BREAK_BUFFER:
         start_new_page()
 
     if adapted.break_prompt:
-        y = _draw_break_prompt(c, adapted.break_prompt, theme, sizes, y)
+        y = _draw_break_prompt(
+            c, adapted.break_prompt, theme, sizes, y,
+            effective_bottom=content_bottom,
+        )
 
     if adapted.self_assessment:
-        y = _draw_self_assessment(c, adapted.self_assessment, theme, sizes, y)
+        y = _draw_self_assessment(
+            c, adapted.self_assessment, theme, sizes, y,
+            effective_bottom=content_bottom,
+        )
 
     # Footer with theme name
     _draw_footer(c, theme, adapted)
@@ -244,6 +266,27 @@ def _line_spacing(font_size: int) -> float:
     return font_size * ADHD_SPACING["line_height_factor"]
 
 
+def _draw_writing_line(
+    c: Canvas,
+    x: float,
+    y: float,
+    color: str,
+    max_width: float = 220,
+    col_width: float = CONTENT_WIDTH,
+) -> None:
+    """Draw a writing line with start marker tick.
+
+    Thicker (1pt), darker gray, with an 8pt vertical tick at the start.
+    """
+    line_end = x + min(col_width - 60, max_width)
+    c.setStrokeColor(HexColor(color))
+    c.setLineWidth(1.0)
+    # Start marker tick
+    c.line(x, y - 4, x, y + 4)
+    # Horizontal writing line
+    c.line(x, y, line_end, y)
+
+
 def _estimate_chunk_header_height(
     chunk: ActivityChunk,
     sizes: dict[str, int],
@@ -257,8 +300,9 @@ def _estimate_chunk_header_height(
     height += len(chunk.instructions) * _line_spacing(body)
     height += LAYOUT_SPACING["section_gap"]
     if chunk.worked_example:
-        shaded_box_height = body * 2 + 24
+        shaded_box_height = body * 2 + 36
         height += shaded_box_height + LAYOUT_SPACING["box_gap"]
+    height += 4  # micro-goal pill extra
     return height
 
 
@@ -297,7 +341,7 @@ def _estimate_chunk_height(
         ex_max = max(1, int(col_width / (body * 0.5)))
         ex_lines = len(_wrap_text(chunk.worked_example.content, ex_max))
         content_height = sizes["small"] + 12 + ex_lines * (body + 6) + 8
-        shaded_box_height = body * 2 + 24
+        shaded_box_height = body * 2 + 36
         height += max(content_height, shaded_box_height)
         height += LAYOUT_SPACING["box_gap"]
 
@@ -450,11 +494,12 @@ def _draw_header(
         c.drawString(MARGIN, y - sizes["small"], subtitle)
         y -= _line_spacing(sizes["small"]) + 4
 
-    # Divider line
-    c.setStrokeColor(HexColor(theme.colors.chunk_border))
+    # Header accent underline (short, colored)
+    c.setStrokeColor(HexColor(theme.colors.directions))
+    c.setLineWidth(1.5)
+    c.line(MARGIN, y, MARGIN + 80, y)
     c.setLineWidth(1)
-    c.line(MARGIN, y, PAGE_WIDTH - MARGIN, y)
-    y -= 12
+    y -= 24
 
     return y
 
@@ -471,6 +516,7 @@ def _draw_chunk(
     content_right: float | None = None,
     asset_manifest: AssetManifest | None = None,
     page_break_fn: Callable[[], None] | None = None,
+    effective_bottom: float = CONTENT_BOTTOM,
 ) -> float:
     """Draw a single activity chunk.
 
@@ -482,12 +528,18 @@ def _draw_chunk(
     right = content_right if content_right is not None else (PAGE_WIDTH - MARGIN)
     col_width = right - left
 
-    # Micro-goal header
+    # Micro-goal header with background pill
     _apply_adhd_spacing(c, "heading")
-    c.setFont(theme.fonts.heading, sizes["body"])
+    body = sizes["body"]
+    pill_h = body + 8
+    pill_w = len(chunk.micro_goal) * body * 0.55 + 24
+    pill_r = pill_h / 2
+    c.setFillColor(HexColor(theme_colors.micro_goal_bg))
+    c.roundRect(left, y - pill_h, pill_w, pill_h, pill_r, fill=True, stroke=False)
+    c.setFont(theme.fonts.heading, body)
     c.setFillColor(HexColor(theme_colors.key_words))
-    c.drawString(left, y - sizes["body"], chunk.micro_goal)
-    y -= _line_spacing(sizes["body"])
+    c.drawString(left + 12, y - body - 2, chunk.micro_goal)
+    y -= _line_spacing(body) + 4
 
     # Time estimate (if present)
     _apply_adhd_spacing(c, "body")
@@ -497,30 +549,42 @@ def _draw_chunk(
         c.drawString(left + 10, y - sizes["small"], chunk.time_estimate)
         y -= _line_spacing(sizes["small"])
 
-    # Instructions
+    # Instructions (bold step numbers for scannable anchors)
     c.setFillColor(HexColor(theme_colors.directions))
-    c.setFont(theme.fonts.primary, sizes["body"])
     for step in chunk.instructions:
-        text = f"{step.number}. {step.text}"
-        c.drawString(left + 10, y - sizes["body"], text)
+        # Bold step number
+        c.setFont(theme.fonts.heading, sizes["body"])
+        num_text = f"{step.number}."
+        c.drawString(left + 10, y - sizes["body"], num_text)
+        num_w = len(num_text) * sizes["body"] * 0.55 + 4
+        # Regular step text
+        c.setFont(theme.fonts.primary, sizes["body"])
+        c.drawString(left + 10 + num_w, y - sizes["body"], f" {step.text}")
         y -= _line_spacing(sizes["body"])
 
     y -= LAYOUT_SPACING["section_gap"]
 
-    # Worked example (shaded box)
+    # Worked example (shaded box with rounded corners + border)
     if chunk.worked_example:
-        box_height = sizes["body"] * 2 + 24
-        c.setFillColor(HexColor("#F0FDF4"))
-        c.rect(
+        box_height = sizes["body"] * 2 + 36
+        c.setFillColor(HexColor(theme_colors.example_bg))
+        c.roundRect(
             left + 5, y - box_height,
-            col_width - 10, box_height,
+            col_width - 10, box_height, 8,
             fill=True, stroke=False,
+        )
+        c.setStrokeColor(HexColor(theme_colors.example_border))
+        c.setLineWidth(0.75)
+        c.roundRect(
+            left + 5, y - box_height,
+            col_width - 10, box_height, 8,
+            fill=False, stroke=True,
         )
 
         c.setFillColor(HexColor(theme_colors.examples))
         c.setFont(theme.fonts.primary, sizes["small"])
         ex_text = chunk.worked_example.instruction
-        c.drawString(left + 15, y - sizes["small"] - 6, ex_text)
+        c.drawString(left + 20, y - sizes["small"] - 10, ex_text)
         y -= sizes["small"] + 12
 
         c.setFont(theme.fonts.primary, sizes["body"])
@@ -528,7 +592,7 @@ def _draw_chunk(
         # Wrap example content to column width
         ex_max = int(col_width / (sizes["body"] * 0.5))
         for ln in _wrap_text(ex_content, ex_max):
-            c.drawString(left + 15, y - sizes["body"] - 4, ln)
+            c.drawString(left + 20, y - sizes["body"] - 4, ln)
             y -= sizes["body"] + 6
         y -= LAYOUT_SPACING["box_gap"]
 
@@ -544,7 +608,7 @@ def _draw_chunk(
         # Per-item page break: if this item won't fit, start a new page
         if page_break_fn is not None:
             item_h = _estimate_item_height(item, theme, sizes, left, right, col_width)
-            if y - item_h < CONTENT_BOTTOM + PAGE_BREAK_BUFFER:
+            if y - item_h < effective_bottom + PAGE_BREAK_BUFFER:
                 page_break_fn()
                 y = CONTENT_TOP
                 _apply_adhd_spacing(c, "body")
@@ -562,9 +626,8 @@ def _draw_chunk(
                 y -= sizes["body"] + 6
             # Writing line with ample space for child to print
             write_y = y - write_line_height + 6
-            c.setStrokeColor(HexColor(theme_colors.chunk_border))
-            c.setLineWidth(0.5)
-            c.line(left + 30, write_y, left + 30 + min(col_width - 60, 200), write_y)
+            line_color = theme_colors.writing_line
+            _draw_writing_line(c, left + 30, write_y, line_color, col_width=col_width)
             y = write_y - 10
         elif is_chain_step:
             y = _draw_chain_step_item(
@@ -610,11 +673,10 @@ def _draw_chunk(
             if item.response_format == "write":
                 # Writing line with ample space for child to print
                 write_y = y - write_line_height + 6
-                c.setStrokeColor(HexColor(theme_colors.chunk_border))
-                c.setLineWidth(0.5)
-                c.line(
-                    left + 30, write_y,
-                    left + 30 + min(col_width - 60, 200), write_y,
+                line_color = theme_colors.writing_line
+                _draw_writing_line(
+                    c, left + 30, write_y, line_color,
+                    col_width=col_width,
                 )
                 y = write_y - 10
             elif item.response_format == "circle":
@@ -625,11 +687,12 @@ def _draw_chunk(
 
             y -= LAYOUT_SPACING["item_gap"]
 
-    # Chunk divider
+    # Chunk divider: three centered dots
     y -= LAYOUT_SPACING["divider_gap"]
-    c.setStrokeColor(HexColor(theme_colors.chunk_border))
-    c.setLineWidth(0.5)
-    c.line(left + 20, y, right - 20, y)
+    c.setFillColor(HexColor(theme_colors.chunk_border))
+    center_x = (left + right) / 2
+    for dx in (-12, 0, 12):
+        c.circle(center_x + dx, y, 2, fill=True, stroke=False)
     y -= LAYOUT_SPACING["divider_gap"]
 
     return y
@@ -685,9 +748,7 @@ def _draw_chain_step_item(
 
     # Writing line with generous space for child to print the answer
     write_y = y - write_line_height + 6
-    c.setStrokeColor(HexColor(theme.colors.chunk_border))
-    c.setLineWidth(0.5)
-    c.line(lx + 30, write_y, lx + 30 + min(cw - 60, 160), write_y)
+    _draw_writing_line(c, lx + 30, write_y, theme.colors.writing_line, max_width=160, col_width=cw)
     y = write_y - 12
 
     return y
@@ -750,7 +811,7 @@ def _draw_match_item(
     word_end = lx + 15 + len(item.content) * (body * 0.65) + 10
     line_y = y - pic_size / 2 - 4
     c.setStrokeColor(HexColor(theme.colors.chunk_border))
-    c.setDash(2, 4)
+    c.setDash(4, 4)
     c.line(
         min(word_end, pic_x - 25), line_y,
         pic_x - 5, line_y,
@@ -866,9 +927,7 @@ def _draw_fill_blank_item(
 
     # Answer writing line below the prompt
     line_y = y - write_line_height + 8
-    c.setStrokeColor(HexColor(theme.colors.chunk_border))
-    c.setLineWidth(0.5)
-    c.line(lx + 30, line_y, lx + 30 + min(cw - 60, 180), line_y)
+    _draw_writing_line(c, lx + 30, line_y, theme.colors.writing_line, max_width=220, col_width=cw)
     y = line_y - 8
 
     # Word bank (options) in a shaded box
@@ -877,9 +936,9 @@ def _draw_fill_blank_item(
         bx = lx + 25
         bw = cw - 50
         c.setFillColor(HexColor("#F9FAFB"))
-        c.rect(bx, y - bank_height, bw, bank_height, fill=True, stroke=False)
+        c.roundRect(bx, y - bank_height, bw, bank_height, 6, fill=True, stroke=False)
         c.setStrokeColor(HexColor(theme.colors.chunk_border))
-        c.rect(bx, y - bank_height, bw, bank_height, fill=False, stroke=True)
+        c.roundRect(bx, y - bank_height, bw, bank_height, 6, fill=False, stroke=True)
 
         c.setFillColor(HexColor(theme.colors.directions))
         c.setFont(theme.fonts.primary, sizes["small"])
@@ -911,9 +970,9 @@ def _draw_read_aloud_item(
 
     # Light blue reading box
     rx, rw = lx + 10, cw - 20
-    c.setFillColor(HexColor("#EFF6FF"))
+    c.setFillColor(HexColor(theme.colors.reading_bg))
     c.roundRect(rx, y - box_height, rw, box_height, 8, fill=True, stroke=False)
-    c.setStrokeColor(HexColor("#BFDBFE"))
+    c.setStrokeColor(HexColor(theme.colors.reading_border))
     c.roundRect(rx, y - box_height, rw, box_height, 8, fill=False, stroke=True)
 
     c.setFont(theme.fonts.heading, sizes["small"])
@@ -961,10 +1020,13 @@ def _draw_sound_box_item(
     start_x = lx + (cw - total_boxes_width) / 2  # center the boxes
 
     examples_color = getattr(theme.colors, "examples", "#10B981")
-    c.setStrokeColor(HexColor(examples_color))
-    c.setLineWidth(1.5)
     for i in range(len(phonemes)):
         bx = start_x + i * (box_size + box_gap)
+        # Subtle fill to make boxes feel like inviting slots
+        c.setFillColor(HexColor(theme.colors.example_bg))
+        c.roundRect(bx, y - box_size, box_size, box_size, 6, fill=True, stroke=False)
+        c.setStrokeColor(HexColor(examples_color))
+        c.setLineWidth(1.5)
         c.roundRect(bx, y - box_size, box_size, box_size, 6, fill=False, stroke=True)
 
     y -= box_size + 16
@@ -997,23 +1059,24 @@ def _draw_break_prompt(
     theme: ThemeConfig,
     sizes: dict[str, int],
     y: float,
+    effective_bottom: float = CONTENT_BOTTOM,
 ) -> float:
     """Draw a fun 'Take a Break!' section with movement suggestion."""
     body = sizes["body"]
     box_height = body * 2 + 24
 
     # Check space
-    if y - box_height < CONTENT_BOTTOM:
+    if y - box_height < effective_bottom:
         c.showPage()
         y = CONTENT_TOP
 
     # Bright, fun box
     bx, bw = MARGIN + 20, CONTENT_WIDTH - 40
     c.setFillColor(HexColor("#FEF3C7"))  # Warm yellow
-    c.roundRect(bx, y - box_height, bw, box_height, 10, fill=True, stroke=False)
+    c.roundRect(bx, y - box_height, bw, box_height, 8, fill=True, stroke=False)
     c.setStrokeColor(HexColor("#F59E0B"))
     c.setLineWidth(2)
-    c.roundRect(bx, y - box_height, bw, box_height, 10, fill=False, stroke=True)
+    c.roundRect(bx, y - box_height, bw, box_height, 8, fill=False, stroke=True)
     c.setLineWidth(1)
 
     # Title
@@ -1103,11 +1166,12 @@ def _draw_self_assessment(
     theme: ThemeConfig,
     sizes: dict[str, int],
     y: float,
+    effective_bottom: float = CONTENT_BOTTOM,
 ) -> float:
     """Draw self-assessment checklist at the bottom."""
     # Check if enough space, otherwise new page
     needed = len(items) * (sizes["body"] + 6) + sizes["body"] + 20
-    if y - needed < CONTENT_BOTTOM:
+    if y - needed < effective_bottom:
         c.showPage()
         y = CONTENT_TOP
 
@@ -1121,9 +1185,11 @@ def _draw_self_assessment(
     c.setFont(theme.fonts.primary, sizes["body"])
     c.setFillColor(HexColor(theme.colors.text))
     for item in items:
-        # Draw checkbox
-        box_size = sizes["body"] - 2
-        c.rect(MARGIN + 10, y - box_size, box_size, box_size, fill=False, stroke=True)
+        # Draw rounded checkbox in reward color
+        box_size = sizes["body"]
+        c.setStrokeColor(HexColor(theme.colors.rewards))
+        c.roundRect(MARGIN + 10, y - box_size, box_size, box_size, 3, fill=False, stroke=True)
+        c.setFillColor(HexColor(theme.colors.text))
         c.drawString(MARGIN + 10 + box_size + 6, y - sizes["body"] + 2, item)
         y -= sizes["body"] + 6
 
@@ -1227,10 +1293,15 @@ def _draw_footer(
     theme: ThemeConfig,
     adapted: AdaptedActivityModel,
 ) -> None:
-    """Draw page footer."""
+    """Draw page footer with separator line."""
+    footer_y = MARGIN / 2
+    # Thin separator line above footer
+    c.setStrokeColor(HexColor(theme.colors.chunk_border))
+    c.setLineWidth(0.5)
+    c.line(MARGIN, footer_y + 10, PAGE_WIDTH - MARGIN, footer_y + 10)
     c.setFont(theme.fonts.primary, 8)
     c.setFillColor(HexColor(theme.colors.chunk_border))
     footer = f"{theme.name} | Worksheet Builder v0.1.0"
     if adapted.worksheet_count > 1:
         footer += f" | Part {adapted.worksheet_number} of {adapted.worksheet_count}"
-    c.drawString(MARGIN, MARGIN / 2, footer)
+    c.drawString(MARGIN, footer_y, footer)

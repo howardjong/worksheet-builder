@@ -22,6 +22,12 @@ class ThemeColors(BaseModel):
     background: str = "#FAFAFA"  # Near-white
     text: str = "#1F2937"  # Dark gray
     chunk_border: str = "#E5E7EB"  # Light gray
+    example_bg: str = "#F0FDF4"  # worked-example box fill
+    example_border: str = "#BBF7D0"  # worked-example box border
+    reading_bg: str = "#EFF6FF"  # read-aloud box fill
+    reading_border: str = "#BFDBFE"  # read-aloud box border
+    writing_line: str = "#D1D5DB"  # writing line color
+    micro_goal_bg: str = "#FEF3C7"  # micro-goal pill background
 
 
 class DecorativeConfig(BaseModel):
