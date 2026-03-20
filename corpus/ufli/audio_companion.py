@@ -30,6 +30,7 @@ from corpus.ufli.audio_companion_schema import (
     BundleValidationReport,
     ClipSourceField,
     DryRunEstimate,
+    LessonAudioAggregate,
     LessonAudioBundle,
     PilotLessonCatalog,
     PilotReviewRecord,
@@ -41,7 +42,13 @@ from corpus.ufli.audio_companion_schema import (
 from corpus.ufli.extract import LessonContent
 from corpus.ufli.grade_levels import derive_grade
 from rag.embeddings import embed_text
-from rag.store import AUDIO_COMPANION, add_document, get_or_create_collection, get_store
+from rag.store import (
+    AUDIO_COMPANION_CLIPS,
+    AUDIO_COMPANION_LESSONS,
+    add_document,
+    get_or_create_collection,
+    get_store,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -57,6 +64,7 @@ _VOICE_PROFILES = "voice_profiles.yaml"
 _PILOT_LESSONS = "pilot_lessons.yaml"
 _NUMERIC_LESSONS = range(1, 129)
 _STAGE1_PILOT_SET = "pilot_micro"
+_PILOT_SCOPE = "pilot_rep"
 _FORBIDDEN_TEMPLATE_PHRASES = (
     "read these words",
     "with these words",
@@ -169,7 +177,7 @@ class _ConceptTarget:
 
 def build_audio_companion_manifests(
     data_dir: str = "data/ufli",
-    lesson_set: str = _STAGE1_PILOT_SET,
+    lesson_set: str = _PILOT_SCOPE,
     lesson_id: str | None = None,
     lesson_min: int = 1,
     lesson_max: int = 128,
@@ -219,7 +227,7 @@ def build_audio_companion_manifests(
 
 def generate_audio_companion(
     data_dir: str = "data/ufli",
-    lesson_set: str = _STAGE1_PILOT_SET,
+    lesson_set: str = _PILOT_SCOPE,
     lesson_id: str | None = None,
     lesson_min: int = 1,
     lesson_max: int = 128,
@@ -249,7 +257,7 @@ def generate_audio_companion(
         lesson_min=lesson_min,
         lesson_max=lesson_max,
     )
-    _enforce_stage1_pilot_scope(selected_lessons, pilot_lessons)
+    _enforce_pilot_scope(selected_lessons, pilot_lessons)
 
     bundles = load_audio_bundles(bundle_dir, selected_lessons=selected_lessons)
     validation_report = validate_audio_companion(
@@ -319,6 +327,7 @@ def generate_audio_companion(
     skipped = 0
     planned = 0
 
+    failed = 0
     for bundle in bundle_copies:
         for clip in bundle.clips:
             clip.duration_ms = _estimate_duration_ms(clip.tts_text, clip.segment_type)
@@ -342,13 +351,21 @@ def generate_audio_companion(
 
             planned += 1
             _ensure_parent(target_path)
-            audio_bytes, model_id = _synthesize_elevenlabs(
-                text=clip.tts_text,
-                audio_type=clip.segment_type,
-                voice_profile=selected_voice,
-                api_key=api_key,
-                seed=_stable_seed(clip.segment_id),
-            )
+            try:
+                audio_bytes, model_id = _synthesize_elevenlabs(
+                    text=clip.tts_text,
+                    audio_type=clip.segment_type,
+                    voice_profile=selected_voice,
+                    api_key=api_key,
+                    seed=_stable_seed(clip.segment_id),
+                )
+            except RuntimeError as exc:
+                clip.status = "failed"
+                failed += 1
+                logger.error(
+                    "Clip %s failed after retries: %s", clip.segment_id, exc
+                )
+                continue
             target_path.write_bytes(audio_bytes)
             clip.duration_ms = _measured_or_estimated_duration_ms(
                 target_path,
@@ -376,9 +393,10 @@ def generate_audio_companion(
             )
             time.sleep(_GENERATE_DELAY_SECONDS)
 
+        # Write bundle and log after each lesson for crash recovery
         _write_bundle(bundle_dir, bundle)
+        _write_generation_log(companion_dir / _GENERATION_LOG, log_entries)
 
-    _write_generation_log(companion_dir / _GENERATION_LOG, log_entries)
     _write_audio_manifest(companion_dir / _AUDIO_MANIFEST, bundle_copies)
 
     review_packet_dir = ""
@@ -399,6 +417,7 @@ def generate_audio_companion(
         "planned": planned,
         "generated": generated,
         "skipped": skipped,
+        "failed": failed,
         "voice_profiles": {
             estimate.voice_profile: estimate.model_dump() for estimate in estimates
         },
@@ -410,17 +429,24 @@ def generate_audio_companion(
 def index_audio_companion(
     data_dir: str = "data/ufli",
     db_path: str = "vector_store",
-    lesson_set: str = _STAGE1_PILOT_SET,
+    lesson_set: str = _PILOT_SCOPE,
     lesson_id: str | None = None,
     lesson_min: int = 1,
     lesson_max: int = 128,
     voice_profile: str | None = None,
-    granularity: str = "clips",
+    granularity: str = "both",
 ) -> int:
-    """Index generated audio companion transcripts into ChromaDB."""
-    if granularity != "clips":
-        raise RuntimeError("lesson-level indexing is Stage 2 work; use --granularity clips")
+    """Index generated audio companion transcripts into ChromaDB.
 
+    Indexes into two collections:
+      - audio_companion_clips: one document per generated clip
+      - audio_companion_lessons: one aggregate document per lesson
+
+    Granularity controls which collections are populated:
+      - clips: clip-level only
+      - lessons: lesson-level only
+      - both: both collections (default for Stage 2+)
+    """
     base = Path(data_dir)
     companion_dir = base / "companion"
     pilot_lessons = load_pilot_lessons(companion_dir / _PILOT_LESSONS)
@@ -431,12 +457,36 @@ def index_audio_companion(
         lesson_min=lesson_min,
         lesson_max=lesson_max,
     )
-    _enforce_stage1_pilot_scope(selected_lessons, pilot_lessons)
+    _enforce_pilot_scope(selected_lessons, pilot_lessons)
 
     bundles = load_audio_bundles(companion_dir / _BUNDLE_DIR, selected_lessons=selected_lessons)
     store = get_store(db_path)
-    collection = get_or_create_collection(store, AUDIO_COMPANION)
 
+    indexed = 0
+    index_clips = granularity in ("clips", "both")
+    index_lessons = granularity in ("lessons", "both")
+
+    if index_clips:
+        clips_collection = get_or_create_collection(store, AUDIO_COMPANION_CLIPS)
+        indexed += _index_clips(bundles, clips_collection, companion_dir, voice_profile)
+
+    if index_lessons:
+        lessons_collection = get_or_create_collection(store, AUDIO_COMPANION_LESSONS)
+        indexed += _index_lessons(bundles, lessons_collection, companion_dir, voice_profile)
+
+    logger.info(
+        "Indexed %s audio companion documents (granularity=%s)", indexed, granularity
+    )
+    return indexed
+
+
+def _index_clips(
+    bundles: list[LessonAudioBundle],
+    collection: Any,
+    companion_dir: Path,
+    voice_profile: str | None,
+) -> int:
+    """Index clip-level documents into the clips collection."""
     indexed = 0
     for bundle in bundles:
         for clip in bundle.clips:
@@ -445,18 +495,12 @@ def index_audio_companion(
             if clip.status != "generated" or not clip.audio_path:
                 continue
             if not (companion_dir / clip.audio_path).exists():
+                logger.warning(
+                    "Audio file missing for %s, skipping indexing", clip.segment_id
+                )
                 continue
 
-            document = "\n".join(
-                part
-                for part in [
-                    clip.transcript_text,
-                    bundle.concept,
-                    " ".join(bundle.word_targets),
-                    " ".join(clip.pronunciation_targets),
-                ]
-                if part
-            )
+            document = _build_clip_document(clip, bundle)
             if not document.strip():
                 continue
 
@@ -486,9 +530,121 @@ def index_audio_companion(
                 document=document[:1000],
             )
             indexed += 1
-
-    logger.info("Indexed %s audio companion clips into %s", indexed, AUDIO_COMPANION)
     return indexed
+
+
+def _build_clip_document(clip: AudioClipDefinition, bundle: LessonAudioBundle) -> str:
+    """Build a transcript-first document string for clip-level embedding."""
+    return "\n".join(
+        part
+        for part in [
+            clip.transcript_text,
+            bundle.concept,
+            " ".join(bundle.word_targets),
+            " ".join(clip.pronunciation_targets),
+        ]
+        if part
+    )
+
+
+def _index_lessons(
+    bundles: list[LessonAudioBundle],
+    collection: Any,
+    companion_dir: Path,
+    voice_profile: str | None,
+) -> int:
+    """Index lesson-level aggregate documents into the lessons collection."""
+    indexed = 0
+    for bundle in bundles:
+        aggregate = build_lesson_aggregate(bundle, companion_dir, voice_profile)
+        if aggregate is None:
+            continue
+
+        document = _build_lesson_document(aggregate)
+        if not document.strip():
+            continue
+
+        result = embed_text(document[:2000], task_type="RETRIEVAL_DOCUMENT")
+        doc_id = f"lesson_{aggregate.lesson_id}"
+        if aggregate.voice_profile:
+            doc_id = f"lesson_{aggregate.lesson_id}_{aggregate.voice_profile}"
+        metadata = {
+            "lesson_id": aggregate.lesson_id,
+            "lesson_number": aggregate.lesson_number,
+            "title": aggregate.title,
+            "concept": aggregate.concept,
+            "grade_level": aggregate.grade_level,
+            "clip_count": aggregate.clip_count,
+            "clip_types": ",".join(aggregate.clip_types),
+            "phoneme_targets": ",".join(aggregate.phoneme_targets),
+            "word_targets": ",".join(aggregate.word_targets),
+            "voice_profile": aggregate.voice_profile,
+            "total_duration_ms": aggregate.total_duration_ms,
+            "has_passage": bool(aggregate.passage_text),
+        }
+        add_document(
+            collection,
+            doc_id=doc_id,
+            embedding=result.values,
+            metadata=metadata,
+            document=document[:1000],
+        )
+        indexed += 1
+    return indexed
+
+
+def build_lesson_aggregate(
+    bundle: LessonAudioBundle,
+    companion_dir: Path,
+    voice_profile: str | None = None,
+) -> LessonAudioAggregate | None:
+    """Build a lesson-level aggregate from a bundle's generated clips."""
+    clips = [
+        clip
+        for clip in bundle.clips
+        if clip.status == "generated"
+        and clip.audio_path
+        and (companion_dir / clip.audio_path).exists()
+        and (not voice_profile or clip.voice_profile == voice_profile)
+    ]
+    if not clips:
+        return None
+
+    clip_types: list[str] = sorted({clip.segment_type for clip in clips})
+    aggregate_transcript = " ".join(clip.transcript_text for clip in clips if clip.transcript_text)
+    total_duration = sum(clip.duration_ms for clip in clips)
+    vp = clips[0].voice_profile if clips else ""
+
+    return LessonAudioAggregate(
+        lesson_id=bundle.lesson_id,
+        lesson_number=bundle.lesson_number,
+        title=bundle.title,
+        concept=bundle.concept,
+        grade_level=bundle.grade_level,
+        phoneme_targets=bundle.phoneme_targets,
+        word_targets=bundle.word_targets,
+        passage_text=bundle.passage_text,
+        clip_count=len(clips),
+        clip_types=clip_types,
+        aggregate_transcript=aggregate_transcript,
+        voice_profile=vp,
+        total_duration_ms=total_duration,
+    )
+
+
+def _build_lesson_document(aggregate: LessonAudioAggregate) -> str:
+    """Build a transcript-first document string for lesson-level embedding."""
+    return "\n".join(
+        part
+        for part in [
+            aggregate.aggregate_transcript,
+            aggregate.concept,
+            " ".join(aggregate.word_targets),
+            " ".join(aggregate.phoneme_targets),
+            aggregate.passage_text[:500] if aggregate.passage_text else "",
+        ]
+        if part
+    )
 
 
 def load_audio_bundles(
@@ -531,12 +687,14 @@ def load_pilot_lessons(path: Path) -> PilotLessonCatalog:
     catalog = PilotLessonCatalog.model_validate(payload)
     if _STAGE1_PILOT_SET not in catalog.lesson_sets:
         raise ValueError(f"{_STAGE1_PILOT_SET} must exist in pilot_lessons.yaml")
+    if _PILOT_SCOPE not in catalog.lesson_sets:
+        raise ValueError(f"{_PILOT_SCOPE} must exist in pilot_lessons.yaml")
     return catalog
 
 
 def validate_audio_companion(
     data_dir: str = "data/ufli",
-    lesson_set: str = _STAGE1_PILOT_SET,
+    lesson_set: str = _PILOT_SCOPE,
     lesson_id: str | None = None,
     lesson_min: int = 1,
     lesson_max: int = 128,
@@ -684,16 +842,16 @@ def _derive_lesson_bundle(
             _clip(
                 lesson_id=lesson.lesson_id,
                 lesson_number=lesson_number,
-                    segment_id=f"{lesson_key}_passage_full",
-                    segment_type="passage_full",
-                    sequence_index=sequence_index,
-                    audio_file_name="passage_full.mp3",
-                    transcript_text=passage_text,
-                    tts_text=_clause_pause_only_tts(passage_text),
-                    pronunciation_targets=[],
-                    source_fields=["decodable_text"],
-                )
+                segment_id=f"{lesson_key}_passage_full",
+                segment_type="passage_full",
+                sequence_index=sequence_index,
+                audio_file_name="passage_full.mp3",
+                transcript_text=passage_text,
+                tts_text=_clause_pause_only_tts(passage_text),
+                pronunciation_targets=[],
+                source_fields=["decodable_text"],
             )
+        )
         sequence_index += 1
 
     review_transcript, review_tts = _review_text(concept_targets, word_targets)
@@ -775,14 +933,15 @@ def _resolve_selected_lessons(
     raise ValueError(f"Unsupported lesson set: {lesson_set}")
 
 
-def _enforce_stage1_pilot_scope(
+def _enforce_pilot_scope(
     selected_lessons: set[int],
     pilot_lessons: PilotLessonCatalog,
 ) -> None:
-    allowed_lessons = set(pilot_lessons.lesson_sets[_STAGE1_PILOT_SET])
+    allowed_lessons = set(pilot_lessons.lesson_sets[_PILOT_SCOPE])
     if not selected_lessons.issubset(allowed_lessons):
         raise RuntimeError(
-            "Stage 1 generation/indexing is pilot-only; select lessons 1, 14, and/or 95"
+            f"Generation/indexing is pilot-only; select lessons from {_PILOT_SCOPE}: "
+            f"{sorted(pilot_lessons.lesson_sets[_PILOT_SCOPE])}"
         )
 
 
@@ -1571,6 +1730,7 @@ def _request_elevenlabs_audio(
     api_key: str,
     seed: int,
     model_id: str,
+    max_retries: int = 3,
 ) -> bytes:
     settings = _audio_settings(voice_profile, audio_type)
     payload = {
@@ -1582,21 +1742,59 @@ def _request_elevenlabs_audio(
     }
     query = urllib.parse.urlencode({"output_format": ELEVENLABS_OUTPUT_FORMAT})
     url = f"{ELEVENLABS_API_BASE}/v1/text-to-speech/{voice_profile.voice_id}?{query}"
-    request = urllib.request.Request(
-        url,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Content-Type": "application/json",
-            "xi-api-key": api_key,
-        },
-        method="POST",
-    )
-    try:
-        with urllib.request.urlopen(request) as response:  # noqa: S310
-            return cast(bytes, response.read())
-    except urllib.error.HTTPError as exc:  # pragma: no cover - exercised live only
-        body = exc.read().decode("utf-8", errors="ignore")
-        raise RuntimeError(f"ElevenLabs TTS failed ({exc.code}): {body}") from exc
+
+    retryable_codes = {429, 500, 502, 503, 504}
+    last_error: Exception | None = None
+
+    for attempt in range(max_retries):
+        request = urllib.request.Request(
+            url,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "xi-api-key": api_key,
+            },
+            method="POST",
+        )
+        try:
+            with urllib.request.urlopen(request) as response:  # noqa: S310
+                audio_bytes = cast(bytes, response.read())
+            if len(audio_bytes) < 100:
+                raise RuntimeError(
+                    f"ElevenLabs returned suspiciously small audio "
+                    f"({len(audio_bytes)} bytes)"
+                )
+            return audio_bytes
+        except urllib.error.HTTPError as exc:  # pragma: no cover - exercised live only
+            body = exc.read().decode("utf-8", errors="ignore")
+            last_error = RuntimeError(
+                f"ElevenLabs TTS failed ({exc.code}): {body}"
+            )
+            last_error.__cause__ = exc
+            if exc.code not in retryable_codes:
+                raise last_error from exc
+            delay = min(2 ** attempt + 0.5, 10.0)
+            logger.warning(
+                "ElevenLabs %d error (attempt %d/%d), retrying in %.1fs",
+                exc.code,
+                attempt + 1,
+                max_retries,
+                delay,
+            )
+            time.sleep(delay)
+        except urllib.error.URLError as exc:  # pragma: no cover - network errors
+            last_error = RuntimeError(f"ElevenLabs network error: {exc}")
+            last_error.__cause__ = exc
+            delay = min(2 ** attempt + 0.5, 10.0)
+            logger.warning(
+                "ElevenLabs network error (attempt %d/%d), retrying in %.1fs",
+                attempt + 1,
+                max_retries,
+                delay,
+            )
+            time.sleep(delay)
+
+    raise last_error or RuntimeError("ElevenLabs TTS failed after all retries")
 
 
 def _resolved_audio_path(
@@ -1647,6 +1845,8 @@ def _write_audio_manifest(path: Path, bundles: list[LessonAudioBundle]) -> None:
     with path.open("w") as handle:
         for bundle in bundles:
             for clip in bundle.clips:
+                if clip.status == "failed":
+                    continue
                 handle.write(
                     json.dumps(
                         {

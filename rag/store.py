@@ -15,6 +15,8 @@ ADAPTATIONS = "adaptations"
 EXEMPLARS = "exemplars"
 CURRICULUM = "curriculum"
 AUDIO_COMPANION = "audio_companion"
+AUDIO_COMPANION_CLIPS = "audio_companion_clips"
+AUDIO_COMPANION_LESSONS = "audio_companion_lessons"
 
 
 def get_store(db_path: str = DEFAULT_DB_PATH) -> Any:

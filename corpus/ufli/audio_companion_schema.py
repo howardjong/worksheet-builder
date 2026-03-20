@@ -483,6 +483,26 @@ class AudioProbeVariant(BaseModel):
     judge_result: AudioJudgeClipResult | None = None
 
 
+class LessonAudioAggregate(BaseModel):
+    """Lesson-level aggregate document for audio companion indexing (Stage 2)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    lesson_id: str
+    lesson_number: int
+    title: str
+    concept: str
+    grade_level: str
+    phoneme_targets: list[str] = Field(default_factory=list)
+    word_targets: list[str] = Field(default_factory=list)
+    passage_text: str = ""
+    clip_count: int = 0
+    clip_types: list[str] = Field(default_factory=list)
+    aggregate_transcript: str = ""
+    voice_profile: str = ""
+    total_duration_ms: int = 0
+
+
 class AudioProbeRunSummary(BaseModel):
     """Summary artifact for one controlled audio probe run."""
 

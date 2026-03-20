@@ -47,11 +47,11 @@ python -m rag.backfill --artifacts-dir ./samples/output --output-dir ./samples/o
 # Evaluate retrieval and baseline-vs-RAG behavior
 python -m rag.eval --test-dir ./samples/input --profile profiles/ian.yaml
 
-# Build Stage 1 UFLI audio companion lesson bundles
-python -m corpus.ufli.ingest build-audio --lesson-set pilot_micro
+# Build UFLI audio companion lesson bundles (pilot_rep: 6 lessons)
+python -m corpus.ufli.ingest build-audio
 
 # Estimate pilot audio generation cost and clip counts without calling ElevenLabs
-python -m corpus.ufli.ingest generate-audio --lesson-set pilot_micro --dry-run
+python -m corpus.ufli.ingest generate-audio --dry-run
 
 # View progress
 python complete.py --profile profiles/ian.yaml --progress
@@ -313,13 +313,13 @@ python complete.py --profile profiles/ian.yaml --set-chunking small
 
 ### UFLI audio companion
 
-The repo includes a pilot-first audio companion path for numeric UFLI lessons
-`1-128`. The audio is designed as support for explicit reading instruction, not a
+The repo includes a pilot-first audio companion pipeline for numeric UFLI lessons
+`1-128`. Audio is designed as support for explicit reading instruction, not a
 replacement for decoding instruction.
 
-Stage 1 scope is intentionally narrow:
-- Pilot lessons: `1`, `14`, `95`
-- Pilot voices: `dorothy`, `neutral_na_pilot`
+**Current scope (Stage 2 — representative pilot):**
+- Pilot lessons: `1`, `14`, `34`, `64`, `95`, `128`
+- Winning voice: `dorothy` (ElevenLabs `eleven_multilingual_v2`)
 - Indexed clip taxonomy:
   - `lesson_instruction`
   - `phoneme_model`
@@ -327,6 +327,7 @@ Stage 1 scope is intentionally narrow:
   - `passage_sentence`
   - `passage_full`
   - `review`
+- Two Chroma collections: `audio_companion_clips` (per-clip) and `audio_companion_lessons` (per-lesson aggregate)
 - `encouragement` is not indexed as lesson content
 - Generation stays offline by default unless `--live` is passed
 
@@ -338,24 +339,33 @@ Committed companion config lives under `data/ufli/companion/`:
 Core commands:
 
 ```bash
-# Build voice-neutral pilot lesson bundles
-python -m corpus.ufli.ingest build-audio --lesson-set pilot_micro
+# Build voice-neutral lesson bundles (defaults to pilot_rep: 6 lessons)
+python -m corpus.ufli.ingest build-audio
 
-# Dry-run estimation for both pilot voices
-python -m corpus.ufli.ingest generate-audio --lesson-set pilot_micro --dry-run
+# Validate built bundles
+python -m corpus.ufli.ingest validate-audio
 
-# Live-generate one pilot voice after voice ids are configured
+# Dry-run estimation for pilot voices
+python -m corpus.ufli.ingest generate-audio --dry-run
+
+# Live-generate with Dorothy
 python -m corpus.ufli.ingest generate-audio \
-  --lesson-set pilot_micro \
   --voice-profile dorothy \
   --live \
   --review-packet
 
-# Index generated pilot clips
+# Index into both clip-level and lesson-level collections
 python -m corpus.ufli.ingest index-audio \
-  --lesson-set pilot_micro \
   --voice-profile dorothy \
-  --granularity clips
+  --granularity both
+
+# Judge generated clips with Gemini
+python -m corpus.ufli.ingest judge-audio \
+  --voice-profile dorothy
+
+# Run controlled diagnostic probes on hard clips
+python -m corpus.ufli.ingest diagnose-audio \
+  --voice-profile dorothy
 ```
 
 `generate-audio --review-packet` writes a timestamped packet under

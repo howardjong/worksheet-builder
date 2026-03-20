@@ -160,7 +160,7 @@ def index(data_dir: str, db_path: str) -> None:
 @click.option(
     "--lesson-set",
     type=click.Choice(["pilot_micro", "pilot_rep", "all", "range"]),
-    default="pilot_micro",
+    default="pilot_rep",
     show_default=True,
     help="Lesson selection mode.",
 )
@@ -192,7 +192,7 @@ def build_audio(
 @click.option(
     "--lesson-set",
     type=click.Choice(["pilot_micro", "pilot_rep", "all", "range"]),
-    default="pilot_micro",
+    default="pilot_rep",
     show_default=True,
     help="Lesson selection mode.",
 )
@@ -236,7 +236,7 @@ def validate_audio(
 @click.option(
     "--lesson-set",
     type=click.Choice(["pilot_micro", "pilot_rep", "all", "range"]),
-    default="pilot_micro",
+    default="pilot_rep",
     show_default=True,
     help="Lesson selection mode.",
 )
@@ -293,6 +293,7 @@ def generate_audio(
         f"planned={summary['planned']} "
         f"generated={summary['generated']} "
         f"skipped={summary['skipped']} "
+        f"failed={summary.get('failed', 0)} "
         f"review_packet_dir={summary['review_packet_dir'] or 'n/a'}"
     )
     for profile_name, estimate in summary["voice_profiles"].items():
@@ -309,7 +310,7 @@ def generate_audio(
 @click.option(
     "--lesson-set",
     type=click.Choice(["pilot_micro", "pilot_rep", "all", "range"]),
-    default="pilot_micro",
+    default="pilot_rep",
     show_default=True,
     help="Lesson selection mode.",
 )
@@ -324,9 +325,9 @@ def generate_audio(
 @click.option(
     "--granularity",
     type=click.Choice(["clips", "lessons", "both"]),
-    default="clips",
+    default="both",
     show_default=True,
-    help="Indexing granularity. Only clips is implemented in Stage 1.",
+    help="Indexing granularity: clips, lessons, or both (default).",
 )
 def index_audio(
     data_dir: str,
@@ -351,7 +352,7 @@ def index_audio(
         voice_profile=voice_profile,
         granularity=granularity,
     )
-    click.echo(f"Indexed {count} audio companion clips")
+    click.echo(f"Indexed {count} audio companion documents (granularity={granularity})")
 
 
 @cli.command(name="judge-audio")

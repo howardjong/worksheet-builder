@@ -21,7 +21,13 @@ from corpus.ufli.audio_companion import (
     load_voice_profiles,
     validate_audio_companion,
 )
-from rag.store import AUDIO_COMPANION, get_or_create_collection, get_store
+from corpus.ufli.audio_companion_schema import LessonAudioBundle
+from rag.store import (
+    AUDIO_COMPANION_CLIPS,
+    AUDIO_COMPANION_LESSONS,
+    get_or_create_collection,
+    get_store,
+)
 
 
 def _write_normalized(path: Path, rows: list[dict[str, object]]) -> None:
@@ -110,13 +116,13 @@ def _sample_rows() -> list[dict[str, object]]:
     ]
 
 
-def test_build_audio_bundles_use_stage1_taxonomy_and_pilot_scope(tmp_path: Path) -> None:
+def test_build_audio_bundles_use_taxonomy_and_pilot_scope(tmp_path: Path) -> None:
     _write_companion_configs(tmp_path)
     _write_normalized(tmp_path / "normalized.jsonl", _sample_rows())
 
     bundles = build_audio_companion_manifests(data_dir=str(tmp_path))
 
-    assert [bundle.lesson_id for bundle in bundles] == ["1", "14", "95"]
+    assert [bundle.lesson_id for bundle in bundles] == ["1", "14", "95", "128"]
     lesson_1 = bundles[0]
     assert {clip.segment_type for clip in lesson_1.clips} == {
         "lesson_instruction",
@@ -281,7 +287,7 @@ def test_load_voice_profiles_rejects_invalid_elevenlabs_speed(tmp_path: Path) ->
         load_voice_profiles(voice_profiles_path)
 
 
-def test_generate_audio_rejects_non_pilot_live_scope(tmp_path: Path) -> None:
+def test_generate_audio_allows_pilot_rep_scope(tmp_path: Path) -> None:
     _write_companion_configs(tmp_path)
     _write_normalized(tmp_path / "normalized.jsonl", _sample_rows())
     build_audio_companion_manifests(
@@ -289,10 +295,27 @@ def test_generate_audio_rejects_non_pilot_live_scope(tmp_path: Path) -> None:
         lesson_set="pilot_rep",
     )
 
+    summary = generate_audio_companion(
+        data_dir=str(tmp_path),
+        lesson_set="pilot_rep",
+        dry_run=True,
+        voice_profile="dorothy",
+    )
+    assert summary["planned"] > 0
+
+
+def test_generate_audio_rejects_non_pilot_live_scope(tmp_path: Path) -> None:
+    _write_companion_configs(tmp_path)
+    _write_normalized(tmp_path / "normalized.jsonl", _sample_rows())
+    build_audio_companion_manifests(
+        data_dir=str(tmp_path),
+        lesson_set="all",
+    )
+
     with pytest.raises(RuntimeError, match="pilot-only"):
         generate_audio_companion(
             data_dir=str(tmp_path),
-            lesson_set="pilot_rep",
+            lesson_set="all",
             dry_run=False,
             voice_profile="dorothy",
         )
@@ -408,18 +431,21 @@ def test_generate_audio_writes_review_packet_with_stubbed_tts(
     assert all(row["voice_profile"] == "dorothy" for row in manifest_rows)
 
 
-def test_index_audio_companion_filters_by_voice_profile(
+def _prepare_generated_bundle(
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    _write_companion_configs(tmp_path)
-    _write_normalized(tmp_path / "normalized.jsonl", _sample_rows())
-    bundles = build_audio_companion_manifests(data_dir=str(tmp_path))
-    bundle = next(item for item in bundles if item.lesson_number == 14)
+    lesson_number: int = 14,
+) -> LessonAudioBundle:
+    """Mark all clips in a bundle as generated with stub audio files."""
+    bundles = build_audio_companion_manifests(
+        data_dir=str(tmp_path),
+        lesson_set="pilot_rep",
+    )
+    bundle = next(item for item in bundles if item.lesson_number == lesson_number)
     for clip in bundle.clips:
         clip.status = "generated"
         clip.voice_profile = "dorothy"
         clip.speaker = "dorothy"
+        clip.duration_ms = 2000
         clip.audio_path = f"audio/dorothy/lessons/{bundle.lesson_key}/{clip.audio_file_name}"
         audio_path = tmp_path / "companion" / clip.audio_path
         audio_path.parent.mkdir(parents=True, exist_ok=True)
@@ -427,6 +453,16 @@ def test_index_audio_companion_filters_by_voice_profile(
     (tmp_path / "companion" / "lessons" / f"{bundle.lesson_key}.json").write_text(
         bundle.model_dump_json(indent=2)
     )
+    return bundle
+
+
+def test_index_audio_companion_clips_filters_by_voice_profile(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_companion_configs(tmp_path)
+    _write_normalized(tmp_path / "normalized.jsonl", _sample_rows())
+    bundle = _prepare_generated_bundle(tmp_path, lesson_number=14)
 
     class _FakeEmbedding:
         values = [1.0, 0.0, 0.0]
@@ -441,9 +477,79 @@ def test_index_audio_companion_filters_by_voice_profile(
         db_path=str(tmp_path / "vs"),
         lesson_id="14",
         voice_profile="dorothy",
+        granularity="clips",
     )
 
     assert count == len(bundle.clips)
     store = get_store(str(tmp_path / "vs"))
-    collection = get_or_create_collection(store, AUDIO_COMPANION)
-    assert collection.count() == len(bundle.clips)
+    clips_collection = get_or_create_collection(store, AUDIO_COMPANION_CLIPS)
+    assert clips_collection.count() == len(bundle.clips)
+
+
+def test_index_audio_companion_lessons_creates_aggregate_documents(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_companion_configs(tmp_path)
+    _write_normalized(tmp_path / "normalized.jsonl", _sample_rows())
+    _prepare_generated_bundle(tmp_path, lesson_number=14)
+
+    class _FakeEmbedding:
+        values = [1.0, 0.0, 0.0]
+
+    monkeypatch.setattr(
+        "corpus.ufli.audio_companion.embed_text",
+        lambda *_args, **_kwargs: _FakeEmbedding(),
+    )
+
+    count = index_audio_companion(
+        data_dir=str(tmp_path),
+        db_path=str(tmp_path / "vs"),
+        lesson_id="14",
+        voice_profile="dorothy",
+        granularity="lessons",
+    )
+
+    assert count == 1
+    store = get_store(str(tmp_path / "vs"))
+    lessons_collection = get_or_create_collection(store, AUDIO_COMPANION_LESSONS)
+    assert lessons_collection.count() == 1
+    result = lessons_collection.get(ids=["lesson_14_dorothy"])
+    assert result["ids"] == ["lesson_14_dorothy"]
+    meta = result["metadatas"][0]
+    assert meta["lesson_number"] == 14
+    assert meta["concept"] == "c /k/"
+    assert meta["clip_count"] > 0
+    assert meta["voice_profile"] == "dorothy"
+
+
+def test_index_audio_companion_both_populates_two_collections(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_companion_configs(tmp_path)
+    _write_normalized(tmp_path / "normalized.jsonl", _sample_rows())
+    bundle = _prepare_generated_bundle(tmp_path, lesson_number=14)
+
+    class _FakeEmbedding:
+        values = [1.0, 0.0, 0.0]
+
+    monkeypatch.setattr(
+        "corpus.ufli.audio_companion.embed_text",
+        lambda *_args, **_kwargs: _FakeEmbedding(),
+    )
+
+    count = index_audio_companion(
+        data_dir=str(tmp_path),
+        db_path=str(tmp_path / "vs"),
+        lesson_id="14",
+        voice_profile="dorothy",
+        granularity="both",
+    )
+
+    assert count == len(bundle.clips) + 1
+    store = get_store(str(tmp_path / "vs"))
+    clips_collection = get_or_create_collection(store, AUDIO_COMPANION_CLIPS)
+    lessons_collection = get_or_create_collection(store, AUDIO_COMPANION_LESSONS)
+    assert clips_collection.count() == len(bundle.clips)
+    assert lessons_collection.count() == 1
