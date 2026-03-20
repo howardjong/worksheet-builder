@@ -280,6 +280,55 @@ def _generate_word_picture(
         return None
 
 
+def generate_cover_image(
+    skill_description: str,
+    target_words: list[str],
+    theme_spec: CharacterSpec | None,
+    worksheet_hash: str,
+) -> str | None:
+    """Generate an AI cover image for a lesson package.
+
+    Returns path to cached PNG or None if generation is unavailable.
+    """
+    if os.environ.get("WORKSHEET_SKIP_ASSET_GEN"):
+        return None
+
+    cache_dir = _CACHE_DIR / f"worksheet_{worksheet_hash}"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cover_file = cache_dir / "cover.png"
+
+    if cover_file.exists():
+        logger.info(f"  Cover image cache hit: {cover_file}")
+        return str(cover_file)
+
+    if not _has_api_key():
+        logger.info("  No AI API key -- skipping cover image generation")
+        return None
+
+    # Build theme-aware prompt
+    char_desc = ""
+    env_desc = ""
+    if theme_spec:
+        if theme_spec.style_description:
+            char_desc = f" featuring {theme_spec.style_description}"
+        if theme_spec.scene_environment:
+            env_desc = f" set in {theme_spec.scene_environment.strip()}"
+
+    words_str = ", ".join(target_words[:6]) if target_words else ""
+    word_context = f" surrounded by the words '{words_str}'." if words_str else "."
+
+    prompt = (
+        f"Fun colorful cartoon illustration for a children's worksheet cover page. "
+        f"Scene: an exciting adventure{char_desc}{env_desc}{word_context} "
+        f"Skill focus: {skill_description}. "
+        f"Style: bright vibrant colors, Pixar-like, playful, child-friendly. "
+        f"Clean composition suitable for printing. "
+        f"No text, no words, no letters in the image."
+    )
+
+    return _generate_word_picture(prompt, str(cover_file))
+
+
 def compute_worksheet_hash(
     source_hash: str,
     worksheet_number: int,

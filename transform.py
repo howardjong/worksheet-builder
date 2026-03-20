@@ -28,7 +28,7 @@ from companion.schema import load_profile
 from extract.heuristics import map_to_source_model
 from extract.ocr import extract_text_with_fallback
 from extract.vision import extract_with_vision
-from render.pdf import render_worksheet
+from render.pdf import render_cover_page, render_worksheet
 from skill.extractor import extract_skill
 from theme.engine import apply_theme, load_theme
 from validate.adhd_compliance import validate_adhd_compliance
@@ -482,7 +482,22 @@ def _run_multi_worksheet_pipeline(
         False,
     )
 
-    logger.info("Done! %s PDFs saved to: %s", len(pdf_paths), output)
+    # Generate cover image + cover page + merge into single PDF
+    pdf_paths = _merge_lesson_package(
+        skill_model=skill_model,
+        worksheets=worksheets,
+        theme=theme,
+        profile=profile,
+        content_hash=content_hash,
+        pdf_paths=pdf_paths,
+        output=output,
+    )
+
+    logger.info(
+        "Done! Lesson package saved to: %s (cover + %s worksheets)",
+        pdf_paths[0],
+        len(worksheets),
+    )
     return RunArtifacts(
         source_image_path=source_image_path,
         source_image_hash=source_image_hash,
@@ -500,6 +515,54 @@ def _run_multi_worksheet_pipeline(
         validation_results=validation_results,
         profile_name=profile.name,
     )
+
+
+def _merge_lesson_package(
+    skill_model: object,
+    worksheets: list[AdaptedActivityModel],
+    theme: object,
+    profile: object,
+    content_hash: str,
+    pdf_paths: list[str],
+    output: Path,
+) -> list[str]:
+    """Generate cover page + merge all worksheets into a single lesson PDF.
+
+    Returns updated pdf_paths (single merged file).
+    """
+    from render.asset_gen import generate_cover_image
+    from render.merge import merge_worksheet_package
+    from skill.schema import LiteracySkillModel
+    from theme.schema import ThemeConfig
+
+    assert isinstance(skill_model, LiteracySkillModel)
+    assert isinstance(theme, ThemeConfig)
+
+    # Generate cover image (optional — falls back gracefully)
+    cover_image_path = generate_cover_image(
+        skill_description=f"{skill_model.domain}: {skill_model.specific_skill}",
+        target_words=skill_model.target_words[:10],
+        theme_spec=theme.character_spec if theme.character_spec.art_style else None,
+        worksheet_hash=content_hash,
+    )
+
+    # Render cover page PDF
+    cover_path = str(output / f"_cover_{content_hash}.pdf")
+    render_cover_page(
+        skill_model=skill_model,
+        worksheets=worksheets,
+        theme=theme,
+        output_path=cover_path,
+        cover_image_path=cover_image_path,
+        profile_name=getattr(profile, "name", None),
+    )
+
+    # Merge into single PDF
+    merged_filename = f"lesson_{content_hash}.pdf"
+    merged_path = str(output / merged_filename)
+    merge_worksheet_package(cover_path, pdf_paths, merged_path, cleanup=True)
+
+    return [merged_path]
 
 
 def _validate_and_report(

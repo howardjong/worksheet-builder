@@ -15,6 +15,7 @@ from render.pdf import (
     MARGIN,
     PAGE_HEIGHT,
     PAGE_WIDTH,
+    render_cover_page,
     render_worksheet,
 )
 from skill.schema import LiteracySkillModel, SourceItem
@@ -130,6 +131,34 @@ class TestRenderWorksheet:
             theme = load_theme("space")
             render_worksheet(adapted, theme, pdf_path)
             assert Path(pdf_path).exists()
+
+    def test_cover_page_renders(self) -> None:
+        """Cover page should render with skill info and worksheet list."""
+        skill = _phonics_skill()
+        worksheets = adapt_lesson(skill, _profile())
+        theme = load_theme("space")
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            cover_path = f.name
+
+        render_cover_page(
+            skill_model=skill,
+            worksheets=worksheets,
+            theme=theme,
+            output_path=cover_path,
+            profile_name="Test",
+        )
+        assert Path(cover_path).exists()
+        assert Path(cover_path).stat().st_size > 0
+
+        # Verify content
+        doc = fitz.open(cover_path)
+        assert doc.page_count == 1
+        text = doc.load_page(0).get_text()
+        assert "What's Inside" in text
+        assert "Grade 1" in text
+        doc.close()
+        Path(cover_path).unlink()
 
     def test_page_geometry_constants(self) -> None:
         assert PAGE_WIDTH == 612.0
