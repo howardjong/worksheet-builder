@@ -507,3 +507,92 @@ class TestAdaptLesson:
         )
         worksheets = adapt_lesson(minimal, _grade_1_profile())
         assert len(worksheets) >= 1
+
+    def test_warmup_chunk_present_grade_1(self) -> None:
+        """Grade 1 profiles should have sound_box warmup chunk in Word Discovery."""
+        worksheets = adapt_lesson(_ufli_59_skill(), _grade_1_profile())
+        discovery = [ws for ws in worksheets if ws.worksheet_title == "Word Discovery"]
+        assert len(discovery) == 1
+        # Find chunk with sound_box format
+        sound_box_chunks = [
+            chunk for chunk in discovery[0].chunks
+            if chunk.response_format == "sound_box"
+        ]
+        assert len(sound_box_chunks) >= 1
+
+    def test_warmup_chunk_absent_grade_3(self) -> None:
+        """Grade 3 skills should NOT have sound_box warmup chunk."""
+        # Create a grade 3 skill (grade level determines warmup presence)
+        grade_3_skill = LiteracySkillModel(
+            grade_level="3",
+            domain="phonics",
+            specific_skill="cvce_pattern",
+            learning_objectives=["Read words with CVCe pattern"],
+            target_words=["grade", "chase", "slide"],
+            response_types=["write", "read_aloud"],
+            source_items=[
+                SourceItem(
+                    item_type="word_list",
+                    content="grade, chase, slide",
+                    source_region_index=0,
+                ),
+            ],
+            extraction_confidence=0.95,
+            template_type="ufli_word_work",
+        )
+        worksheets = adapt_lesson(grade_3_skill, _grade_1_profile())
+        discovery = [ws for ws in worksheets if ws.worksheet_title == "Word Discovery"]
+        assert len(discovery) == 1
+        # Should have NO sound_box chunks
+        sound_box_chunks = [
+            chunk for chunk in discovery[0].chunks
+            if chunk.response_format == "sound_box"
+        ]
+        assert len(sound_box_chunks) == 0
+
+    def test_roll_and_read_chunk_present(self) -> None:
+        """Skills with roll_and_read source items should produce appropriate chunks."""
+        skill = LiteracySkillModel(
+            grade_level="1",
+            domain="phonics",
+            specific_skill="cvc_blending",
+            learning_objectives=["Read CVC words with fluency"],
+            target_words=["cat", "hat", "mat"],
+            response_types=["write", "read_aloud"],
+            source_items=[
+                SourceItem(item_type="word_list", content="cat, hat, mat", source_region_index=0),
+                SourceItem(
+                    item_type="roll_and_read",
+                    content="sunny\nfunny\nbunny\nbuddy\nhappy",
+                    source_region_index=5,
+                ),
+            ],
+            extraction_confidence=0.95,
+            template_type="ufli_word_work",
+        )
+        worksheets = adapt_lesson(skill, _grade_1_profile())
+        builder = [ws for ws in worksheets if ws.worksheet_title == "Word Builder"]
+        assert len(builder) == 1
+        # Find chunks with roll_and_read metadata or read_aloud micro_goal
+        roll_chunks = [
+            chunk for chunk in builder[0].chunks
+            if any(
+                item.metadata.get("display") == "roll_and_read"
+                for item in chunk.items
+            ) or "Read" in chunk.micro_goal
+        ]
+        assert len(roll_chunks) >= 1
+
+    def test_lesson_total_time_under_20_minutes(self) -> None:
+        """Total time across all worksheets should not exceed 20 minutes."""
+        import re
+
+        worksheets = adapt_lesson(_ufli_59_skill(), _grade_1_profile())
+        total_minutes = 0
+        for ws in worksheets:
+            for chunk in ws.chunks:
+                if chunk.time_estimate:
+                    m = re.search(r"(\d+)", chunk.time_estimate)
+                    if m:
+                        total_minutes += int(m.group(1))
+        assert total_minutes <= 20

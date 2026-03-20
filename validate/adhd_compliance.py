@@ -210,6 +210,81 @@ def validate_adhd_compliance(
     return result
 
 
+def validate_lesson_time_budget(
+    worksheets: list[AdaptedActivityModel],
+) -> ValidationResult:
+    """Validate total time budget across all worksheets in a lesson.
+
+    Cross-worksheet time budget checks:
+    - Total time across all worksheets should not exceed 20 minutes (WARNING)
+    - Each individual worksheet should stay under 8 minutes (WARNING)
+
+    Args:
+        worksheets: List of adapted worksheets for the lesson
+
+    Returns:
+        ValidationResult with passed=True (violations are warnings only)
+    """
+    result = ValidationResult(validator="lesson_time_budget", passed=True, checks_run=0)
+
+    # Check 1: Total time budget across all worksheets
+    result.checks_run += 1
+    total_minutes = 0
+    for worksheet in worksheets:
+        for chunk in worksheet.chunks:
+            if chunk.time_estimate:
+                m = _parse_minutes(chunk.time_estimate)
+                if m is not None:
+                    total_minutes += m
+
+    if total_minutes > 20:
+        result.add_violation(
+            check="total_time_budget",
+            message=(
+                f"Total lesson time estimated at {total_minutes} minutes, "
+                f"exceeds recommended 20 minute maximum"
+            ),
+            severity="warning",
+            details={
+                "total_minutes": total_minutes,
+                "worksheet_count": len(worksheets),
+                "max_minutes": 20,
+            },
+        )
+
+    # Check 2: Individual worksheet time limits
+    result.checks_run += 1
+    for worksheet in worksheets:
+        worksheet_minutes = 0
+        for chunk in worksheet.chunks:
+            if chunk.time_estimate:
+                m = _parse_minutes(chunk.time_estimate)
+                if m is not None:
+                    worksheet_minutes += m
+
+        if worksheet_minutes > 8:
+            worksheet_id = (
+                f"{worksheet.worksheet_number}/{worksheet.worksheet_count}"
+                if worksheet.worksheet_count > 1
+                else "1/1"
+            )
+            result.add_violation(
+                check="worksheet_time_limit",
+                message=(
+                    f"Worksheet {worksheet_id} estimated at {worksheet_minutes} minutes, "
+                    f"exceeds recommended 8 minute maximum per worksheet"
+                ),
+                severity="warning",
+                details={
+                    "worksheet_id": worksheet_id,
+                    "minutes": worksheet_minutes,
+                    "max_minutes": 8,
+                },
+            )
+
+    return result
+
+
 def _parse_minutes(text: str) -> int | None:
     """Extract minutes from a time estimate string like 'About 5 minutes'."""
     import re
