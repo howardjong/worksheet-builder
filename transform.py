@@ -144,7 +144,9 @@ def run_pipeline_collect_artifacts(
     logger.info("Stage 3: Extracting source content...")
     source_model = None
 
-    vision_model = extract_with_vision(preprocessed_path, master.image_hash)
+    # Vision extraction uses the original image (not preprocessed) because
+    # preprocessing can destroy content (e.g., warping to illustration box)
+    vision_model = extract_with_vision(input_path, master.image_hash)
     if vision_model is not None:
         source_model = vision_model
         logger.info("  Using AI vision extraction")

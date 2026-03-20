@@ -106,6 +106,12 @@ def _extract_word_work(source: SourceWorksheetModel) -> LiteracySkillModel:
             if m:
                 lesson_number = int(m.group(1))
 
+    # Also check concept_label for lesson number (vision may tag header as concept_label)
+    if lesson_number is None and concept_text:
+        m = _LESSON_PATTERN.search(concept_text)
+        if m:
+            lesson_number = int(m.group(1))
+
     # Fallback: infer lesson number from concept text via corpus
     if lesson_number is None and concept_text:
         lesson_number = _infer_lesson_from_concept(concept_text)
@@ -196,6 +202,11 @@ def _extract_decodable_story(source: SourceWorksheetModel) -> LiteracySkillModel
         elif region.type == "title":
             m = _LESSON_PATTERN.search(region.content)
             if m:
+                lesson_number = int(m.group(1))
+
+        elif region.type == "concept_label":
+            m = _LESSON_PATTERN.search(region.content)
+            if m and lesson_number is None:
                 lesson_number = int(m.group(1))
 
     passage_text = passage_text.strip()

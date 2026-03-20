@@ -33,7 +33,7 @@ _VARIANTS_DIR = _ASSETS_DIR / "variants"
 _IMAGE_MODEL = "gemini-3.1-flash-image-preview"
 
 # Judge models (Gemini primary, GPT fallback)
-_JUDGE_MODEL_GEMINI = "gemini-3.1-flash-lite-preview"
+_JUDGE_MODEL_GEMINI = "gemini-3-flash-preview"
 _JUDGE_MODEL_OPENAI = "gpt-5.4"
 
 MAX_JUDGE_RETRIES = 5
