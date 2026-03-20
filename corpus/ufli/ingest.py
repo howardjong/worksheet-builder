@@ -16,6 +16,7 @@ try:
 except ImportError:
     pass
 
+from corpus.ufli.audit_schema import CorpusAuditSummary
 from corpus.ufli.grade_levels import derive_grade
 from rag.embeddings import embed_text
 from rag.store import CURRICULUM, add_document, get_or_create_collection, get_store
@@ -660,6 +661,101 @@ def audit(
         use_ai_judge=use_ai_judge,
     )
     click.echo(f"Audit written to {summary.output_dir}")
+
+
+@cli.command()
+@click.option("--data-dir", default="data/ufli", help="Data directory.")
+@click.option("--db-path", default="vector_store", help="ChromaDB path.")
+@click.option(
+    "--audit-dir",
+    default=None,
+    help="Timestamped audit directory. Defaults to most recent under data/ufli/audit.",
+)
+@click.option(
+    "--dry-run/--execute",
+    default=True,
+    help="Report what would be fixed without changing anything.",
+)
+@click.option(
+    "--severity",
+    default="fail,warn",
+    help="Comma-separated severity levels to act on.",
+)
+@click.option(
+    "--codes",
+    default=None,
+    help="Comma-separated allowlist of flag codes to remediate.",
+)
+@click.option(
+    "--skip-reindex",
+    is_flag=True,
+    default=False,
+    help="Fix source data but skip ChromaDB re-indexing.",
+)
+def remediate(
+    data_dir: str,
+    db_path: str,
+    audit_dir: str | None,
+    dry_run: bool,
+    severity: str,
+    codes: str | None,
+    skip_reindex: bool,
+) -> None:
+    """Apply automated fixes for actionable audit flag codes."""
+    from corpus.ufli.remediate import (
+        execute_remediations,
+        find_latest_audit_dir,
+        plan_remediations,
+        write_remediation_report,
+    )
+
+    # Resolve audit directory
+    if audit_dir is None:
+        audit_root = str(Path(data_dir) / "audit")
+        audit_dir = find_latest_audit_dir(audit_root)
+        if audit_dir is None:
+            raise click.ClickException(
+                "No audit results found — run "
+                "`python -m corpus.ufli.ingest audit` first."
+            )
+
+    summary_path = Path(audit_dir) / "summary.json"
+    if not summary_path.exists():
+        raise click.ClickException(
+            f"No summary.json in {audit_dir} — not a valid audit directory."
+        )
+
+    summary = CorpusAuditSummary.model_validate_json(summary_path.read_text())
+
+    severity_filter = {s.strip() for s in severity.split(",")}
+    code_filter = {c.strip() for c in codes.split(",")} if codes else None
+
+    actions = plan_remediations(summary, severity_filter, code_filter)
+    click.echo(f"Planned {len(actions)} remediation actions")
+
+    report = execute_remediations(
+        actions,
+        data_dir=data_dir,
+        db_path=db_path,
+        dry_run=dry_run,
+        skip_reindex=skip_reindex,
+    )
+    write_remediation_report(report, audit_dir)
+
+    click.echo(
+        f"Remediation complete: {report.fixed_count} fixed, "
+        f"{report.skipped_count} skipped, "
+        f"{report.manual_review_count} manual review, "
+        f"{report.failed_count} failed."
+    )
+    if report.reindexed_lesson_ids:
+        click.echo(f"Re-indexed: {', '.join(report.reindexed_lesson_ids)}.")
+    if report.deleted_index_ids:
+        click.echo(f"Deleted stale: {', '.join(report.deleted_index_ids)}.")
+    click.echo(
+        "Re-run audit to verify: "
+        "python -m corpus.ufli.ingest audit --data-dir " + data_dir
+    )
 
 
 @cli.command(name="run-all")

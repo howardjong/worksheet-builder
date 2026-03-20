@@ -47,6 +47,11 @@ def add_document(
     )
 
 
+def delete_document(collection: Any, doc_id: str) -> None:
+    """Delete a document from a collection by ID."""
+    collection.delete(ids=[doc_id])
+
+
 def query_similar(
     collection: Any,
     query_embedding: list[float],
