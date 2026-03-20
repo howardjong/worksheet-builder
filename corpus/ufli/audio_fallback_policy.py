@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import csv
 import json
+import logging
 from collections import Counter, defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -14,6 +15,7 @@ from corpus.ufli.audio_companion import (
     _PILOT_LESSONS,
     _VOICE_PROFILES,
     _resolve_selected_lessons,
+    _write_bundle,
     load_audio_bundles,
     load_pilot_lessons,
     load_voice_profiles,
@@ -23,11 +25,16 @@ from corpus.ufli.audio_companion_schema import (
     AudioFallbackClipDecision,
     AudioFallbackPolicySummary,
     FallbackDecisionBucket,
+    FallbackExecutionClipResult,
+    FallbackExecutionSummary,
     FallbackPacingRisk,
     GeminiFallbackPlan,
+    GoogleCloudTtsSettings,
     LessonAudioBundle,
 )
 from corpus.ufli.audio_judge import _build_pacing_metrics
+
+logger = logging.getLogger(__name__)
 
 _FALLBACK_REPORT_DIR = "fallbacks"
 _POLICY_NAME = "ufli_gemini_pacing_fallback_v1"
@@ -314,6 +321,269 @@ def _gemini_fallback_plan(family_policy: _FamilyPolicy) -> GeminiFallbackPlan:
         prompt_wpm_min=family_policy.prompt_wpm_min,
         prompt_wpm_max=family_policy.prompt_wpm_max,
     )
+
+
+def execute_gemini_fallback(
+    data_dir: str = "data/ufli",
+    voice_profile: str | None = None,
+    output_dir: str | None = None,
+    dry_run: bool = True,
+    judge_model: str = "gemini-3-flash-preview",
+    lesson_set: str = "pilot_micro",
+    lesson_id: str | None = None,
+    lesson_min: int = 1,
+    lesson_max: int = 128,
+    clip_limit: int | None = None,
+) -> FallbackExecutionSummary:
+    """Synthesize, re-judge, and conditionally replace pacing-failed clips.
+
+    Only clips classified as ``gemini_fallback_eligible`` are processed.
+    """
+    from corpus.ufli.audio_judge import _judge_clip_with_gemini
+    from corpus.ufli.extract import LessonContent
+
+    base = Path(data_dir)
+    companion_dir = base / "companion"
+    pilot_lessons = load_pilot_lessons(companion_dir / _PILOT_LESSONS)
+    selected_lessons = _resolve_selected_lessons(
+        pilot_lessons=pilot_lessons,
+        lesson_set=lesson_set,
+        lesson_id=lesson_id,
+        lesson_min=lesson_min,
+        lesson_max=lesson_max,
+    )
+    voice_catalog = load_voice_profiles(companion_dir / _VOICE_PROFILES)
+    selected_voice = voice_profile or voice_catalog.default_profile
+    if selected_voice not in voice_catalog.profiles:
+        raise ValueError(f"Unknown voice profile: {selected_voice}")
+
+    bundle_dir = companion_dir / _BUNDLE_DIR
+    bundles = load_audio_bundles(bundle_dir, selected_lessons=selected_lessons)
+
+    policy_summary = classify_audio_fallback_policy(
+        data_dir=data_dir,
+        lesson_set=lesson_set,
+        lesson_id=lesson_id,
+        lesson_min=lesson_min,
+        lesson_max=lesson_max,
+        voice_profile=selected_voice,
+        clip_limit=clip_limit,
+    )
+
+    eligible_ids = set(policy_summary.gemini_fallback_segments)
+    eligible_decisions: dict[str, AudioFallbackClipDecision] = {
+        d.segment_id: d
+        for d in policy_summary.clip_results
+        if d.segment_id in eligible_ids
+    }
+    if clip_limit is not None:
+        eligible_ids = set(list(eligible_ids)[:clip_limit])
+
+    clip_results: list[FallbackExecutionClipResult] = []
+    timestamp = datetime.now(tz=UTC).strftime("%Y%m%d_%H%M%S")
+    report_dir = Path(output_dir or companion_dir / _FALLBACK_REPORT_DIR) / f"exec_{timestamp}"
+    report_dir.mkdir(parents=True, exist_ok=True)
+
+    clip_lookup: dict[str, tuple[LessonAudioBundle, AudioClipDefinition]] = {}
+    for bundle in bundles:
+        for clip in bundle.clips:
+            if clip.segment_id in eligible_ids and clip.voice_profile == selected_voice:
+                clip_lookup[clip.segment_id] = (bundle, clip)
+
+    if dry_run:
+        for segment_id in sorted(eligible_ids):
+            decision = eligible_decisions.get(segment_id)
+            clip_results.append(
+                FallbackExecutionClipResult(
+                    segment_id=segment_id,
+                    original_audio_path=decision.audio_path if decision else "",
+                    original_wpm=decision.actual_wpm if decision else 0.0,
+                    status="skipped",
+                    replaced=False,
+                )
+            )
+        summary = FallbackExecutionSummary(
+            generated_at=datetime.now(tz=UTC).isoformat(),
+            data_dir=str(base),
+            output_dir=str(report_dir),
+            voice_profile=selected_voice,
+            clip_count=len(clip_results),
+            synthesized_count=0,
+            improved_count=0,
+            replaced_count=0,
+            failed_count=0,
+            clip_results=clip_results,
+        )
+        (report_dir / "fallback_execution_summary.json").write_text(
+            summary.model_dump_json(indent=2)
+        )
+        return summary
+
+    # Live mode: synthesize, judge, conditionally replace
+    from corpus.ufli.audio_companion import _load_lessons, _measure_audio_duration_ms
+    from corpus.ufli.google_tts_client import (
+        GoogleTtsSynthesisError,
+        build_google_tts_request_context,
+        synthesize_google_tts_audio,
+    )
+    from rag.client import get_rag_client
+
+    try:
+        tts_context = build_google_tts_request_context()
+    except Exception as exc:
+        raise RuntimeError(f"Google Cloud TTS auth failed: {exc}") from exc
+
+    gemini_client = get_rag_client()
+    lessons_by_id: dict[str, LessonContent] = {
+        lesson.lesson_id: lesson
+        for lesson in _load_lessons(base / "normalized.jsonl")
+    }
+
+    synthesized_count = 0
+    improved_count = 0
+    replaced_count = 0
+    failed_count = 0
+
+    for segment_id in sorted(eligible_ids):
+        entry = clip_lookup.get(segment_id)
+        decision = eligible_decisions.get(segment_id)
+        if entry is None or decision is None or decision.gemini_fallback_plan is None:
+            clip_results.append(
+                FallbackExecutionClipResult(
+                    segment_id=segment_id,
+                    status="skipped",
+                    failure_message="Clip not found or no fallback plan",
+                )
+            )
+            continue
+
+        bundle, clip = entry
+        plan = decision.gemini_fallback_plan
+        lesson = lessons_by_id.get(bundle.lesson_id)
+
+        settings = GoogleCloudTtsSettings(
+            api_endpoint="https://us-texttospeech.googleapis.com",
+            voice_name=plan.voice_name,
+            model_name=plan.model_name,
+            style_prompt=plan.prompt_guidance,
+        )
+
+        fallback_audio_dir = (
+            companion_dir / "audio" / selected_voice / "lessons" / bundle.lesson_key
+        )
+        fallback_audio_dir.mkdir(parents=True, exist_ok=True)
+        fallback_filename = f"{segment_id}_gemini.mp3"
+        fallback_audio_path = fallback_audio_dir / fallback_filename
+
+        try:
+            result = synthesize_google_tts_audio(
+                text=clip.transcript_text,
+                input_format="text",
+                settings=settings,
+                context=tts_context,
+                request_label=f"fallback_{segment_id}",
+            )
+            fallback_audio_path.write_bytes(result.audio_bytes)
+            synthesized_count += 1
+        except GoogleTtsSynthesisError as exc:
+            logger.warning("TTS synthesis failed for %s: %s", segment_id, exc)
+            clip_results.append(
+                FallbackExecutionClipResult(
+                    segment_id=segment_id,
+                    original_audio_path=clip.audio_path,
+                    original_wpm=decision.actual_wpm,
+                    status="synthesis_failed",
+                    replaced=False,
+                    failure_message=str(exc),
+                )
+            )
+            failed_count += 1
+            continue
+        except Exception as exc:
+            logger.warning("Unexpected TTS error for %s: %s", segment_id, exc)
+            clip_results.append(
+                FallbackExecutionClipResult(
+                    segment_id=segment_id,
+                    original_audio_path=clip.audio_path,
+                    original_wpm=decision.actual_wpm,
+                    status="synthesis_failed",
+                    replaced=False,
+                    failure_message=str(exc),
+                )
+            )
+            failed_count += 1
+            continue
+
+        # Measure fallback duration and re-judge
+        fallback_duration_ms = _measure_audio_duration_ms(fallback_audio_path)
+        fallback_wpm = 0.0
+        if fallback_duration_ms and fallback_duration_ms > 0:
+            word_count = max(len(clip.transcript_text.split()), 1)
+            fallback_wpm = (float(word_count) * 60000.0) / float(fallback_duration_ms)
+
+        fallback_recommendation = "revise"
+        if lesson is not None:
+            fallback_clip = clip.model_copy(
+                update={
+                    "audio_path": str(
+                        fallback_audio_path.relative_to(companion_dir)
+                    ),
+                }
+            )
+            try:
+                judge_result = _judge_clip_with_gemini(
+                    client=gemini_client,
+                    judge_model=judge_model,
+                    companion_dir=companion_dir,
+                    lesson=lesson,
+                    bundle=bundle,
+                    clip=fallback_clip,
+                )
+                fallback_recommendation = judge_result.recommendation
+                fallback_wpm = judge_result.actual_wpm
+            except Exception as exc:
+                logger.warning("Judge failed for fallback %s: %s", segment_id, exc)
+
+        improved = fallback_recommendation == "use"
+        replaced = False
+        if improved:
+            improved_count += 1
+            clip.audio_path = str(fallback_audio_path.relative_to(companion_dir))
+            clip.review_status = "approved"
+            replaced = True
+            replaced_count += 1
+            _write_bundle(bundle_dir, bundle)
+
+        clip_results.append(
+            FallbackExecutionClipResult(
+                segment_id=segment_id,
+                original_audio_path=decision.audio_path,
+                fallback_audio_path=str(fallback_audio_path.relative_to(companion_dir)),
+                original_wpm=decision.actual_wpm,
+                fallback_wpm=round(fallback_wpm, 1),
+                original_recommendation="revise",
+                fallback_recommendation=fallback_recommendation,
+                status="improved" if improved else "not_improved",
+                replaced=replaced,
+            )
+        )
+
+    summary = FallbackExecutionSummary(
+        generated_at=datetime.now(tz=UTC).isoformat(),
+        data_dir=str(base),
+        output_dir=str(report_dir),
+        voice_profile=selected_voice,
+        clip_count=len(clip_results),
+        synthesized_count=synthesized_count,
+        improved_count=improved_count,
+        replaced_count=replaced_count,
+        failed_count=failed_count,
+        clip_results=clip_results,
+    )
+    (report_dir / "fallback_execution_summary.json").write_text(
+        summary.model_dump_json(indent=2)
+    )
+    return summary
 
 
 def _family_bucket_counts(

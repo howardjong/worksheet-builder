@@ -478,6 +478,7 @@ def test_index_audio_companion_clips_filters_by_voice_profile(
         lesson_id="14",
         voice_profile="dorothy",
         granularity="clips",
+        include_pending=True,
     )
 
     assert count == len(bundle.clips)
@@ -508,6 +509,7 @@ def test_index_audio_companion_lessons_creates_aggregate_documents(
         lesson_id="14",
         voice_profile="dorothy",
         granularity="lessons",
+        include_pending=True,
     )
 
     assert count == 1
@@ -545,6 +547,7 @@ def test_index_audio_companion_both_populates_two_collections(
         lesson_id="14",
         voice_profile="dorothy",
         granularity="both",
+        include_pending=True,
     )
 
     assert count == len(bundle.clips) + 1
@@ -553,3 +556,96 @@ def test_index_audio_companion_both_populates_two_collections(
     lessons_collection = get_or_create_collection(store, AUDIO_COMPANION_LESSONS)
     assert clips_collection.count() == len(bundle.clips)
     assert lessons_collection.count() == 1
+
+
+def test_index_clips_skips_pending_review_status(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_companion_configs(tmp_path)
+    _write_normalized(tmp_path / "normalized.jsonl", _sample_rows())
+    bundle = _prepare_generated_bundle(tmp_path, lesson_number=14)
+
+    # All clips have default review_status "pending"
+    assert all(clip.review_status == "pending" for clip in bundle.clips)
+
+    class _FakeEmbedding:
+        values = [1.0, 0.0, 0.0]
+
+    monkeypatch.setattr(
+        "corpus.ufli.audio_companion.embed_text",
+        lambda *_args, **_kwargs: _FakeEmbedding(),
+    )
+
+    count = index_audio_companion(
+        data_dir=str(tmp_path),
+        db_path=str(tmp_path / "vs"),
+        lesson_id="14",
+        voice_profile="dorothy",
+        granularity="both",
+        include_pending=False,
+    )
+
+    assert count == 0
+
+
+def test_index_clips_includes_pending_when_flag_set(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_companion_configs(tmp_path)
+    _write_normalized(tmp_path / "normalized.jsonl", _sample_rows())
+    bundle = _prepare_generated_bundle(tmp_path, lesson_number=14)
+
+    class _FakeEmbedding:
+        values = [1.0, 0.0, 0.0]
+
+    monkeypatch.setattr(
+        "corpus.ufli.audio_companion.embed_text",
+        lambda *_args, **_kwargs: _FakeEmbedding(),
+    )
+
+    count = index_audio_companion(
+        data_dir=str(tmp_path),
+        db_path=str(tmp_path / "vs"),
+        lesson_id="14",
+        voice_profile="dorothy",
+        granularity="both",
+        include_pending=True,
+    )
+
+    assert count == len(bundle.clips) + 1
+
+
+def test_index_clips_only_indexes_approved(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _write_companion_configs(tmp_path)
+    _write_normalized(tmp_path / "normalized.jsonl", _sample_rows())
+    bundle = _prepare_generated_bundle(tmp_path, lesson_number=14)
+
+    # Approve only the first clip
+    bundle.clips[0].review_status = "approved"  # type: ignore[assignment]
+    (tmp_path / "companion" / "lessons" / f"{bundle.lesson_key}.json").write_text(
+        bundle.model_dump_json(indent=2)
+    )
+
+    class _FakeEmbedding:
+        values = [1.0, 0.0, 0.0]
+
+    monkeypatch.setattr(
+        "corpus.ufli.audio_companion.embed_text",
+        lambda *_args, **_kwargs: _FakeEmbedding(),
+    )
+
+    count = index_audio_companion(
+        data_dir=str(tmp_path),
+        db_path=str(tmp_path / "vs"),
+        lesson_id="14",
+        voice_profile="dorothy",
+        granularity="clips",
+        include_pending=False,
+    )
+
+    assert count == 1

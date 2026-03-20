@@ -329,6 +329,11 @@ def generate_audio(
     show_default=True,
     help="Indexing granularity: clips, lessons, or both (default).",
 )
+@click.option(
+    "--include-pending/--approved-only",
+    default=False,
+    help="Include clips with pending review_status (default: approved-only).",
+)
 def index_audio(
     data_dir: str,
     db_path: str,
@@ -338,9 +343,43 @@ def index_audio(
     lesson_max: int,
     voice_profile: str | None,
     granularity: str,
+    include_pending: bool,
 ) -> None:
     """Index generated audio companion transcripts into ChromaDB."""
     from corpus.ufli.audio_companion import index_audio_companion
+
+    if not include_pending:
+        from corpus.ufli.audio_companion import (
+            _BUNDLE_DIR,
+            _resolve_selected_lessons,
+            load_audio_bundles,
+            load_pilot_lessons,
+        )
+
+        base = Path(data_dir)
+        companion_dir = base / "companion"
+        pilot_lessons = load_pilot_lessons(companion_dir / "pilot_lessons.yaml")
+        selected = _resolve_selected_lessons(
+            pilot_lessons=pilot_lessons,
+            lesson_set=lesson_set,
+            lesson_id=lesson_id,
+            lesson_min=lesson_min,
+            lesson_max=lesson_max,
+        )
+        bundles = load_audio_bundles(companion_dir / _BUNDLE_DIR, selected_lessons=selected)
+        pending_count = sum(
+            1
+            for bundle in bundles
+            for clip in bundle.clips
+            if clip.status == "generated"
+            and clip.review_status == "pending"
+            and (not voice_profile or clip.voice_profile == voice_profile)
+        )
+        if pending_count:
+            click.echo(
+                f"Warning: {pending_count} clips have review_status='pending' and will be "
+                "skipped. Use --include-pending to index them."
+            )
 
     count = index_audio_companion(
         data_dir=data_dir,
@@ -351,6 +390,7 @@ def index_audio(
         lesson_max=lesson_max,
         voice_profile=voice_profile,
         granularity=granularity,
+        include_pending=include_pending,
     )
     click.echo(f"Indexed {count} audio companion documents (granularity={granularity})")
 
@@ -389,6 +429,11 @@ def index_audio(
     type=int,
     help="Optional limit for a smaller smoke run.",
 )
+@click.option(
+    "--write-back/--no-write-back",
+    default=True,
+    help="Write judge verdicts back to bundle clips as review_status (default: yes).",
+)
 def judge_audio(
     data_dir: str,
     lesson_set: str,
@@ -399,6 +444,7 @@ def judge_audio(
     judge_model: str,
     output_dir: str | None,
     clip_limit: int | None,
+    write_back: bool,
 ) -> None:
     """Run Gemini LLM-judge eval over generated audio companion clips."""
     from corpus.ufli.audio_judge import judge_audio_companion
@@ -413,6 +459,7 @@ def judge_audio(
         judge_model=judge_model,
         output_dir=output_dir,
         clip_limit=clip_limit,
+        write_back=write_back,
     )
     click.echo(
         "Audio judge summary: "
@@ -480,6 +527,83 @@ def classify_audio_fallback(
         f"auto_accept={summary.bucket_counts.get('auto_accept', 0)} "
         f"gemini_fallback_eligible={summary.bucket_counts.get('gemini_fallback_eligible', 0)} "
         f"manual_review={summary.bucket_counts.get('needs_llm_or_manual_review', 0)} "
+        f"report_dir={summary.output_dir}"
+    )
+
+
+@cli.command(name="execute-fallback")
+@click.option("--data-dir", default="data/ufli", help="Data directory.")
+@click.option(
+    "--lesson-set",
+    type=click.Choice(["pilot_micro", "pilot_rep", "all", "range"]),
+    default="pilot_micro",
+    show_default=True,
+    help="Lesson selection mode.",
+)
+@click.option("--lesson", "lesson_id", default=None, help="Specific numeric lesson.")
+@click.option("--lesson-min", default=1, help="Minimum numeric lesson for --lesson-set range.")
+@click.option("--lesson-max", default=128, help="Maximum numeric lesson for --lesson-set range.")
+@click.option(
+    "--voice-profile",
+    default=None,
+    help="Restrict fallback to one generated voice profile.",
+)
+@click.option(
+    "--judge-model",
+    default="gemini-3-flash-preview",
+    show_default=True,
+    help="Gemini model used for re-judging fallback clips.",
+)
+@click.option(
+    "--output-dir",
+    default=None,
+    help="Optional output root. Defaults to data/ufli/companion/fallbacks.",
+)
+@click.option(
+    "--clip-limit",
+    default=None,
+    type=int,
+    help="Optional limit for controlled rollout.",
+)
+@click.option(
+    "--dry-run/--live",
+    default=True,
+    help="Dry-run lists eligible clips without synthesis; --live synthesizes and replaces.",
+)
+def execute_fallback(
+    data_dir: str,
+    lesson_set: str,
+    lesson_id: str | None,
+    lesson_min: int,
+    lesson_max: int,
+    voice_profile: str | None,
+    judge_model: str,
+    output_dir: str | None,
+    clip_limit: int | None,
+    dry_run: bool,
+) -> None:
+    """Synthesize Gemini TTS fallback for pacing-failed clips, re-judge, and replace if improved."""
+    from corpus.ufli.audio_fallback_policy import execute_gemini_fallback
+
+    summary = execute_gemini_fallback(
+        data_dir=data_dir,
+        voice_profile=voice_profile,
+        output_dir=output_dir,
+        dry_run=dry_run,
+        judge_model=judge_model,
+        lesson_set=lesson_set,
+        lesson_id=lesson_id,
+        lesson_min=lesson_min,
+        lesson_max=lesson_max,
+        clip_limit=clip_limit,
+    )
+    click.echo(
+        "Fallback execution summary: "
+        f"clips={summary.clip_count} "
+        f"synthesized={summary.synthesized_count} "
+        f"improved={summary.improved_count} "
+        f"replaced={summary.replaced_count} "
+        f"failed={summary.failed_count} "
         f"report_dir={summary.output_dir}"
     )
 

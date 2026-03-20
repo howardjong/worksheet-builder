@@ -435,6 +435,7 @@ def index_audio_companion(
     lesson_max: int = 128,
     voice_profile: str | None = None,
     granularity: str = "both",
+    include_pending: bool = False,
 ) -> int:
     """Index generated audio companion transcripts into ChromaDB.
 
@@ -468,11 +469,17 @@ def index_audio_companion(
 
     if index_clips:
         clips_collection = get_or_create_collection(store, AUDIO_COMPANION_CLIPS)
-        indexed += _index_clips(bundles, clips_collection, companion_dir, voice_profile)
+        indexed += _index_clips(
+            bundles, clips_collection, companion_dir, voice_profile,
+            include_pending=include_pending,
+        )
 
     if index_lessons:
         lessons_collection = get_or_create_collection(store, AUDIO_COMPANION_LESSONS)
-        indexed += _index_lessons(bundles, lessons_collection, companion_dir, voice_profile)
+        indexed += _index_lessons(
+            bundles, lessons_collection, companion_dir, voice_profile,
+            include_pending=include_pending,
+        )
 
     logger.info(
         "Indexed %s audio companion documents (granularity=%s)", indexed, granularity
@@ -485,6 +492,7 @@ def _index_clips(
     collection: Any,
     companion_dir: Path,
     voice_profile: str | None,
+    include_pending: bool = False,
 ) -> int:
     """Index clip-level documents into the clips collection."""
     indexed = 0
@@ -493,6 +501,8 @@ def _index_clips(
             if voice_profile and clip.voice_profile != voice_profile:
                 continue
             if clip.status != "generated" or not clip.audio_path:
+                continue
+            if not include_pending and clip.review_status != "approved":
                 continue
             if not (companion_dir / clip.audio_path).exists():
                 logger.warning(
@@ -552,11 +562,15 @@ def _index_lessons(
     collection: Any,
     companion_dir: Path,
     voice_profile: str | None,
+    include_pending: bool = False,
 ) -> int:
     """Index lesson-level aggregate documents into the lessons collection."""
     indexed = 0
     for bundle in bundles:
-        aggregate = build_lesson_aggregate(bundle, companion_dir, voice_profile)
+        aggregate = build_lesson_aggregate(
+            bundle, companion_dir, voice_profile,
+            include_pending=include_pending,
+        )
         if aggregate is None:
             continue
 
@@ -597,6 +611,7 @@ def build_lesson_aggregate(
     bundle: LessonAudioBundle,
     companion_dir: Path,
     voice_profile: str | None = None,
+    include_pending: bool = False,
 ) -> LessonAudioAggregate | None:
     """Build a lesson-level aggregate from a bundle's generated clips."""
     clips = [
@@ -606,6 +621,7 @@ def build_lesson_aggregate(
         and clip.audio_path
         and (companion_dir / clip.audio_path).exists()
         and (not voice_profile or clip.voice_profile == voice_profile)
+        and (include_pending or clip.review_status == "approved")
     ]
     if not clips:
         return None

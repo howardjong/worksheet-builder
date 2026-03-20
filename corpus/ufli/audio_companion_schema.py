@@ -433,6 +433,49 @@ class AudioFallbackPolicySummary(BaseModel):
     clip_results: list[AudioFallbackClipDecision] = Field(default_factory=list)
 
 
+FallbackExecutionStatus = Literal[
+    "synthesized",
+    "synthesis_failed",
+    "improved",
+    "not_improved",
+    "skipped",
+]
+
+
+class FallbackExecutionClipResult(BaseModel):
+    """Result of executing Gemini fallback for one clip."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    segment_id: str
+    original_audio_path: str = ""
+    fallback_audio_path: str = ""
+    original_wpm: float = Field(ge=0.0, default=0.0)
+    fallback_wpm: float = Field(ge=0.0, default=0.0)
+    original_recommendation: str = ""
+    fallback_recommendation: str = ""
+    status: FallbackExecutionStatus = "skipped"
+    replaced: bool = False
+    failure_message: str = ""
+
+
+class FallbackExecutionSummary(BaseModel):
+    """Aggregate output for one Gemini fallback execution run."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    generated_at: str
+    data_dir: str
+    output_dir: str
+    voice_profile: str = ""
+    clip_count: int = 0
+    synthesized_count: int = 0
+    improved_count: int = 0
+    replaced_count: int = 0
+    failed_count: int = 0
+    clip_results: list[FallbackExecutionClipResult] = Field(default_factory=list)
+
+
 ProbeAssessment = Literal[
     "pipeline_input_problem",
     "model_or_voice_limitation",

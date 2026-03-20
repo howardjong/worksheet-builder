@@ -32,6 +32,7 @@ from corpus.ufli.audit_schema import (
     RetrievalBenchmarkResult,
 )
 from corpus.ufli.grade_levels import derive_grade
+from corpus.ufli.pacing import FLAT_AUDIT_WPM_RANGE, PACING_PROFILES
 from rag.store import CURRICULUM, get_store
 
 logger = logging.getLogger(__name__)
@@ -688,7 +689,14 @@ def _audit_audio_records(
         if audio_record.duration_ms > 0 and word_count > 0:
             wpm = (float(word_count) * 60000.0) / float(audio_record.duration_ms)
             metric["wpm"] = wpm
-            if wpm < 80.0 or wpm > 220.0:
+            pacing_band = PACING_PROFILES.get(audio_record.segment_type)
+            if pacing_band is not None:
+                _target, wpm_min, wpm_max = pacing_band
+                family_name: str = audio_record.segment_type
+            else:
+                wpm_min, wpm_max = FLAT_AUDIT_WPM_RANGE
+                family_name = "unknown"
+            if wpm < wpm_min or wpm > wpm_max:
                 flags.append(
                     AuditFlag(
                         lesson_id=audio_record.lesson_id,
@@ -697,8 +705,8 @@ def _audit_audio_records(
                         severity="warn",
                         code="wpm_outlier",
                         message=(
-                            "Transcript pacing is outside expected range "
-                            f"({wpm:.1f} WPM)"
+                            f"Transcript pacing is outside {family_name} band "
+                            f"({wpm:.1f} WPM vs {wpm_min:.1f}-{wpm_max:.1f})"
                         ),
                     )
                 )
@@ -708,6 +716,10 @@ def _audit_audio_records(
             _tokenize(audio_record.transcript_text),
             _lesson_tokens(lesson),
         )
+        if overlap == 0.0 and audio_record.pronunciation_targets and lesson is not None:
+            overlap = _pronunciation_target_overlap(
+                audio_record.pronunciation_targets, lesson.concept
+            )
         metric["transcript_overlap"] = overlap
         lesson_alignment[audio_record.lesson_id].append(overlap)
         if overlap == 0.0 and lesson is not None:
@@ -1510,6 +1522,29 @@ def _lexical_overlap(tokens: Iterable[str], lesson_tokens: set[str]) -> float:
     if not token_set or not lesson_tokens:
         return 0.0
     return len(token_set & lesson_tokens) / len(token_set)
+
+
+def _pronunciation_target_overlap(
+    targets: list[str], concept: str
+) -> float:
+    """Check if pronunciation targets reference the lesson concept.
+
+    Extracts grapheme/phoneme keys from targets like 'grapheme:a' and checks
+    them against the concept without stopword filtering, since single-letter
+    graphemes like 'a' would otherwise be stripped as stopwords.
+    """
+    if not targets or not concept:
+        return 0.0
+    concept_raw = set(re.findall(r"[a-z0-9]+", concept.lower()))
+    target_keys = set()
+    for target in targets:
+        parts = target.split(":", 1)
+        if len(parts) == 2:
+            target_keys.update(re.findall(r"[a-z0-9]+", parts[1].lower()))
+    if not target_keys or not concept_raw:
+        return 0.0
+    matched = len(target_keys & concept_raw)
+    return matched / len(target_keys) if matched > 0 else 0.0
 
 
 def _normalize_for_similarity(text: str) -> str:

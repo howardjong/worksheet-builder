@@ -67,6 +67,7 @@ class AudioCompanionRecord(BaseModel):
     speaker: str = ""
     source_modality: Literal["audio_companion"] = "audio_companion"
     status: str = ""
+    pronunciation_targets: list[str] = Field(default_factory=list)
 
 
 class AuditFlag(BaseModel):

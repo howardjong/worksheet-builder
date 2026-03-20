@@ -10,11 +10,12 @@ import pytest
 
 pytest.importorskip("chromadb")
 
-from corpus.ufli.audio_companion import build_audio_companion_manifests
-from corpus.ufli.audio_companion_schema import AudioJudgeClipResult
+from corpus.ufli.audio_companion import build_audio_companion_manifests, load_audio_bundles
+from corpus.ufli.audio_companion_schema import AudioJudgeClipResult, AudioJudgeSummary
 from corpus.ufli.audio_judge import (
     _judge_clip_with_gemini,
     _parse_judge_response,
+    apply_judge_verdicts,
     judge_audio_companion,
 )
 from corpus.ufli.extract import LessonContent
@@ -313,3 +314,65 @@ def test_judge_short_word_model_clip_avoids_pacing_false_positive(
 
     assert result.recommendation == "use"
     assert not any("expected band" in concern for concern in result.concerns)
+
+
+def test_apply_judge_verdicts_writes_back_to_bundles(tmp_path: Path) -> None:
+    _write_companion_configs(tmp_path)
+    _write_normalized(tmp_path / "normalized.jsonl", _sample_rows())
+    bundles = build_audio_companion_manifests(data_dir=str(tmp_path))
+    bundle = bundles[1]
+    for clip in bundle.clips:
+        clip.status = "generated"
+        clip.voice_profile = "dorothy"
+        clip.speaker = "dorothy"
+        clip.audio_path = f"audio/dorothy/lessons/{bundle.lesson_key}/{clip.audio_file_name}"
+        audio_path = tmp_path / "companion" / clip.audio_path
+        audio_path.parent.mkdir(parents=True, exist_ok=True)
+        audio_path.write_bytes(b"mp3")
+    (tmp_path / "companion" / "lessons" / f"{bundle.lesson_key}.json").write_text(
+        bundle.model_dump_json(indent=2)
+    )
+
+    clip_results = []
+    for clip in bundle.clips:
+        recommendation = "use" if clip.segment_type != "word_model" else "revise"
+        clip_results.append(
+            AudioJudgeClipResult(
+                voice_profile="dorothy",
+                lesson_id=clip.lesson_id,
+                lesson_number=clip.lesson_number,
+                segment_id=clip.segment_id,
+                segment_type=clip.segment_type,
+                audio_path=clip.audio_path,
+                clarity_score=5,
+                pronunciation_accuracy_score=5,
+                instructional_match_score=5,
+                target_accuracy_score=5,
+                decoding_support_score=5,
+                adhd_supportiveness_score=5,
+                pacing_suitability_score=5,
+                pacing_consistency_score=5,
+                recommendation=recommendation,
+            )
+        )
+
+    summary = AudioJudgeSummary(
+        generated_at="2025-01-01T00:00:00+00:00",
+        judge_model="test",
+        data_dir=str(tmp_path),
+        output_dir=str(tmp_path / "out"),
+        voice_profile="dorothy",
+        clip_results=clip_results,
+    )
+
+    updated = apply_judge_verdicts(data_dir=str(tmp_path), summary=summary)
+
+    assert updated > 0
+    reloaded = load_audio_bundles(
+        tmp_path / "companion" / "lessons", selected_lessons={14}
+    )
+    for clip in reloaded[0].clips:
+        if clip.segment_type != "word_model":
+            assert clip.review_status == "approved"
+        else:
+            assert clip.review_status == "needs_revision"

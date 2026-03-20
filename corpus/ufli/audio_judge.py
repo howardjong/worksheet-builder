@@ -19,6 +19,7 @@ from corpus.ufli.audio_companion import (
     _load_lessons,
     _measure_audio_duration_ms,
     _resolve_selected_lessons,
+    _write_bundle,
     load_audio_bundles,
     load_pilot_lessons,
     load_voice_profiles,
@@ -34,6 +35,7 @@ from corpus.ufli.audio_companion_schema import (
     PacingMeasurementSource,
 )
 from corpus.ufli.extract import LessonContent
+from corpus.ufli.pacing import PACING_PROFILES, SANE_SINGLE_WORD_MAX_MS, SANE_SINGLE_WORD_MIN_MS
 from rag.client import get_rag_client
 
 logger = logging.getLogger(__name__)
@@ -57,19 +59,9 @@ class _PacingMetrics:
     measurement_source: PacingMeasurementSource
 
 
-# Conservative child-directed pacing bands for ages 5-8, set below the 150 WPM
-# TTS research baseline reported for older students and aligned to explicit,
-# decoding-first instruction where slower segmented delivery is preferable.
-_PACING_PROFILES: dict[str, tuple[float, float, float]] = {
-    "lesson_instruction": (92.0, 78.0, 108.0),
-    "phoneme_model": (58.0, 35.0, 75.0),
-    "word_model": (78.0, 45.0, 92.0),
-    "passage_sentence": (108.0, 92.0, 122.0),
-    "passage_full": (115.0, 100.0, 128.0),
-    "review": (92.0, 78.0, 108.0),
-}
-_SANE_SINGLE_WORD_MIN_MS = 600
-_SANE_SINGLE_WORD_MAX_MS = 2500
+_PACING_PROFILES = PACING_PROFILES
+_SANE_SINGLE_WORD_MIN_MS = SANE_SINGLE_WORD_MIN_MS
+_SANE_SINGLE_WORD_MAX_MS = SANE_SINGLE_WORD_MAX_MS
 
 
 def judge_audio_companion(
@@ -82,6 +74,7 @@ def judge_audio_companion(
     judge_model: str = DEFAULT_JUDGE_MODEL,
     output_dir: str | None = None,
     clip_limit: int | None = None,
+    write_back: bool = True,
 ) -> AudioJudgeSummary:
     """Judge generated audio companion clips against lesson content."""
     base = Path(data_dir)
@@ -183,7 +176,55 @@ def judge_audio_companion(
     _write_clip_results_csv(report_dir / "judge_results.csv", clip_results)
     _write_markdown_report(report_dir / "judge_report.md", summary)
     logger.info("Audio judge report written to %s", report_dir)
+
+    if write_back:
+        updated = apply_judge_verdicts(data_dir=data_dir, summary=summary)
+        logger.info("Applied judge verdicts to %d clips in bundles", updated)
+
     return summary
+
+
+def apply_judge_verdicts(
+    data_dir: str,
+    summary: AudioJudgeSummary,
+) -> int:
+    """Write judge recommendations back to bundle clips as review_status.
+
+    - recommendation "use" -> review_status "approved"
+    - recommendation "revise" or "block" -> review_status "needs_revision"
+
+    Returns the count of updated clips.
+    """
+    base = Path(data_dir)
+    companion_dir = base / "companion"
+    bundle_dir = companion_dir / _BUNDLE_DIR
+
+    verdict_lookup: dict[str, str] = {
+        result.segment_id: result.recommendation
+        for result in summary.clip_results
+    }
+    if not verdict_lookup:
+        return 0
+
+    lesson_ids = {result.lesson_id for result in summary.clip_results}
+    bundles = load_audio_bundles(bundle_dir, selected_lessons={int(lid) for lid in lesson_ids})
+
+    updated = 0
+    for bundle in bundles:
+        bundle_modified = False
+        for clip in bundle.clips:
+            recommendation = verdict_lookup.get(clip.segment_id)
+            if recommendation is None:
+                continue
+            new_status = "approved" if recommendation == "use" else "needs_revision"
+            if clip.review_status != new_status:
+                clip.review_status = new_status  # type: ignore[assignment]
+                bundle_modified = True
+                updated += 1
+        if bundle_modified:
+            _write_bundle(bundle_dir, bundle)
+
+    return updated
 
 
 def _judge_clip_with_gemini(
