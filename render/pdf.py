@@ -605,7 +605,38 @@ def _draw_chunk(
     # Child-print write line height: generous for young writers (ages 5-8)
     write_line_height = max(int(sizes["body"] * 2.5), 40)
 
+    # Collect consecutive match items into groups for two-column rendering
+    match_group: list[ActivityItem] = []
+    items_to_render: list[ActivityItem | list[ActivityItem]] = []
     for item in chunk.items:
+        if item.response_format == "match":
+            match_group.append(item)
+        else:
+            if match_group:
+                items_to_render.append(match_group)
+                match_group = []
+            items_to_render.append(item)
+    if match_group:
+        items_to_render.append(match_group)
+
+    for entry in items_to_render:
+        # Handle match groups as a batch
+        if isinstance(entry, list):
+            group_h = _estimate_match_group_height(entry, sizes)
+            if page_break_fn is not None and y - group_h < effective_bottom + PAGE_BREAK_BUFFER:
+                page_break_fn()
+                y = CONTENT_TOP
+                _apply_adhd_spacing(c, "body")
+                c.setFillColor(HexColor(theme_colors.text))
+                c.setFont(theme.fonts.primary, sizes["body"])
+            y = _draw_match_group(
+                c, entry, theme, sizes, y,
+                left, right, asset_manifest,
+            )
+            continue
+
+        item = entry
+
         # Per-item page break: if this item won't fit, start a new page
         if page_break_fn is not None:
             item_h = _estimate_item_height(item, theme, sizes, left, right, col_width)
@@ -634,11 +665,6 @@ def _draw_chunk(
             y = _draw_chain_step_item(
                 c, item, theme, sizes, y, left, col_width,
                 write_line_height,
-            )
-        elif item.response_format == "match":
-            y = _draw_match_item(
-                c, item, theme, sizes, y,
-                left, right, asset_manifest,
             )
         elif item.response_format == "trace":
             y = _draw_trace_item(c, item, theme, sizes, y, left)
@@ -755,9 +781,18 @@ def _draw_chain_step_item(
     return y
 
 
-def _draw_match_item(
+def _estimate_match_group_height(
+    items: list[ActivityItem],
+    sizes: dict[str, int],
+) -> float:
+    """Estimate total height for a two-column match group."""
+    row_height = 68  # pic_size(56) + gap(12)
+    return row_height * len(items) + 20
+
+
+def _draw_match_group(
     c: Canvas,
-    item: ActivityItem,
+    items: list[ActivityItem],
     theme: ThemeConfig,
     sizes: dict[str, int],
     y: float,
@@ -765,63 +800,88 @@ def _draw_match_item(
     right: float | None = None,
     asset_manifest: AssetManifest | None = None,
 ) -> float:
-    """Draw a word-picture matching item: word on left, picture on right."""
+    """Draw match items as a two-column layout: words left, pictures right (shuffled).
+
+    Words are listed top-to-bottom on the left. Pictures are listed in their
+    shuffled order (from item.options[0]) on the right. The child draws lines
+    to connect each word to the correct picture.
+    """
     body = sizes["body"]
     lx = left if left is not None else MARGIN
     rx = right if right is not None else (PAGE_WIDTH - MARGIN)
     col_width = rx - lx
-    pic_size = 56  # square picture tile
+    pic_size = 56
+    row_height = pic_size + 12
 
-    # Word label on the left (large, bold)
-    c.setFont(theme.fonts.heading, body + 4)
-    c.setFillColor(HexColor(theme.colors.text))
-    c.drawString(lx + 15, y - body - 8, item.content)
+    # Build picture list from shuffled options
+    pic_words = [
+        (item.options[0] if item.options else item.content)
+        for item in items
+    ]
 
-    # Picture tile on the right — use the shuffled picture word from options
-    pic_word = item.options[0] if item.options else item.content
-    pic_x = lx + col_width - pic_size - 10
-    pic_y = y - pic_size - 4
+    # Draw each row
+    for row_idx, item in enumerate(items):
+        row_y = y - row_idx * row_height
 
-    # Try to draw actual word picture from asset manifest
-    word_drawn = False
-    if asset_manifest:
-        pic_path = asset_manifest.word_picture_paths.get(pic_word)
-        if pic_path and Path(pic_path).exists():
-            try:
-                c.drawImage(
-                    pic_path, pic_x, pic_y,
-                    width=pic_size, height=pic_size,
-                    preserveAspectRatio=True, mask="auto",
-                )
-                word_drawn = True
-            except Exception as e:
-                logger.warning(f"Failed to draw word pic: {e}")
+        # Word label on the left (vertically centered in row)
+        c.setFont(theme.fonts.heading, body + 4)
+        c.setFillColor(HexColor(theme.colors.text))
+        word_y = row_y - pic_size / 2 - (body + 4) / 3
+        c.drawString(lx + 15, word_y, item.content)
 
-    if not word_drawn:
-        # Fallback: dashed placeholder box
-        c.setStrokeColor(HexColor(theme.colors.chunk_border))
-        c.setDash(3, 3)
-        c.rect(pic_x, pic_y, pic_size, pic_size, fill=False, stroke=True)
-        c.setDash()
-        c.setFont(theme.fonts.primary, 7)
-        c.setFillColor(HexColor(theme.colors.directions))
-        label = (item.picture_prompt or item.content)[:10]
-        c.drawString(pic_x + 3, pic_y + 4, f"[{label}]")
+        # Picture on the right (from the shuffled list, NOT this item's word)
+        pic_word = pic_words[row_idx]
+        pic_x = lx + col_width - pic_size - 10
+        pic_y = row_y - pic_size - 4
 
-    # Connecting line (dotted) from word to picture
-    word_end = lx + 15 + len(item.content) * (body * 0.65) + 10
-    line_y = y - pic_size / 2 - 4
-    c.setStrokeColor(HexColor(theme.colors.chunk_border))
-    c.setDash(4, 4)
-    c.line(
-        min(word_end, pic_x - 25), line_y,
-        pic_x - 5, line_y,
-    )
-    c.setDash()
+        word_drawn = False
+        if asset_manifest:
+            pic_path = asset_manifest.word_picture_paths.get(pic_word)
+            if pic_path and Path(pic_path).exists():
+                try:
+                    c.drawImage(
+                        pic_path, pic_x, pic_y,
+                        width=pic_size, height=pic_size,
+                        preserveAspectRatio=True, mask="auto",
+                    )
+                    word_drawn = True
+                except Exception as e:
+                    logger.warning(f"Failed to draw word pic: {e}")
 
-    y -= pic_size + 18
+        if not word_drawn:
+            c.setStrokeColor(HexColor(theme.colors.chunk_border))
+            c.setDash(3, 3)
+            c.rect(pic_x, pic_y, pic_size, pic_size, fill=False, stroke=True)
+            c.setDash()
+            c.setFont(theme.fonts.primary, 7)
+            c.setFillColor(HexColor(theme.colors.directions))
+            # Show the picture word label so the child knows what the picture is
+            prompt = _word_to_picture_label(pic_word)
+            c.drawString(pic_x + 3, pic_y + pic_size / 2, prompt)
+
+    # Draw dotted connecting area between word and picture columns
+    # (light dotted lines from each word row to give the child space to draw)
+    mid_left = lx + 15 + max(len(item.content) for item in items) * (body * 0.65) + 15
+    mid_right = lx + col_width - pic_size - 20
+    if mid_left < mid_right:
+        for row_idx in range(len(items)):
+            row_y = y - row_idx * row_height
+            line_y = row_y - pic_size / 2 - 4
+            c.setStrokeColor(HexColor(theme.colors.chunk_border))
+            c.setDash(2, 6)
+            c.setLineWidth(0.5)
+            c.line(mid_left, line_y, mid_right, line_y)
+            c.setDash()
+            c.setLineWidth(1)
+
+    y -= len(items) * row_height + 10
     c.setFont(theme.fonts.primary, body)
     return y
+
+
+def _word_to_picture_label(word: str) -> str:
+    """Short label for a picture placeholder box."""
+    return f"[{word[:10]}]"
 
 
 def _draw_trace_item(

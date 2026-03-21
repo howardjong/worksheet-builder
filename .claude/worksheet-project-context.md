@@ -13,6 +13,20 @@
 **Plan version:** 1.5.0 + `plans/gemini-embedding-2-rag-plan.md` (v2)
 **Last Updated:** 2026-03-20 (Consolidated worksheet package implemented)
 
+### 2026-03-20 Match Activity Two-Column Layout Fix
+
+**Status:** Complete. Word-picture matching now renders as a two-column group (words left, shuffled pictures right) instead of per-row word+picture pairs. 418 tests pass, lint clean, typecheck clean.
+
+**Problem:** Each match item rendered its word and picture on the same row, making it trivially obvious which picture belongs to which word — the child didn't need to comprehend the word meaning to match.
+
+**Fix in `render/pdf.py`:**
+- Replaced per-item `_draw_match_item()` with grouped `_draw_match_group()` that renders all match items as a two-column layout: words listed top-to-bottom on the left, pictures listed in their shuffled order on the right. Dotted guide lines between columns give the child space to draw connecting lines.
+- Added `_estimate_match_group_height()` for page-break estimation of grouped match items.
+- Modified the item rendering loop in `_draw_chunk()` to collect consecutive match items into groups before rendering, rather than drawing them individually.
+- The adaptation layer already shuffled pictures via `_shuffled_mismatch()` (no word stays in its original position) and stored the shuffled picture word in `item.options[0]` — this fix makes the renderer actually use that shuffle visually.
+
+**Live verification (UFLI Lesson 71 home practice, roblox_obby):** Match page now shows words (itch, match, fetch, stitch) on the left with pictures in a different order on the right (match, fetch, stitch, itch). No word is paired with its own picture on the same row.
+
 ### 2026-03-20 Consolidated Worksheet Package — Implemented
 
 **Status:** Complete. Multi-worksheet pipeline now outputs a single merged PDF per lesson instead of 2-3 separate files. 418 tests pass, lint clean, typecheck clean.
