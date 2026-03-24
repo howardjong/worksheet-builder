@@ -20,6 +20,7 @@ class FileResult:
     input_path: str
     status: Literal["success", "failed", "skipped"]
     output_path: str | None = None
+    rag_index_payload: dict[str, Any] | None = None
     error: str | None = None
     duration_seconds: float = 0.0
     retries: int = 0

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+from functools import lru_cache
 from typing import Any
 
 import numpy as np
@@ -41,10 +42,6 @@ def extract_text_with_fallback(image_path: str) -> OCRResult:
 
 def _run_paddleocr(image_path: str) -> OCRResult:
     """Run PaddleOCR and normalize output to OCRResult."""
-    # Suppress noisy paddle logging
-    os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
-
-    from paddleocr import PaddleOCR
     from PIL import Image as PILImage
 
     # Resize large images to prevent OCR timeout on CPU
@@ -60,7 +57,7 @@ def _run_paddleocr(image_path: str) -> OCRResult:
         image_path = resized_path
         logger.info(f"Resized image from {w}x{h} to {new_w}x{new_h} for OCR")
 
-    ocr = PaddleOCR(lang="en")
+    ocr = _get_paddle_ocr()
     raw: list[Any] = ocr.ocr(image_path)
 
     blocks: list[OCRBlock] = []
@@ -117,6 +114,16 @@ def _run_paddleocr(image_path: str) -> OCRResult:
         engine="paddleocr",
         raw_text="\n".join(all_text_parts),
     )
+
+
+@lru_cache(maxsize=1)
+def _get_paddle_ocr() -> Any:
+    """Reuse a single PaddleOCR instance per process to avoid repeated model loads."""
+    os.environ.setdefault("PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK", "True")
+
+    from paddleocr import PaddleOCR
+
+    return PaddleOCR(lang="en")
 
 
 def _run_tesseract(image_path: str) -> OCRResult:

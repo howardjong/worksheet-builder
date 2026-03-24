@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import hashlib
+import logging
+import re
+from dataclasses import dataclass
 
 from adapt.rules import (
     BRAIN_BREAK_PROMPTS,
@@ -21,12 +24,25 @@ from adapt.schema import (
 from companion.schema import LearnerProfile
 from skill.schema import LiteracySkillModel
 
+logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class _CurriculumWordBank:
+    """Retrieved curriculum references normalized for deterministic word checks."""
+
+    lesson_ids: tuple[str, ...]
+    concepts: tuple[str, ...]
+    documents: tuple[str, ...]
+
 
 def adapt_activity(
     skill: LiteracySkillModel,
     profile: LearnerProfile,
     theme_id: str = "default",
     rules: AccommodationRules | None = None,
+    rag_prior_adaptations: list[dict[str, object]] | None = None,
+    rag_curriculum_references: list[dict[str, object]] | None = None,
 ) -> AdaptedActivityModel:
     """Transform a skill model into ADHD-optimized activity chunks.
 
@@ -42,8 +58,18 @@ def adapt_activity(
     if rules is None:
         rules = build_rules(profile)
 
+    curriculum = _build_curriculum_word_bank(rag_curriculum_references)
+    if curriculum:
+        _, matched_targets = _prioritize_words_by_curriculum(skill.target_words, curriculum)
+        if matched_targets:
+            logger.info(
+                "Curriculum context influencing single adaptation: lessons=%s matched_targets=%s",
+                ",".join(curriculum.lesson_ids) or "unknown",
+                ",".join(sorted(matched_targets)),
+            )
+
     # Split items into chunks
-    chunks = _build_chunks(skill, rules)
+    chunks = _build_chunks(skill, rules, curriculum=curriculum)
 
     # Apply scaffolding (worked example fades after first chunk)
     scaffolding = ScaffoldConfig(
@@ -79,18 +105,62 @@ def adapt_lesson(
     profile: LearnerProfile,
     theme_id: str = "default",
     rules: AccommodationRules | None = None,
+    rag_prior_adaptations: list[dict[str, object]] | None = None,
+    rag_curriculum_references: list[dict[str, object]] | None = None,
+    artifacts_dir: str | None = None,
 ) -> list[AdaptedActivityModel]:
     """Transform a skill model into 2-3 ADHD-optimized mini-worksheets.
 
-    Each mini-worksheet focuses on a different activity type for multi-sensory variety:
-    1. Word Discovery — word-picture matching, trace, circle
-    2. Word Builder — word chains, fill-blank, sight words
-    3. Story Time — sentence completion, read-aloud passage, comprehension
+    Tries LLM-assisted adaptation first (Gemini plans the worksheet structure),
+    then falls back to the deterministic rule-based engine if LLM is unavailable
+    or fails validation.
 
     Returns a list of 1-3 AdaptedActivityModels, one per mini-worksheet.
     """
     if rules is None:
         rules = build_rules(profile)
+
+    # Try orchestrated LLM adaptation (Gemini → Judge → retry → GPT takeover)
+    try:
+        from adapt.llm_orchestrator import orchestrate_llm_adaptation
+
+        llm_result = orchestrate_llm_adaptation(
+            skill,
+            profile,
+            theme_id=theme_id,
+            rules=rules,
+            rag_curriculum_references=rag_curriculum_references,
+            artifacts_dir=artifacts_dir,
+        )
+        if llm_result:
+            return llm_result
+    except Exception as exc:
+        logger.warning("LLM orchestration failed, using deterministic engine: %s", exc)
+
+    # Deterministic fallback
+
+    prior_adaptations = rag_prior_adaptations or []
+    distractor_blacklist = _extract_distractor_blacklist(prior_adaptations)
+    # Respect learner's response format preferences: if "trace" is not in
+    # allowed formats, substitute "write" so discovery uses write-the-word
+    # instead of dotted tracing (trace is K-level; older learners write).
+    discovery_default = ["match", "trace", "circle"]
+    if "trace" not in rules.allowed_response_formats:
+        discovery_default = [
+            "write" if f == "trace" else f for f in discovery_default
+        ]
+    discovery_formats = _suggest_format_mix(prior_adaptations, discovery_default)
+    curriculum = _build_curriculum_word_bank(rag_curriculum_references)
+    if prior_adaptations:
+        prior_sources = [
+            str(adapt.get("source_hash", "unknown"))
+            for adapt in prior_adaptations[:3]
+        ]
+        logger.info(
+            "RAG context influencing adaptation: prior_adaptations=%s sources=%s",
+            len(prior_adaptations),
+            ",".join(prior_sources),
+        )
 
     # Categorize source items by type
     word_items: list[str] = []
@@ -98,6 +168,7 @@ def adapt_lesson(
     sight_words: list[str] = []
     sentences: list[str] = []
     passages: list[str] = []
+    roll_and_read_words: list[str] = []
 
     for si in skill.source_items:
         if si.item_type == "word_list":
@@ -121,6 +192,32 @@ def adapt_lesson(
             sentences.extend(sents)
         elif si.item_type == "passage":
             passages.append(si.content)
+        elif si.item_type == "roll_and_read":
+            roll_and_read_words.extend(_parse_roll_and_read(si.content))
+
+    # Deduplicate sentences (home practice PDF often has duplicated content)
+    seen_sents: set[str] = set()
+    unique_sents: list[str] = []
+    for s in sentences:
+        key = s.strip().lower()
+        if key not in seen_sents:
+            seen_sents.add(key)
+            unique_sents.append(s)
+    sentences = unique_sents
+
+    prioritized_targets, matched_targets = _prioritize_words_by_curriculum(
+        skill.target_words,
+        curriculum,
+    )
+    word_items, matched_word_items = _prioritize_words_by_curriculum(word_items, curriculum)
+    sight_words, matched_sight_words = _prioritize_words_by_curriculum(sight_words, curriculum)
+    curriculum_supported_words = matched_targets | matched_word_items | matched_sight_words
+    if curriculum and curriculum_supported_words:
+        logger.info(
+            "Curriculum context influencing lesson adaptation: lessons=%s matched_words=%s",
+            ",".join(curriculum.lesson_ids) or "unknown",
+            ",".join(sorted(curriculum_supported_words)),
+        )
 
     worksheets: list[AdaptedActivityModel] = []
     base_hash = _hash_str(skill.template_type + str(skill.target_words))
@@ -128,9 +225,27 @@ def adapt_lesson(
     profile_hash = _hash_str(profile.model_dump_json())
 
     # Worksheet 1: Word Discovery (if we have word items or target words)
-    discovery_words = word_items or skill.target_words[:6]
+    discovery_words = word_items or prioritized_targets[:6]
     if discovery_words:
-        chunks = _build_discovery_chunks(discovery_words, skill, rules)
+        chunks = _build_discovery_chunks(
+            discovery_words,
+            skill,
+            rules,
+            distractor_blacklist=distractor_blacklist,
+            format_order=discovery_formats,
+            curriculum_supported_words=curriculum_supported_words,
+            curriculum_lesson_ids=curriculum.lesson_ids if curriculum else (),
+        )
+        # Prepend phonemic awareness warm-up for grades K-1
+        warmup = _build_warmup_chunk(
+            discovery_words, skill, rules,
+            start_chunk_id=0,
+        )
+        if warmup:
+            # Renumber existing chunk IDs
+            for ch in chunks:
+                ch.chunk_id += 1
+            chunks = [warmup] + chunks
         worksheets.append(AdaptedActivityModel(
             source_hash=base_hash,
             skill_model_hash=skill_hash,
@@ -151,12 +266,21 @@ def adapt_lesson(
             break_prompt=BRAIN_BREAK_PROMPTS[0],
         ))
 
-    # Worksheet 2: Word Builder (chains + fill_blank + sight words)
+    # Worksheet 2: Word Builder (chains + fill_blank + sight words + roll-and-read)
     if chain_items or word_items or sight_words:
         chunks = _build_builder_chunks(
-            chain_items, word_items or skill.target_words[:6],
+            chain_items, word_items or prioritized_targets[:6],
             sight_words, skill, rules,
+            curriculum_supported_words=curriculum_supported_words,
+            curriculum_lesson_ids=curriculum.lesson_ids if curriculum else (),
         )
+        # Append Roll and Read fluency chunk
+        roll_chunk = _build_roll_and_read_chunk(
+            roll_and_read_words, skill, rules,
+            start_chunk_id=len(chunks) + 1,
+        )
+        if roll_chunk:
+            chunks.append(roll_chunk)
         worksheets.append(AdaptedActivityModel(
             source_hash=base_hash,
             skill_model_hash=skill_hash,
@@ -179,7 +303,15 @@ def adapt_lesson(
 
     # Worksheet 3: Story Time (sentences + passage + comprehension)
     if sentences or passages:
-        chunks = _build_story_chunks(sentences, passages, skill, rules)
+        chunks = _build_story_chunks(
+            sentences,
+            passages,
+            prioritized_targets,
+            skill,
+            rules,
+            curriculum_supported_words=curriculum_supported_words,
+            curriculum_lesson_ids=curriculum.lesson_ids if curriculum else (),
+        )
         worksheets.append(AdaptedActivityModel(
             source_hash=base_hash,
             skill_model_hash=skill_hash,
@@ -200,14 +332,55 @@ def adapt_lesson(
             break_prompt=None,  # Last worksheet — no break needed
         ))
 
-    # Set worksheet_count on all worksheets
+    # For UFLI word work: reorder so word chains (the core lesson activity)
+    # come first, then sample word practice, then sentences. The default
+    # order (Discovery → Builder → Story) buries the chains in Worksheet 2
+    # behind generic match/write/circle activities that don't teach the
+    # UFLI concept.
+    if skill.template_type == "ufli_word_work" and len(worksheets) >= 2:
+        builder_idx = next(
+            (i for i, ws in enumerate(worksheets) if ws.worksheet_title == "Word Builder"),
+            None,
+        )
+        discovery_idx = next(
+            (i for i, ws in enumerate(worksheets) if ws.worksheet_title == "Word Discovery"),
+            None,
+        )
+        # Only reorder when Builder actually has word chain content
+        has_chains = builder_idx is not None and any(
+            item.metadata.get("display") in ("chain_step", "chain")
+            for chunk in worksheets[builder_idx].chunks
+            for item in chunk.items
+        )
+        if (
+            has_chains
+            and builder_idx is not None
+            and discovery_idx is not None
+            and builder_idx > discovery_idx
+        ):
+            worksheets[discovery_idx], worksheets[builder_idx] = (
+                worksheets[builder_idx],
+                worksheets[discovery_idx],
+            )
+            worksheets[discovery_idx].worksheet_title = "Word Work"
+            worksheets[builder_idx].worksheet_title = "Word Practice"
+
+    # Set worksheet_count and worksheet_number on all worksheets
     count = len(worksheets)
-    for ws in worksheets:
+    for i, ws in enumerate(worksheets):
         ws.worksheet_count = count
+        ws.worksheet_number = i + 1
 
     # Fallback: if nothing produced, return single worksheet via existing path
     if not worksheets:
-        single = adapt_activity(skill, profile, theme_id=theme_id, rules=rules)
+        single = adapt_activity(
+            skill,
+            profile,
+            theme_id=theme_id,
+            rules=rules,
+            rag_prior_adaptations=rag_prior_adaptations,
+            rag_curriculum_references=rag_curriculum_references,
+        )
         return [single]
 
     return worksheets
@@ -217,93 +390,163 @@ def _build_discovery_chunks(
     words: list[str],
     skill: LiteracySkillModel,
     rules: AccommodationRules,
+    distractor_blacklist: set[str] | None = None,
+    format_order: list[str] | None = None,
+    curriculum_supported_words: set[str] | None = None,
+    curriculum_lesson_ids: tuple[str, ...] = (),
 ) -> list[ActivityChunk]:
     """Build Word Discovery chunks: match + trace + circle activities."""
     chunks: list[ActivityChunk] = []
     item_id = 0
 
-    # Chunk 1: Word-picture matching (up to 4 words)
-    match_words = words[:4]
-    if match_words:
-        items: list[ActivityItem] = []
-        for w in match_words:
-            item_id += 1
-            items.append(ActivityItem(
-                item_id=item_id,
-                content=w,
-                response_format="match",
-                picture_prompt=_word_to_picture_prompt(w),
-                options=[w],  # renderer will add picture tiles
-            ))
-        chunks.append(ActivityChunk(
-            chunk_id=1,
-            micro_goal=f"Match {len(match_words)} words to their pictures",
-            instructions=[
-                Step(number=1, text="Look at each picture."),
-                Step(number=2, text="Draw a line to the matching word."),
-            ],
-            worked_example=Example(
-                instruction="Watch how I do the first one:",
-                content=(
-                    f'The picture of a '
-                    f'{_word_to_picture_prompt(match_words[0]).split(",")[0].replace("a ", "")}'
-                    f' matches "{match_words[0]}"!'
+    default_order = ["match", "trace", "circle"]
+    valid_formats = {"match", "trace", "circle", "write"}
+    ordered_formats: list[str] = []
+    seen_formats: set[str] = set()
+    for fmt in format_order or default_order:
+        if fmt in valid_formats and fmt not in seen_formats:
+            ordered_formats.append(fmt)
+            seen_formats.add(fmt)
+            # "write" substitutes for "trace" — prevent trace sneaking back
+            if fmt == "write":
+                seen_formats.add("trace")
+    for fmt in default_order:
+        if fmt not in seen_formats:
+            ordered_formats.append(fmt)
+
+    for fmt in ordered_formats:
+        chunk_id = len(chunks) + 1
+        if fmt == "match":
+            match_words = words[:4]
+            if not match_words:
+                continue
+            # Shuffle the picture order so words and pictures don't align
+            shuffled_pictures = _shuffled_mismatch(match_words)
+            items: list[ActivityItem] = []
+            for idx, word in enumerate(match_words):
+                item_id += 1
+                items.append(ActivityItem(
+                    item_id=item_id,
+                    content=word,
+                    response_format="match",
+                    metadata=_curriculum_item_metadata(
+                        word,
+                        curriculum_supported_words,
+                        curriculum_lesson_ids,
+                    ),
+                    picture_prompt=_word_to_picture_prompt(shuffled_pictures[idx]),
+                    options=[shuffled_pictures[idx]],
+                    answer=word,
+                ))
+            chunks.append(ActivityChunk(
+                chunk_id=chunk_id,
+                micro_goal=f"Match {len(match_words)} words to their pictures",
+                instructions=[
+                    Step(number=1, text="Look at each picture."),
+                    Step(number=2, text="Draw a line to the matching word."),
+                ],
+                worked_example=Example(
+                    instruction="Watch how I do the first one:",
+                    content=(
+                        f'The picture of a '
+                        f'{_word_to_picture_prompt(match_words[0]).split(",")[0].replace("a ", "")}'
+                        f' matches "{match_words[0]}"!'
+                    ),
                 ),
-            ),
-            items=items,
-            response_format="match",
-            time_estimate="About 2 minutes",
-        ))
-
-    # Chunk 2: Read & trace (up to 4 words)
-    trace_words = words[:4]
-    if trace_words:
-        items = []
-        for w in trace_words:
-            item_id += 1
-            items.append(ActivityItem(
-                item_id=item_id,
-                content=w,
-                response_format="trace",
+                items=items,
+                response_format="match",
+                time_estimate="About 2 minutes",
             ))
-        chunks.append(ActivityChunk(
-            chunk_id=2,
-            micro_goal=f"Trace {len(trace_words)} words",
-            instructions=[
-                Step(number=1, text="Say each word out loud."),
-                Step(number=2, text="Trace the dotted letters."),
-            ],
-            worked_example=None,
-            items=items,
-            response_format="trace",
-            time_estimate="About 2 minutes",
-        ))
 
-    # Chunk 3: Circle the CVCe words (mix target + distractors)
-    if words:
-        distractors = _generate_distractors(words, min(4, len(words)))
-        all_options = words[:4] + distractors
-        items = []
-        item_id += 1
-        items.append(ActivityItem(
-            item_id=item_id,
-            content="Circle all the words that follow the pattern.",
-            response_format="circle",
-            options=all_options,
-            answer=",".join(words[:4]),
-        ))
-        chunks.append(ActivityChunk(
-            chunk_id=3,
-            micro_goal="Find the pattern words",
-            instructions=[
-                Step(number=1, text="Look at each word."),
-                Step(number=2, text="Circle the words that match the pattern."),
-            ],
-            worked_example=None,
-            items=items,
-            response_format="circle",
-            time_estimate="About 1 minute",
-        ))
+        if fmt == "trace":
+            trace_words = words[:5]
+            if not trace_words:
+                continue
+            items = []
+            for word in trace_words:
+                item_id += 1
+                items.append(ActivityItem(
+                    item_id=item_id,
+                    content=word,
+                    response_format="trace",
+                    metadata=_curriculum_item_metadata(
+                        word,
+                        curriculum_supported_words,
+                        curriculum_lesson_ids,
+                    ),
+                ))
+            chunks.append(ActivityChunk(
+                chunk_id=chunk_id,
+                micro_goal=f"Trace {len(trace_words)} words",
+                instructions=[
+                    Step(number=1, text="Say each word out loud."),
+                    Step(number=2, text="Trace the dotted letters."),
+                ],
+                worked_example=None,
+                items=items,
+                response_format="trace",
+                time_estimate="About 2 minutes",
+            ))
+
+        if fmt == "write":
+            write_words = words[:5]
+            if not write_words:
+                continue
+            items = []
+            for word in write_words:
+                item_id += 1
+                items.append(ActivityItem(
+                    item_id=item_id,
+                    content=word,
+                    response_format="write",
+                    metadata=_curriculum_item_metadata(
+                        word,
+                        curriculum_supported_words,
+                        curriculum_lesson_ids,
+                    ),
+                ))
+            chunks.append(ActivityChunk(
+                chunk_id=chunk_id,
+                micro_goal=f"Write {len(write_words)} words",
+                instructions=[
+                    Step(number=1, text="Say each word out loud."),
+                    Step(number=2, text="Write the word on the line."),
+                ],
+                worked_example=None,
+                items=items,
+                response_format="write",
+                time_estimate="About 2 minutes",
+            ))
+
+        if fmt == "circle":
+            if not words:
+                continue
+            distractors = _generate_distractors(
+                words,
+                min(4, len(words)),
+                blacklist=distractor_blacklist,
+            )
+            all_options = words[:6] + distractors
+            item_id += 1
+            item = ActivityItem(
+                item_id=item_id,
+                content="Circle all the words that follow the pattern.",
+                response_format="circle",
+                options=all_options,
+                answer=",".join(words[:4]),
+            )
+            chunks.append(ActivityChunk(
+                chunk_id=chunk_id,
+                micro_goal="Find the pattern words",
+                instructions=[
+                    Step(number=1, text="Look at each word."),
+                    Step(number=2, text="Circle the words that match the pattern."),
+                ],
+                worked_example=None,
+                items=[item],
+                response_format="circle",
+                time_estimate="About 1 minute",
+            ))
 
     return chunks
 
@@ -314,40 +557,89 @@ def _build_builder_chunks(
     sight_words_list: list[str],
     skill: LiteracySkillModel,
     rules: AccommodationRules,
+    curriculum_supported_words: set[str] | None = None,
+    curriculum_lesson_ids: tuple[str, ...] = (),
 ) -> list[ActivityChunk]:
     """Build Word Builder chunks: chains + fill-blank + sight words."""
     chunks: list[ActivityChunk] = []
     item_id = 0
 
-    # Chunk 1: Word chains (write format, keep existing behavior)
+    # Chunk 1: Word chains — interactive letter-change steps
     if chains:
-        items: list[ActivityItem] = []
-        for chain in chains:
-            item_id += 1
-            items.append(ActivityItem(
-                item_id=item_id,
-                content=chain,
-                response_format="write",
-                metadata={"display": "chain"},
-            ))
-        chunks.append(ActivityChunk(
-            chunk_id=1,
-            micro_goal=f"Follow {len(chains)} word chains",
-            instructions=[
-                Step(number=1, text="Read the chain of words."),
-                Step(number=2, text="Write each word on the line."),
-            ],
-            worked_example=Example(
+        chain_steps = _parse_chain_steps(chains)
+        # Deduplicate steps (source PDFs sometimes repeat chains)
+        seen_steps: set[tuple[str, str]] = set()
+        unique_steps: list[dict[str, str]] = []
+        for step in chain_steps:
+            key = (step["from_word"], step["to_word"])
+            if key not in seen_steps:
+                seen_steps.add(key)
+                unique_steps.append(step)
+        chain_steps = unique_steps
+
+        if chain_steps:
+            # Worked example uses the first step; activity uses the rest
+            ex_step = chain_steps[0]
+            example = Example(
+                instruction="Watch how the letters change:",
+                content=(
+                    f'{ex_step["from_word"]} → {ex_step["to_word"]}  '
+                    f'(change the "{ex_step["old_letter"]}" '
+                    f'to "{ex_step["new_letter"]}")'
+                ),
+            )
+            activity_steps = chain_steps[1:]
+        else:
+            # Fallback if parsing fails — show chain read-only
+            example = Example(
                 instruction="Watch how the letters change:",
                 content=f'In "{chains[0]}" — one letter changes each time!',
-            ) if chains else None,
+            )
+            activity_steps = []
+
+        items: list[ActivityItem] = []
+        if activity_steps:
+            for step in activity_steps:
+                item_id += 1
+                items.append(ActivityItem(
+                    item_id=item_id,
+                    content=(
+                        f'Start with "{step["from_word"]}". '
+                        f'Change the "{step["old_letter"]}" '
+                        f'to "{step["new_letter"]}". '
+                        f'Write the new word.'
+                    ),
+                    response_format="write",
+                    metadata={"display": "chain_step"},
+                    answer=step["to_word"],
+                ))
+        else:
+            # Fallback: plain chain items (skip first chain used in example)
+            for chain in chains:
+                item_id += 1
+                items.append(ActivityItem(
+                    item_id=item_id,
+                    content=chain,
+                    response_format="write",
+                    metadata={"display": "chain"},
+                ))
+
+        chunks.append(ActivityChunk(
+            chunk_id=1,
+            micro_goal=f"Build {len(items)} new words",
+            instructions=[
+                Step(number=1, text="Read the starting word."),
+                Step(number=2, text="Change the letter shown."),
+                Step(number=3, text="Write the new word on the line."),
+            ],
+            worked_example=example,
             items=items,
             response_format="write",
             time_estimate="About 2 minutes",
         ))
 
     # Chunk 2: Fill in the missing letter
-    fill_words = words[:4]
+    fill_words = words[:5]
     if fill_words:
         items = []
         for w in fill_words:
@@ -358,6 +650,11 @@ def _build_builder_chunks(
                     item_id=item_id,
                     content=blank_content,
                     response_format="fill_blank",
+                    metadata=_curriculum_item_metadata(
+                        w,
+                        curriculum_supported_words,
+                        curriculum_lesson_ids,
+                    ),
                     answer=answer_letter,
                     options=["a", "e", "i", "o", "u"],
                 ))
@@ -384,7 +681,14 @@ def _build_builder_chunks(
                 item_id=item_id,
                 content=sw,
                 response_format="write",
-                metadata={"sight_word": True},
+                metadata={
+                    "sight_word": True,
+                    **_curriculum_item_metadata(
+                        sw,
+                        curriculum_supported_words,
+                        curriculum_lesson_ids,
+                    ),
+                },
             ))
         chunks.append(ActivityChunk(
             chunk_id=len(chunks) + 1,
@@ -402,11 +706,188 @@ def _build_builder_chunks(
     return chunks
 
 
+def _build_warmup_chunk(
+    words: list[str],
+    skill: LiteracySkillModel,
+    rules: AccommodationRules,
+    start_chunk_id: int = 0,
+) -> ActivityChunk | None:
+    """Build a phonemic awareness warm-up chunk with Elkonin sound boxes.
+
+    Only produced for grades K-1. Returns None otherwise.
+    """
+    if skill.grade_level not in ("K", "1"):
+        return None
+
+    # Skip for consonant-le syllable patterns — Elkonin sound-box segmentation
+    # breaks the -le unit apart, contradicting the lesson's teaching goal.
+    if "-le" in skill.specific_skill.lower():
+        return None
+
+    # Pick up to 3 short target words for sound segmentation
+    candidates = [w.lower() for w in words if 2 <= len(w) <= 5 and w.isalpha()]
+    if not candidates:
+        return None
+    selected = candidates[:3]
+
+    items: list[ActivityItem] = []
+    for idx, word in enumerate(selected):
+        phonemes = _segment_phonemes(word)
+        items.append(ActivityItem(
+            item_id=idx + 1,
+            content=word,
+            response_format="sound_box",
+            metadata={"display": "elkonin", "phoneme_count": len(phonemes)},
+            options=phonemes,
+            answer=word,
+        ))
+
+    return ActivityChunk(
+        chunk_id=start_chunk_id + 1,
+        micro_goal=f"Tap out the sounds in {len(items)} words",
+        instructions=[
+            Step(number=1, text="Say the word out loud."),
+            Step(number=2, text="Tap each sound you hear."),
+            Step(number=3, text="Write one sound in each box."),
+        ],
+        worked_example=Example(
+            instruction="Watch how I tap out the sounds:",
+            content=f'"{selected[0]}" has {len(_segment_phonemes(selected[0]))} sounds: '
+                    + " - ".join(f'"{p}"' for p in _segment_phonemes(selected[0])),
+        ),
+        items=items,
+        response_format="sound_box",
+        time_estimate="About 1 minute",
+    )
+
+
+def _segment_phonemes(word: str) -> list[str]:
+    """Segment a word into approximate phonemes for Elkonin boxes.
+
+    This is a simplified grapheme-to-phoneme mapping suitable for
+    common English phonics patterns taught in UFLI K-2.
+    """
+    word = word.lower()
+    phonemes: list[str] = []
+    i = 0
+    # Common digraphs and trigraphs to treat as single phonemes
+    multi_graphemes = [
+        "tch", "dge",
+        "sh", "ch", "th", "wh", "ph", "ck", "ng", "nk",
+        "ai", "ay", "ee", "ea", "oa", "ow", "ou", "oi", "oy",
+        "oo", "ew", "aw", "au", "igh", "eigh",
+        "ar", "er", "ir", "or", "ur",
+    ]
+    while i < len(word):
+        matched = False
+        # Check longest multi-graphemes first
+        for mg in multi_graphemes:
+            if word[i:i + len(mg)] == mg:
+                phonemes.append(mg)
+                i += len(mg)
+                matched = True
+                break
+        if not matched:
+            # Silent e at end after consonant
+            if (i == len(word) - 1 and word[i] == "e"
+                    and len(phonemes) >= 2
+                    and word[i - 1] not in "aeiou"):
+                break  # skip silent e
+            phonemes.append(word[i])
+            i += 1
+    return phonemes
+
+
+def _parse_roll_and_read(text: str) -> list[str]:
+    """Parse a Roll and Read text block into a clean word list."""
+    words: list[str] = []
+    for line in text.split("\n"):
+        line = line.strip()
+        # Skip headers, copyright, lesson markers
+        if not line:
+            continue
+        if line.startswith("©") or "University of Florida" in line:
+            continue
+        if line.lower().startswith("roll and read") or line.lower().startswith("lesson"):
+            continue
+        # Each remaining line should be a single word
+        for token in line.split():
+            token = token.strip().lower()
+            # Filter: must be real English word (>=2 chars, not an artifact)
+            if not token or not token.isalpha() or len(token) < 2:
+                continue
+            # Skip common OCR/extraction artifacts
+            if token in ("la", "le", "re", "de", "el", "al"):
+                continue
+            words.append(token)
+    # Deduplicate preserving order
+    seen: set[str] = set()
+    unique: list[str] = []
+    for w in words:
+        if w not in seen:
+            seen.add(w)
+            unique.append(w)
+    return unique
+
+
+def _build_roll_and_read_chunk(
+    words: list[str],
+    skill: LiteracySkillModel,
+    rules: AccommodationRules,
+    start_chunk_id: int = 1,
+) -> ActivityChunk | None:
+    """Build a Roll and Read fluency chunk with a mix of base and inflected words."""
+    if not words:
+        return None
+
+    # Select up to 5 words — prefer a mix of base and inflected forms
+    base_words = [w for w in words if not w.endswith("ing") and not w.endswith("ed")]
+    inflected = [w for w in words if w.endswith("ing") or w.endswith("ed")]
+    selected: list[str] = []
+    # Alternate base and inflected
+    bi, ii = 0, 0
+    while len(selected) < 5 and (bi < len(base_words) or ii < len(inflected)):
+        if bi < len(base_words) and len(selected) < 5:
+            selected.append(base_words[bi])
+            bi += 1
+        if ii < len(inflected) and len(selected) < 5:
+            selected.append(inflected[ii])
+            ii += 1
+
+    if not selected:
+        return None
+
+    items: list[ActivityItem] = []
+    for idx, word in enumerate(selected):
+        items.append(ActivityItem(
+            item_id=idx + 1,
+            content=word,
+            response_format="read_aloud",
+            metadata={"display": "roll_and_read"},
+        ))
+
+    return ActivityChunk(
+        chunk_id=start_chunk_id,
+        micro_goal=f"Read {len(items)} words fast!",
+        instructions=[
+            Step(number=1, text="Read each word out loud."),
+            Step(number=2, text="Try to read them faster each time!"),
+        ],
+        worked_example=None,
+        items=items,
+        response_format="read_aloud",
+        time_estimate="About 1 minute",
+    )
+
+
 def _build_story_chunks(
     sentences: list[str],
     passages: list[str],
+    target_words: list[str],
     skill: LiteracySkillModel,
     rules: AccommodationRules,
+    curriculum_supported_words: set[str] | None = None,
+    curriculum_lesson_ids: tuple[str, ...] = (),
 ) -> list[ActivityChunk]:
     """Build Story Time chunks: sentence completion + read-aloud + comprehension."""
     chunks: list[ActivityChunk] = []
@@ -417,14 +898,19 @@ def _build_story_chunks(
         items: list[ActivityItem] = []
         for sent in sentences:
             item_id += 1
-            blank_sent, removed_word = _sentence_to_fill_blank(sent, skill.target_words)
+            blank_sent, removed_word = _sentence_to_fill_blank(sent, target_words)
             if blank_sent and removed_word:
                 # Create word bank from target words + the answer
-                bank = list(set([removed_word] + skill.target_words[:3]))
+                bank = list(set([removed_word] + target_words[:3]))
                 items.append(ActivityItem(
                     item_id=item_id,
                     content=blank_sent,
                     response_format="fill_blank",
+                    metadata=_curriculum_item_metadata(
+                        removed_word,
+                        curriculum_supported_words,
+                        curriculum_lesson_ids,
+                    ),
                     answer=removed_word,
                     options=bank,
                 ))
@@ -477,7 +963,7 @@ def _build_story_chunks(
 
     # Chunk 3: Story comprehension (circle format)
     if passages:
-        comp_questions = _generate_comprehension_questions(passages, skill.target_words)
+        comp_questions = _generate_comprehension_questions(passages, target_words)
         if comp_questions:
             items = []
             for q, opts, ans in comp_questions:
@@ -505,15 +991,100 @@ def _build_story_chunks(
     return chunks
 
 
-def _generate_distractors(target_words: list[str], count: int) -> list[str]:
-    """Generate plausible non-pattern words as distractors for circle activities."""
-    common_distractors = [
-        "the", "and", "cat", "dog", "big", "run", "sit", "hat",
-        "pen", "cup", "red", "hop", "fun", "bus", "map", "net",
-    ]
-    # Filter out any that are in target_words
-    available = [d for d in common_distractors if d not in target_words]
-    return available[:count]
+def _generate_distractors(
+    target_words: list[str],
+    count: int,
+    blacklist: set[str] | None = None,
+) -> list[str]:
+    """Generate phonetically graduated distractors for circle activities.
+
+    Based on research (PMC8862114, PMC5902514):
+    - Near-miss distractors share features with targets but differ in the
+      target pattern, training precise phonological discrimination.
+    - Mix of difficulty: ~half near-miss (share ending/onset), ~half unrelated
+      but grade-appropriate CVC/CCVC words.
+    """
+    exclude = {word.lower() for word in target_words}
+    if blacklist:
+        exclude |= {word.lower() for word in blacklist}
+
+    # Near-miss distractors: share visual/phonetic features with targets
+    # Organized by common phonics patterns that look similar but sound different
+    near_miss_pools: dict[str, list[str]] = {
+        # Words ending in y but with short vowel (vs y-as-long-i targets)
+        "y_short": ["funny", "happy", "bunny", "puppy", "silly", "jelly"],
+        # Words with similar onsets to common targets
+        "onset_similar": ["clip", "clam", "trap", "drum", "skip", "slim"],
+        # Words sharing rime patterns but different vowels
+        "rime_similar": ["bay", "day", "say", "may", "joy", "toy", "boy"],
+        # Short-vowel CVC words (common, clearly different)
+        "cvc_basic": ["cat", "dog", "big", "run", "sit", "hat", "hop", "cup"],
+    }
+
+    # Pick near-miss first (half the count), then fill with basic CVC
+    near_count = max(1, count // 2)
+    selected: list[str] = []
+
+    # Try near-miss pools in order
+    for pool_words in near_miss_pools.values():
+        if len(selected) >= near_count:
+            break
+        for w in pool_words:
+            if w.lower() not in exclude and w not in selected:
+                selected.append(w)
+                if len(selected) >= near_count:
+                    break
+
+    # Fill remaining with basic CVC distractors
+    for w in near_miss_pools["cvc_basic"]:
+        if len(selected) >= count:
+            break
+        if w.lower() not in exclude and w not in selected:
+            selected.append(w)
+
+    return selected[:count]
+
+
+def _extract_distractor_blacklist(
+    prior_adaptations: list[dict[str, object]],
+) -> set[str]:
+    """Extract distractor words used in prior adaptations for blacklist reuse."""
+    blacklist: set[str] = set()
+    for adaptation in prior_adaptations:
+        raw = adaptation.get("distractor_words")
+        if not raw:
+            continue
+        if isinstance(raw, str):
+            words = [word.strip().lower() for word in raw.split(",") if word.strip()]
+            blacklist.update(words)
+    return blacklist
+
+
+def _suggest_format_mix(
+    prior_adaptations: list[dict[str, object]],
+    default_formats: list[str],
+) -> list[str]:
+    """Suggest response formats that differ from prior runs for the same skill."""
+    if not prior_adaptations:
+        return default_formats
+
+    recent_formats: set[str] | None = None
+    for adaptation in prior_adaptations:
+        raw_formats = adaptation.get("response_formats")
+        if isinstance(raw_formats, str) and raw_formats.strip():
+            recent_formats = {fmt.strip() for fmt in raw_formats.split(",") if fmt.strip()}
+            break
+
+    if not recent_formats:
+        return default_formats
+
+    default_set = {fmt.strip() for fmt in default_formats if fmt.strip()}
+    if default_set == recent_formats and len(default_formats) >= 2:
+        rotated = default_formats.copy()
+        rotated[0], rotated[1] = rotated[1], rotated[0]
+        return rotated
+
+    return default_formats
 
 
 def _generate_fill_blank(word: str) -> tuple[str, str]:
@@ -637,14 +1208,15 @@ def _word_to_picture_prompt(word: str) -> str:
 def _build_chunks(
     skill: LiteracySkillModel,
     rules: AccommodationRules,
+    curriculum: _CurriculumWordBank | None = None,
 ) -> list[ActivityChunk]:
     """Split source items into ADHD-friendly chunks."""
     # Gather all practice items from source
-    raw_items = _source_items_to_activity_items(skill, rules)
+    raw_items = _source_items_to_activity_items(skill, rules, curriculum=curriculum)
 
     if not raw_items:
         # If no source items, create items from target words
-        raw_items = _words_to_activity_items(skill, rules)
+        raw_items = _words_to_activity_items(skill, rules, curriculum=curriculum)
 
     # Split into chunks
     max_per_chunk = rules.max_items_per_chunk
@@ -710,6 +1282,7 @@ def _build_chunks(
 def _source_items_to_activity_items(
     skill: LiteracySkillModel,
     rules: AccommodationRules,
+    curriculum: _CurriculumWordBank | None = None,
 ) -> list[ActivityItem]:
     """Convert SourceItems to ActivityItems with appropriate response formats."""
     items: list[ActivityItem] = []
@@ -725,6 +1298,7 @@ def _source_items_to_activity_items(
         if source_item.item_type == "word_list":
             # Split word lists into individual items
             words = [w.strip() for w in source_item.content.replace(",", " ").split() if w.strip()]
+            words, supported_words = _prioritize_words_by_curriculum(words, curriculum)
             for word in words:
                 if not word.isalpha():
                     continue
@@ -734,6 +1308,11 @@ def _source_items_to_activity_items(
                         item_id=item_id,
                         content=word,
                         response_format=response_format,
+                        metadata=_curriculum_item_metadata(
+                            word,
+                            supported_words,
+                            curriculum.lesson_ids if curriculum else (),
+                        ),
                     )
                 )
 
@@ -780,6 +1359,7 @@ def _source_items_to_activity_items(
 
         elif source_item.item_type == "sight_words":
             words = [w.strip() for w in source_item.content.replace(",", " ").split() if w.strip()]
+            words, supported_words = _prioritize_words_by_curriculum(words, curriculum)
             for word in words:
                 cleaned = word.strip("*♥❤")
                 if not cleaned.isalpha():
@@ -790,7 +1370,14 @@ def _source_items_to_activity_items(
                         item_id=item_id,
                         content=cleaned,
                         response_format=response_format,
-                        metadata={"sight_word": True},
+                        metadata={
+                            "sight_word": True,
+                            **_curriculum_item_metadata(
+                                cleaned,
+                                supported_words,
+                                curriculum.lesson_ids if curriculum else (),
+                            ),
+                        },
                     )
                 )
 
@@ -800,6 +1387,7 @@ def _source_items_to_activity_items(
 def _words_to_activity_items(
     skill: LiteracySkillModel,
     rules: AccommodationRules,
+    curriculum: _CurriculumWordBank | None = None,
 ) -> list[ActivityItem]:
     """Create activity items from target words when no source items available."""
     items: list[ActivityItem] = []
@@ -811,12 +1399,22 @@ def _words_to_activity_items(
         default_format, rules.allowed_response_formats
     )
 
-    for i, word in enumerate(skill.target_words, start=1):
+    target_words, supported_words = _prioritize_words_by_curriculum(
+        skill.target_words,
+        curriculum,
+    )
+
+    for i, word in enumerate(target_words, start=1):
         items.append(
             ActivityItem(
                 item_id=i,
                 content=word,
                 response_format=response_format,
+                metadata=_curriculum_item_metadata(
+                    word,
+                    supported_words,
+                    curriculum.lesson_ids if curriculum else (),
+                ),
             )
         )
 
@@ -843,6 +1441,175 @@ def _split_sentences(text: str) -> list[str]:
     # Fallback: split on sentence-ending punctuation
     parts = re.split(r"(?<=[.!?])\s+", text.strip())
     return [p.strip() for p in parts if p.strip()]
+
+
+def _build_curriculum_word_bank(
+    curriculum_references: list[dict[str, object]] | None,
+) -> _CurriculumWordBank | None:
+    """Normalize retrieved curriculum references into a searchable text corpus."""
+    if not curriculum_references:
+        return None
+
+    lesson_ids: list[str] = []
+    concepts: list[str] = []
+    documents: list[str] = []
+
+    for ref in curriculum_references:
+        lesson_id = str(ref.get("lesson_id", "")).strip()
+        concept = str(ref.get("concept", "")).strip()
+        document = str(
+            ref.get("_rag_document")
+            or ref.get("document")
+            or "",
+        ).strip()
+
+        if lesson_id and lesson_id not in lesson_ids:
+            lesson_ids.append(lesson_id)
+        if concept and concept not in concepts:
+            concepts.append(concept)
+        if document:
+            documents.append(document.lower())
+
+    if not lesson_ids and not concepts and not documents:
+        return None
+
+    return _CurriculumWordBank(
+        lesson_ids=tuple(lesson_ids),
+        concepts=tuple(concepts),
+        documents=tuple(documents),
+    )
+
+
+def _prioritize_words_by_curriculum(
+    words: list[str],
+    curriculum: _CurriculumWordBank | None,
+) -> tuple[list[str], set[str]]:
+    """Prefer curriculum-backed words when multiple exact matches are available."""
+    deduped = _dedupe_words(words)
+    if not deduped or curriculum is None:
+        return deduped, set()
+
+    matched: list[str] = []
+    remaining: list[str] = []
+    matched_normalized: set[str] = set()
+    search_spaces = [*curriculum.documents, *[concept.lower() for concept in curriculum.concepts]]
+
+    for word in deduped:
+        normalized = _normalize_word(word)
+        if not normalized:
+            continue
+        if any(_text_contains_word(space, normalized) for space in search_spaces):
+            matched.append(word)
+            matched_normalized.add(normalized)
+        else:
+            remaining.append(word)
+
+    minimum_matches = min(2, len(deduped))
+    if len(matched) < minimum_matches:
+        return deduped, matched_normalized
+
+    return matched + remaining, matched_normalized
+
+
+def _curriculum_item_metadata(
+    word: str,
+    supported_words: set[str] | None,
+    lesson_ids: tuple[str, ...],
+) -> dict[str, str | int | float | bool]:
+    """Annotate items that are directly supported by retrieved curriculum text."""
+    normalized = _normalize_word(word)
+    if not normalized or not supported_words or normalized not in supported_words:
+        return {}
+
+    metadata: dict[str, str | int | float | bool] = {"curriculum_supported": True}
+    if lesson_ids:
+        metadata["curriculum_lesson_ids"] = ",".join(lesson_ids)
+    return metadata
+
+
+def _dedupe_words(words: list[str]) -> list[str]:
+    """Deduplicate candidate words while preserving order."""
+    seen: set[str] = set()
+    deduped: list[str] = []
+    for word in words:
+        normalized = _normalize_word(word)
+        if not normalized or normalized in seen:
+            continue
+        seen.add(normalized)
+        deduped.append(word)
+    return deduped
+
+
+def _normalize_word(word: str) -> str:
+    """Normalize a candidate word for exact curriculum matching."""
+    return "".join(ch for ch in word.lower() if ch.isalpha())
+
+
+def _text_contains_word(text: str, word: str) -> bool:
+    """Check whole-word presence inside retrieved curriculum text."""
+    return bool(re.search(rf"(?<![a-z]){re.escape(word)}(?![a-z])", text))
+
+
+def _parse_chain_steps(chains: list[str]) -> list[dict[str, str]]:
+    """Parse word chains into individual letter-change steps.
+
+    Given ["cry -> try -> dry -> pry", "fry -> fly -> sly -> sky"],
+    returns a list of dicts like:
+      [{"from_word": "cry", "to_word": "try", "old_letter": "c", "new_letter": "t"}, ...]
+    """
+    steps: list[dict[str, str]] = []
+    for chain in chains:
+        words = [w.strip() for w in re.split(r"\s*(?:->|→)\s*", chain) if w.strip()]
+        for i in range(len(words) - 1):
+            from_w = words[i].lower()
+            to_w = words[i + 1].lower()
+            old_letter, new_letter = _find_letter_change(from_w, to_w)
+            if old_letter and new_letter:
+                steps.append({
+                    "from_word": from_w,
+                    "to_word": to_w,
+                    "old_letter": old_letter,
+                    "new_letter": new_letter,
+                })
+    return steps
+
+
+def _shuffled_mismatch(words: list[str]) -> list[str]:
+    """Return a shuffled copy where no element stays in its original position.
+
+    This ensures the picture column never lines up with the word column.
+    Uses a deterministic seed based on the words for reproducibility.
+    """
+    import random
+
+    if len(words) <= 1:
+        return list(words)
+
+    seed = hash(tuple(words)) & 0xFFFFFFFF
+    rng = random.Random(seed)
+    shuffled = list(words)
+    # Fisher-Yates derangement: keep shuffling until no element is in place
+    for _ in range(100):
+        rng.shuffle(shuffled)
+        if all(s != w for s, w in zip(shuffled, words)):
+            return shuffled
+    # Fallback: rotate by 1 (always a derangement for len >= 2)
+    return words[1:] + words[:1]
+
+
+def _find_letter_change(word_a: str, word_b: str) -> tuple[str, str]:
+    """Find the single letter that changed between two words.
+
+    Returns (old_letter, new_letter) or ("", "") if no single change found.
+    """
+    if len(word_a) != len(word_b):
+        # Length change — find the differing position(s)
+        # For simple add/remove, describe broadly
+        return "", ""
+    diffs = [(a, b) for a, b in zip(word_a, word_b) if a != b]
+    if len(diffs) == 1:
+        return diffs[0][0], diffs[0][1]
+    return "", ""
 
 
 def _split_word_chains(text: str) -> list[str]:

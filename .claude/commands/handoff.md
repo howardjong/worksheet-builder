@@ -4,7 +4,7 @@ description: Update the running context doc for session handoff to another agent
 
 You are preparing a session handoff for the worksheet-builder project.
 
-Read the current context document at `.claude/worksheet-project-context.md` and the implementation plan at `worksheet-builder-consolidated-plan.md`.
+Read the current context document at `.claude/worksheet-project-context.md` and the implementation plan at `plans/worksheet-builder-consolidated-plan.md`.
 
 Then update `.claude/worksheet-project-context.md` with:
 

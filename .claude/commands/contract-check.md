@@ -7,7 +7,7 @@ You are validating data contracts in the worksheet-builder pipeline.
 
 Scope: $ARGUMENTS
 
-Read the data contract definitions from `worksheet-builder-consolidated-plan.md` (section: "Data Contracts") as the specification.
+Read the data contract definitions from `plans/worksheet-builder-consolidated-plan.md` (section: "Data Contracts") as the specification.
 
 Then inspect the actual Pydantic models in the codebase:
 

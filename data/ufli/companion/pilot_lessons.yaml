@@ -1,0 +1,12 @@
+lesson_sets:
+  pilot_micro:
+    - 1
+    - 14
+    - 95
+  pilot_rep:
+    - 1
+    - 14
+    - 34
+    - 64
+    - 95
+    - 128

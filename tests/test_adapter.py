@@ -233,7 +233,7 @@ class TestGeminiImageGen:
 
     def test_gemini_text_model_is_lite(self) -> None:
         adapter = GeminiAdapter(api_key="test")
-        assert adapter.model == "gemini-3.1-flash-lite-preview"
+        assert adapter.model == "gemini-3-flash-preview"
 
     def test_openai_model_is_gpt54(self) -> None:
         adapter = OpenAIAdapter(api_key="test")

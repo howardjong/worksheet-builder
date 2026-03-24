@@ -11,8 +11,9 @@ import logging
 import os
 from pathlib import Path
 
+from companion.schema import CharacterStyleSheet
 from render.pose_planner import ScenePlan
-from theme.schema import AssetManifest
+from theme.schema import AssetManifest, CharacterSpec
 
 logger = logging.getLogger(__name__)
 
@@ -20,8 +21,8 @@ _CACHE_DIR = Path(__file__).parent.parent / "assets" / "cache"
 _ASSETS_DIR = Path(__file__).parent.parent / "assets"
 _IMAGE_MODEL = "gemini-3.1-flash-image-preview"
 
-# Base character description for consistency
-_CHARACTER_DESC = (
+# Fallback character description — used only when no style sheet is available
+_FALLBACK_CHARACTER_DESC = (
     "a cute blocky Roblox-style character with rainbow-colored spiky hair "
     "(red, orange, yellow, green, blue, purple), a simple smiling face with "
     "dot eyes and a curved mouth, a peach/skin-colored square head and hands, "
@@ -34,6 +35,8 @@ def generate_worksheet_assets(
     word_picture_prompts: dict[str, str],
     worksheet_hash: str,
     character_name: str = "rainbow_roblox",
+    style_sheet: CharacterStyleSheet | None = None,
+    character_spec: CharacterSpec | None = None,
 ) -> AssetManifest | None:
     """Generate all assets for a worksheet: scenes + word pictures.
 
@@ -69,6 +72,14 @@ def generate_worksheet_assets(
     scene_paths: dict[int, str] = {}
     word_paths: dict[str, str] = {}
 
+    # Load additional reference images from style sheet pack
+    extra_ref_bytes: bytes | None = None
+    if style_sheet and style_sheet.reference_image_dir:
+        ref_pack_dir = Path(style_sheet.reference_image_dir)
+        front_ref = ref_pack_dir / "ref_front.png"
+        if front_ref.exists():
+            extra_ref_bytes = front_ref.read_bytes()
+
     # Generate scene images
     for plan in scene_plans:
         scene_file = cache_dir / f"scene_{plan.chunk_id}.png"
@@ -77,7 +88,11 @@ def generate_worksheet_assets(
             continue
 
         result = _generate_scene(
-            plan.scene_prompt, str(scene_file), ref_bytes,
+            plan.scene_prompt,
+            str(scene_file),
+            extra_ref_bytes or ref_bytes,
+            style_sheet=style_sheet,
+            character_spec=character_spec,
         )
         if result:
             scene_paths[plan.chunk_id] = result
@@ -145,11 +160,14 @@ def _generate_scene(
     prompt: str,
     output_path: str,
     ref_bytes: bytes | None,
+    *,
+    style_sheet: CharacterStyleSheet | None = None,
+    character_spec: CharacterSpec | None = None,
 ) -> str | None:
     """Generate a character scene image using Gemini with reference character.
 
-    Passes the base character as a reference image so the generated scene
-    features the same character in a pose related to the activity.
+    Uses the profile's CharacterStyleSheet for theme-accurate prompts when
+    available, falling back to the generic description otherwise.
     """
     try:
         from google import genai
@@ -164,9 +182,21 @@ def _generate_scene(
 
         client = genai.Client(api_key=api_key)
 
+        # Use style sheet character block or fallback
+        char_desc = (
+            style_sheet.character_block
+            if style_sheet and style_sheet.character_block
+            else _FALLBACK_CHARACTER_DESC
+        )
+
+        # Build scene environment context from theme spec
+        env_context = ""
+        if character_spec and character_spec.scene_environment:
+            env_context = f" The scene is set in {character_spec.scene_environment.strip()}"
+
         full_prompt = (
-            f"Generate an image of {_CHARACTER_DESC}, "
-            f"{prompt} "
+            f"Generate an image of {char_desc}, "
+            f"{prompt}{env_context} "
             f"Keep the same character style as the reference image. "
             f"Bright colors, child-friendly, clean white background. "
             f"No text, no words, no letters in the image."
@@ -248,6 +278,55 @@ def _generate_word_picture(
     except Exception as e:
         logger.warning(f"  Word picture generation failed: {e}")
         return None
+
+
+def generate_cover_image(
+    skill_description: str,
+    target_words: list[str],
+    theme_spec: CharacterSpec | None,
+    worksheet_hash: str,
+) -> str | None:
+    """Generate an AI cover image for a lesson package.
+
+    Returns path to cached PNG or None if generation is unavailable.
+    """
+    if os.environ.get("WORKSHEET_SKIP_ASSET_GEN"):
+        return None
+
+    cache_dir = _CACHE_DIR / f"worksheet_{worksheet_hash}"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    cover_file = cache_dir / "cover.png"
+
+    if cover_file.exists():
+        logger.info(f"  Cover image cache hit: {cover_file}")
+        return str(cover_file)
+
+    if not _has_api_key():
+        logger.info("  No AI API key -- skipping cover image generation")
+        return None
+
+    # Build theme-aware prompt
+    char_desc = ""
+    env_desc = ""
+    if theme_spec:
+        if theme_spec.style_description:
+            char_desc = f" featuring {theme_spec.style_description}"
+        if theme_spec.scene_environment:
+            env_desc = f" set in {theme_spec.scene_environment.strip()}"
+
+    words_str = ", ".join(target_words[:6]) if target_words else ""
+    word_context = f" surrounded by the words '{words_str}'." if words_str else "."
+
+    prompt = (
+        f"Fun colorful cartoon illustration for a children's worksheet cover page. "
+        f"Scene: an exciting adventure{char_desc}{env_desc}{word_context} "
+        f"Skill focus: {skill_description}. "
+        f"Style: bright vibrant colors, Pixar-like, playful, child-friendly. "
+        f"Clean composition suitable for printing. "
+        f"No text, no words, no letters in the image."
+    )
+
+    return _generate_word_picture(prompt, str(cover_file))
 
 
 def compute_worksheet_hash(

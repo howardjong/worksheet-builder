@@ -5,6 +5,8 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
+import fitz
+
 from adapt.engine import adapt_activity, adapt_lesson
 from companion.schema import Accommodations, LearnerProfile
 from render.pdf import (
@@ -13,10 +15,12 @@ from render.pdf import (
     MARGIN,
     PAGE_HEIGHT,
     PAGE_WIDTH,
+    render_cover_page,
     render_worksheet,
 )
 from skill.schema import LiteracySkillModel, SourceItem
 from theme.engine import load_theme
+from theme.schema import AssetManifest
 from validate.print_checks import validate_print_quality
 
 
@@ -128,6 +132,34 @@ class TestRenderWorksheet:
             render_worksheet(adapted, theme, pdf_path)
             assert Path(pdf_path).exists()
 
+    def test_cover_page_renders(self) -> None:
+        """Cover page should render with skill info and worksheet list."""
+        skill = _phonics_skill()
+        worksheets = adapt_lesson(skill, _profile())
+        theme = load_theme("space")
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            cover_path = f.name
+
+        render_cover_page(
+            skill_model=skill,
+            worksheets=worksheets,
+            theme=theme,
+            output_path=cover_path,
+            profile_name="Test",
+        )
+        assert Path(cover_path).exists()
+        assert Path(cover_path).stat().st_size > 0
+
+        # Verify content
+        doc = fitz.open(cover_path)
+        assert doc.page_count == 1
+        text = doc.load_page(0).get_text()
+        assert "What's Inside" in text
+        assert "Grade 1" in text
+        doc.close()
+        Path(cover_path).unlink()
+
     def test_page_geometry_constants(self) -> None:
         assert PAGE_WIDTH == 612.0
         assert PAGE_HEIGHT == 792.0
@@ -218,11 +250,72 @@ def _ufli_59_skill() -> LiteracySkillModel:
     )
 
 
+def _lesson74_home_skill() -> LiteracySkillModel:
+    return LiteracySkillModel(
+        grade_level="1",
+        domain="phonics",
+        specific_skill="y_as_long_e",
+        learning_objectives=[
+            "Read and spell words where final y says long e.",
+            "Build new words by changing sounds in a word chain.",
+            "Read connected sentences with the target pattern.",
+        ],
+        target_words=[
+            "sunny",
+            "funny",
+            "bunny",
+            "buddy",
+            "happy",
+            "hoppy",
+            "poppy",
+            "puppy",
+            "muddy",
+            "penny",
+            "lady",
+            "tiny",
+            "forty",
+            "teddy",
+            "baby",
+        ],
+        response_types=["match", "trace", "circle", "fill_blank", "write", "read_aloud"],
+        source_items=[
+            SourceItem(
+                item_type="word_list",
+                content="sunny muddy penny puppy lady tiny",
+                source_region_index=0,
+            ),
+            SourceItem(
+                item_type="word_chain",
+                content="sunny -> funny -> bunny -> buddy",
+                source_region_index=1,
+            ),
+            SourceItem(
+                item_type="word_chain",
+                content="happy -> hoppy -> poppy -> puppy",
+                source_region_index=2,
+            ),
+            SourceItem(item_type="sight_words", content="forty", source_region_index=3),
+            SourceItem(
+                item_type="sentence",
+                content="The woman is not forty.",
+                source_region_index=4,
+            ),
+            SourceItem(
+                item_type="sentence",
+                content="I will bring a teddy for the baby.",
+                source_region_index=5,
+            ),
+        ],
+        extraction_confidence=0.99,
+        template_type="ufli_word_work",
+    )
+
+
 class TestMultiWorksheetRender:
     def test_render_match_items(self) -> None:
         """Word-picture matching items should render without error."""
         worksheets = adapt_lesson(_ufli_59_skill(), _profile())
-        discovery = [ws for ws in worksheets if ws.worksheet_title == "Word Discovery"]
+        discovery = [ws for ws in worksheets if ws.worksheet_title == "Word Practice"]
         assert len(discovery) == 1
         theme = load_theme("space")
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
@@ -233,8 +326,16 @@ class TestMultiWorksheetRender:
 
     def test_render_trace_items(self) -> None:
         """Trace items (dotted letters) should render without error."""
-        worksheets = adapt_lesson(_ufli_59_skill(), _profile())
-        discovery = [ws for ws in worksheets if ws.worksheet_title == "Word Discovery"]
+        # Use a profile that explicitly allows trace format
+        profile = LearnerProfile(
+            name="Test",
+            grade_level="1",
+            accommodations=Accommodations(
+                response_format_prefs=["write", "trace", "circle"],
+            ),
+        )
+        worksheets = adapt_lesson(_ufli_59_skill(), profile)
+        discovery = [ws for ws in worksheets if ws.worksheet_title == "Word Practice"]
         assert len(discovery) == 1
         # Verify trace items exist
         trace_items = [
@@ -254,7 +355,7 @@ class TestMultiWorksheetRender:
     def test_render_fill_blank_items(self) -> None:
         """Fill-blank items should render without error."""
         worksheets = adapt_lesson(_ufli_59_skill(), _profile())
-        builder = [ws for ws in worksheets if ws.worksheet_title == "Word Builder"]
+        builder = [ws for ws in worksheets if ws.worksheet_title == "Word Work"]
         assert len(builder) == 1
         theme = load_theme("space")
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
@@ -321,4 +422,38 @@ class TestMultiWorksheetRender:
             pdf_path = f.name
         render_worksheet(adapted, theme, pdf_path)
         assert Path(pdf_path).stat().st_size > 0
+        Path(pdf_path).unlink()
+
+    def test_chunk_starts_on_new_page_before_bottom_clip(self) -> None:
+        """Integrated-scene layouts should move the next chunk to a new page before clipping."""
+        worksheets = adapt_lesson(_lesson74_home_skill(), _profile(), theme_id="roblox_obby")
+        discovery = [ws for ws in worksheets if ws.worksheet_title == "Word Practice"]
+        assert len(discovery) == 1
+
+        theme = load_theme("roblox_obby")
+        scene_path = str(Path("assets/characters/rainbow_roblox.png"))
+        manifest = AssetManifest(
+            scene_paths={1: scene_path, 2: scene_path, 3: scene_path},
+            word_picture_paths={},
+            cache_dir="assets/characters",
+        )
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            pdf_path = f.name
+
+        render_worksheet(discovery[0], theme, pdf_path, asset_manifest=manifest)
+
+        doc = fitz.open(pdf_path)
+        assert doc.page_count >= 2
+        first_page = doc.load_page(0).get_text()
+        # Trace chunk should appear on a subsequent page (not necessarily page 2
+        # since a phonemic awareness warm-up may also precede it)
+        later_pages_text = "".join(
+            doc.load_page(p).get_text() for p in range(1, doc.page_count)
+        )
+        doc.close()
+
+        # Default profile has no "trace" in prefs, so discovery uses "write"
+        assert "Write 5 words" not in first_page
+        assert "Write 5 words" in later_pages_text
         Path(pdf_path).unlink()

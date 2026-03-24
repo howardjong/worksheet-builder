@@ -14,6 +14,12 @@ openai>=1.0
 google-genai>=1.0
 anthropic>=0.30
 python-dotenv>=1.0
+chromadb>=0.5
+
+# Corpus ingestion (optional — for UFLI curriculum indexing)
+python-pptx>=0.6.21
+playwright>=1.40
+mutagen>=1.47
 
 # Dev / CI
 pytest>=7.0

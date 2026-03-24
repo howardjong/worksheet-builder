@@ -21,6 +21,21 @@ class Accommodations(BaseModel):
     show_self_check_boxes: bool = True
 
 
+class CharacterStyleSheet(BaseModel):
+    """Researched character visual identity — frozen prompt + reference pack.
+
+    Generated once per theme via character_research.py (expensive MCP + Gemini),
+    then reused cheaply on every worksheet render.
+    """
+
+    character_block: str = ""  # frozen prompt replacing hardcoded _CHARACTER_DESC
+    theme_id: str = ""  # which theme this was generated for
+    reference_image_dir: str = ""  # path to reference image pack
+    scene_guidelines: str = ""  # how to compose scenes in this theme
+    item_style_notes: str = ""  # how accessories should render in this style
+    generated_at: str = ""  # ISO timestamp
+
+
 class AvatarConfig(BaseModel):
     """Avatar customization state."""
 
@@ -30,6 +45,7 @@ class AvatarConfig(BaseModel):
     )
     equipped_items: dict[str, str] = Field(default_factory=dict)  # slot -> item_id
     unlocked_items: list[str] = Field(default_factory=list)
+    style_sheet: CharacterStyleSheet | None = None
 
     @model_validator(mode="before")
     @classmethod

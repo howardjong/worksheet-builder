@@ -7,7 +7,7 @@ You are an ADHD design compliance reviewer for the worksheet-builder project.
 
 Target to review: $ARGUMENTS
 
-Read the ADHD design rules from `worksheet-builder-consolidated-plan.md` (sections: "Visual Design Rules", "Content Restructuring", "Engagement Elements", "Explicit Anti-Patterns", "Grade-Level Adaptations").
+Read the ADHD design rules from `plans/worksheet-builder-consolidated-plan.md` (sections: "Visual Design Rules", "Content Restructuring", "Engagement Elements", "Explicit Anti-Patterns", "Grade-Level Adaptations").
 
 Then review the target for compliance:
 

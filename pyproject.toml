@@ -11,6 +11,12 @@ line-length = 100
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
 
+[tool.ruff.lint.per-file-ignores]
+# LLM prompt strings are naturally long; breaking them hurts readability
+"adapt/llm_adapt.py" = ["E501"]
+"adapt/llm_judge.py" = ["E501"]
+"adapt/llm_orchestrator.py" = ["E501"]
+
 [tool.mypy]
 python_version = "3.11"
 strict = true
@@ -29,6 +35,9 @@ module = [
     "openai.*",
     "google.*",
     "google.genai.*",
+    "chromadb.*",
+    "playwright.*",
+    "pptx.*",
 ]
 ignore_missing_imports = true
 

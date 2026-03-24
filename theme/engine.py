@@ -8,6 +8,7 @@ import yaml
 
 from adapt.schema import AdaptedActivityModel
 from theme.schema import (
+    CharacterSpec,
     DecorativeConfig,
     ThemeColors,
     ThemeConfig,
@@ -91,10 +92,14 @@ def _parse_theme_config(data: dict[str, object]) -> ThemeConfig:
     fonts_data = data.get("fonts", {})
     colors_data = data.get("colors", {})
     deco_data = data.get("decorative_elements", {})
+    char_data = data.get("character_spec", {})
 
     fonts = ThemeFonts(**fonts_data) if isinstance(fonts_data, dict) else ThemeFonts()
     colors = ThemeColors(**colors_data) if isinstance(colors_data, dict) else ThemeColors()
     deco = DecorativeConfig(**deco_data) if isinstance(deco_data, dict) else DecorativeConfig()
+    char_spec = (
+        CharacterSpec(**char_data) if isinstance(char_data, dict) else CharacterSpec()
+    )
 
     return ThemeConfig(
         name=str(data.get("name", "Unknown")),
@@ -104,6 +109,7 @@ def _parse_theme_config(data: dict[str, object]) -> ThemeConfig:
         avatar_position=str(data.get("avatar_position", "bottom-right")),
         decorative_elements=deco,
         multi_worksheet=bool(data.get("multi_worksheet", False)),
+        character_spec=char_spec,
     )
 
 

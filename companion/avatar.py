@@ -68,7 +68,7 @@ def compose_avatar(
 
     if equipped:
         # Generate a new character variant with items via AI
-        variant_path = _get_or_generate_variant(equipped)
+        variant_path = _get_or_generate_variant(equipped, profile, theme_id)
         if variant_path and variant_path.exists():
             img = Image.open(variant_path).convert("RGBA")
         else:
@@ -95,9 +95,14 @@ def compose_avatar(
     return cached_path
 
 
-def _get_or_generate_variant(equipped: dict[str, str]) -> Path | None:
+def _get_or_generate_variant(
+    equipped: dict[str, str],
+    profile: LearnerProfile | None = None,
+    theme_id: str = "space",
+) -> Path | None:
     """Get a cached variant or generate a new one via AI."""
     from companion.generate_overlays import generate_variant
+    from theme.engine import load_theme
 
     # Cache variant by equipment combo
     variants_dir = _ASSETS_DIR / "variants"
@@ -107,7 +112,21 @@ def _get_or_generate_variant(equipped: dict[str, str]) -> Path | None:
     if variant_path.exists():
         return variant_path
 
-    return generate_variant(equipped, variant_path)
+    # Pass style sheet and character spec for theme-aware generation
+    style_sheet = None
+    character_spec = None
+    if profile and profile.avatar and profile.avatar.style_sheet:
+        style_sheet = profile.avatar.style_sheet
+    try:
+        theme = load_theme(theme_id)
+        character_spec = theme.character_spec
+    except Exception:
+        pass
+
+    return generate_variant(
+        equipped, variant_path,
+        style_sheet=style_sheet, character_spec=character_spec,
+    )
 
 
 def _equipment_hash(equipped: dict[str, str]) -> str:

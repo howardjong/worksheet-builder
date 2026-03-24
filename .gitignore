@@ -3,9 +3,38 @@ profiles/
 masters/
 artifacts/
 asset_cache/
+vector_store/
+output/
+logs/
+tmp/
+
+# Local agent/tool state
+.Codex/
+
+# Generated asset outputs
+assets/cache/
+assets/variants/
 
 # Sample inputs (UFLI copyrighted — private, local only)
 samples/input/
+samples/output/
+
+# UFLI corpus raw downloads (copyrighted — private, local only)
+data/ufli/raw/
+data/ufli/normalized.jsonl
+data/ufli/manifest.jsonl
+data/ufli/snapshot_1-34.md
+
+# Generated UFLI audit / companion artifacts
+data/ufli/audit/
+data/ufli/companion/audio.jsonl
+data/ufli/companion/audio/
+data/ufli/companion/diagnostics/
+data/ufli/companion/evals/
+data/ufli/companion/fallbacks/
+data/ufli/companion/generation_log.json
+data/ufli/companion/lessons/
+data/ufli/companion/pilots/
 
 # Python
 __pycache__/

@@ -7,6 +7,8 @@ import os
 import threading
 from pathlib import Path
 
+import pytest
+
 from batch_utils import (
     FileResult,
     ProgressTracker,
@@ -369,6 +371,75 @@ class TestProcessSingleFile:
         assert captured_env[0] == "1"
         # Env var should be cleaned up after
         assert os.environ.get("WORKSHEET_SKIP_ASSET_GEN") is None
+
+    def test_collects_rag_index_payload(self, tmp_path: Path) -> None:
+        from batch import _process_single_file
+
+        input_file = tmp_path / "test.jpg"
+        input_file.touch()
+
+        class MockArtifacts:
+            def model_dump(self) -> dict[str, object]:
+                return {
+                    "source_image_hash": "hash123",
+                    "pdf_paths": ["/tmp/out.pdf"],
+                }
+
+        def mock_pipeline(**kwargs: object) -> MockArtifacts:
+            assert kwargs["index_results"] is False
+            return MockArtifacts()
+
+        result = _process_single_file(
+            input_path=input_file,
+            profile_path="profiles/test.yaml",
+            theme_id="space",
+            output_dir=str(tmp_path),
+            max_retries=0,
+            rate_limiter=RateLimiter(rpm=60),
+            shutdown_event=threading.Event(),
+            skip_images=False,
+            pipeline_fn=mock_pipeline,
+        )
+
+        assert result.status == "success"
+        assert result.output_path == "/tmp/out.pdf"
+        assert result.rag_index_payload == {
+            "source_image_hash": "hash123",
+            "pdf_paths": ["/tmp/out.pdf"],
+        }
+
+
+class TestBatchIndexing:
+    def test_indexes_successful_runs_from_main_thread(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        from batch import _index_completed_runs
+
+        calls: list[dict[str, object]] = []
+        monkeypatch.setattr("transform.rag_available", lambda: True)
+        monkeypatch.setattr("rag.indexer.index_run", lambda **kwargs: calls.append(kwargs))
+
+        results = [
+            FileResult(
+                input_path="a.jpg",
+                status="success",
+                output_path="a.pdf",
+                rag_index_payload={"source_image_hash": "hash-a", "pdf_paths": ["a.pdf"]},
+            ),
+            FileResult(input_path="b.jpg", status="failed", error="boom"),
+            FileResult(
+                input_path="c.jpg",
+                status="success",
+                output_path="c.pdf",
+                rag_index_payload={"source_image_hash": "hash-c", "pdf_paths": ["c.pdf"]},
+            ),
+        ]
+
+        indexed = _index_completed_runs(results)
+
+        assert indexed == 2
+        assert [call["source_image_hash"] for call in calls] == ["hash-a", "hash-c"]
 
 
 # --- CLI dry-run ---

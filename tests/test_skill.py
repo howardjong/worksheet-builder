@@ -367,6 +367,16 @@ class TestExtractGeneric:
 # --- Schema Validation Tests ---
 
 
+class TestCorpusEnrichment:
+    def test_lesson_number_propagated(self) -> None:
+        model = extract_skill(_word_work_source())
+        assert model.lesson_number == 43
+
+    def test_lesson_number_none_for_unknown(self) -> None:
+        model = extract_skill(_unknown_source())
+        assert model.lesson_number is None
+
+
 class TestSkillSchema:
     def test_pydantic_round_trip(self) -> None:
         model = extract_skill(_word_work_source())

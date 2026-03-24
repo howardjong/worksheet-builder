@@ -8,7 +8,7 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 **Repository:** `https://github.com/howardjong/worksheet-builder.git`
 
-**Full implementation plan:** `worksheet-builder-consolidated-plan.md`
+**Full implementation plan:** `plans/worksheet-builder-consolidated-plan.md`
 
 **Running context doc:** `.claude/worksheet-project-context.md` — READ THIS FIRST for current state, decisions, and handoff notes.
 
@@ -52,6 +52,12 @@ python complete.py --profile profiles/ian.yaml --lesson 5
 
 # Preview before print
 python transform.py --input photo.jpg --profile profiles/ian.yaml --theme space --preview
+
+# Backfill saved outputs into the vector store
+python -m rag.backfill --artifacts-dir ./samples/output --output-dir ./samples/output
+
+# Evaluate retrieval quality and baseline-vs-RAG behavior
+python -m rag.eval --test-dir ./samples/input --profile profiles/ian.yaml
 ```
 
 ## Architecture
@@ -92,6 +98,8 @@ theme/       — calm theme engine + curated assets
 companion/   — learner profile, avatar, rewards, caregiver controls
 render/      — ReportLab PDF + preview
 validate/    — skill-parity, print quality, ADHD compliance
+rag/         — embeddings, store, retrieval, indexer, backfill, evaluation
+corpus/      — UFLI crawl/acquire/extract/ingest pipeline
 ```
 
 ## Conventions
@@ -105,6 +113,15 @@ validate/    — skill-parity, print quality, ADHD compliance
 - **Master images** stored permanently in `masters/` for reprocessing
 - **Profiles** stored as YAML in `profiles/`
 - **Curated theme assets** committed to repo; generated assets cached in `asset_cache/` (gitignored)
+- **RAG store** persists in `vector_store/`; UFLI curriculum corpus lives in the `curriculum` collection
+
+## RAG Workflow
+
+- **Live retrieval path:** `transform.py` retrieves RAG context before adaptation and indexes successful runs after rendering.
+- **Corpus ingestion:** `python -m corpus.ufli.ingest index --data-dir ./data/ufli`
+- **Backfill old runs:** `python -m rag.backfill --artifacts-dir ./samples/output --output-dir ./samples/output`
+- **Evaluate retrieval quality:** `python -m rag.eval --test-dir ./samples/input --profile profiles/ian.yaml`
+- **Current backend behavior:** RAG embedding auto-selects API-key Gemini when available in `.env`; Vertex remains available via `RAG_GEMINI_BACKEND=vertex`.
 
 ## Operating Conventions
 

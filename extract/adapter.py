@@ -308,7 +308,7 @@ class OpenAIAdapter:
 class GeminiAdapter:
     """AI assist via Google Gemini API (google.genai SDK).
 
-    Uses gemini-3.1-flash-lite-preview for text tasks and
+    Uses gemini-3-flash-preview for text tasks and
     gemini-3.1-flash-image-preview for image generation.
     """
 
@@ -317,7 +317,7 @@ class GeminiAdapter:
     def __init__(
         self,
         api_key: str | None = None,
-        model: str = "gemini-3.1-flash-lite-preview",
+        model: str = "gemini-3-flash-preview",
     ) -> None:
         self.api_key = api_key or os.environ.get("GEMINI_API_KEY", "")
         self.model = model

@@ -9,7 +9,7 @@ Target checkpoint: $ARGUMENTS
 
 Before writing any code:
 
-1. **Read the plan:** Open `worksheet-builder-consolidated-plan.md` and find checkpoint "$ARGUMENTS". Read the full checkpoint section including goal, implementation details, files list, and acceptance criteria.
+1. **Read the plan:** Open `plans/worksheet-builder-consolidated-plan.md` and find checkpoint "$ARGUMENTS". Read the full checkpoint section including goal, implementation details, files list, and acceptance criteria.
 
 2. **Read the context:** Open `.claude/worksheet-project-context.md` to understand current state, prior decisions, and any gotchas.
 

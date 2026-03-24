@@ -17,6 +17,7 @@ Phone photo of worksheet  -->  ADHD-adapted, themed PDF
 7. **Theme** applies a calm visual theme (Space, Underwater, Dinosaur, or Roblox Obby Quest)
 8. **Render** produces print-ready PDFs with vector text, word-picture matching tiles, traceable letters, and styled reading boxes
 9. **Validate** checks skill preservation, ADHD compliance, format variety, and print quality
+10. **Package** merges all mini-worksheets into a single lesson PDF with a fun AI-generated cover page, "What's Inside" list, parent info strip, and global page numbering
 
 AI vision (Gemini) is the primary extraction mode — dramatically more accurate than OCR on phone photos. The pipeline falls back to OCR if no API key is set. AI quality review catches structural issues before the final PDF is generated.
 
@@ -40,6 +41,18 @@ python batch.py --input-dir ./photos/ --profile profiles/ian.yaml --theme space 
 
 # Mark completion and award tokens
 python complete.py --profile profiles/ian.yaml --lesson 5
+
+# Backfill saved artifacts into the RAG store
+python -m rag.backfill --artifacts-dir ./samples/output --output-dir ./samples/output
+
+# Evaluate retrieval and baseline-vs-RAG behavior
+python -m rag.eval --test-dir ./samples/input --profile profiles/ian.yaml
+
+# Build UFLI audio companion lesson bundles (pilot_rep: 6 lessons)
+python -m corpus.ufli.ingest build-audio
+
+# Estimate pilot audio generation cost and clip counts without calling ElevenLabs
+python -m corpus.ufli.ingest generate-audio --dry-run
 
 # View progress
 python complete.py --profile profiles/ian.yaml --progress
@@ -123,7 +136,7 @@ Paper → [1] Capture → [2] Store → [3] Extract (AI vision / OCR) → [4] Sk
 | Adapt | `adapt/engine.py` | Skill + Profile | `AdaptedActivityModel` (single) or `list[AdaptedActivityModel]` (multi) |
 | AI Review | `validate/ai_review.py` | Adapted model | Reviewed/fixed `AdaptedActivityModel` |
 | Theme | `theme/engine.py` | Adapted model | `ThemedModel` |
-| Render | `render/pdf.py` | Themed model | PDF file |
+| Render | `render/pdf.py` + `render/merge.py` | Themed model | PDF file (merged lesson package for multi-worksheet) |
 | Validate | `validate/*.py` | All models + PDF | `ValidationResult` |
 
 All pipeline stages communicate through strict Pydantic contracts. The pipeline is idempotent: same inputs always produce the same outputs.
@@ -174,10 +187,16 @@ When using a theme with `multi_worksheet: true` (e.g., `roblox_obby`), one lesso
 
 Each worksheet ends with a brain break prompt ("Stand up and stretch!", "Do 5 jumping jacks!"). This addresses the key problem where UFLI Lesson 59 produced 15 items across 4 chunks, all with "write" response format — research shows varied multi-sensory activities produce 40% greater gains.
 
+The multi-worksheet pipeline automatically merges all mini-worksheets into a **single lesson PDF** with:
+- **AI-generated cover page** — fun thematic illustration (Gemini Flash Image), bold lesson title, "What's Inside" worksheet list for the child, parent/teacher info strip at the bottom
+- **Global page numbering** — "Page X of Y" on every content page (not on the cover)
+
 ```bash
-# Produces 3 PDFs: worksheet_..._1of3.pdf, worksheet_..._2of3.pdf, worksheet_..._3of3.pdf
+# Produces a single lesson PDF: lesson_{hash}.pdf (cover + 3 worksheets)
 python transform.py --input photo.jpg --profile profiles/ian.yaml --theme roblox_obby --output ./output/
 ```
+
+Cover image generation is optional — the cover page falls back to a theme-colored placeholder if no API key is set or `WORKSHEET_SKIP_ASSET_GEN=1`.
 
 Single-worksheet mode (`--theme space`) works exactly as before — fully backward compatible.
 
@@ -218,6 +237,66 @@ python batch.py --input-dir ./photos/ --profile profiles/ian.yaml --theme space 
 
 **Graceful shutdown:** Press Ctrl+C during a batch run. Running workers finish their current file, pending work is cancelled, and a partial report is generated.
 
+### A/B evaluation (RAG vs no RAG)
+
+Run paired A/B experiments with Stage 1-4 frozen (capture/extraction/skill),
+so differences come from adaptation + retrieval instead of OCR/vision drift:
+
+```bash
+# Example: hold out IMG_0004.JPG, seed store from other IMG_* files
+python ab_eval.py \
+  --input-dir ./samples/input \
+  --include "IMG_*" \
+  --target IMG_0004.JPG \
+  --profile profiles/ian.yaml \
+  --theme roblox_obby \
+  --output-root ./samples/output/ab_eval \
+  --db-path vector_store \
+  --seed \
+  --no-images
+```
+
+Outputs include:
+- `scorecard.md` and `scorecard.json` with per-target A/B deltas
+- Per-variant `artifacts/rag_context.json` showing retrieval provenance
+- Frozen `source_model.json` + `skill_model.json` for reproducible reruns
+
+### RAG backfill and evaluation
+
+Phase 7 adds two maintenance/evaluation commands on top of the live RAG path:
+
+```bash
+# Backfill previously generated outputs into the vector store
+python -m rag.backfill \
+  --artifacts-dir ./samples/output \
+  --output-dir ./samples/output \
+  --db-path vector_store
+
+# Evaluate retrieval quality and baseline-vs-RAG differences
+python -m rag.eval \
+  --test-dir ./samples/input \
+  --profile profiles/ian.yaml \
+  --theme roblox_obby \
+  --db-path vector_store \
+  --output-root ./samples/output/rag_eval \
+  --no-images
+```
+
+`rag.backfill` scans saved `artifacts/` directories for `source_model.json`,
+`skill_model.json`, `adapted_model*.json`, `validation*.json`, and matching
+PDFs, then reconstructs indexing payloads using the same `index_run()` path as
+live pipeline runs.
+
+`rag.eval` freezes extraction and skill inference per input, measures
+`retrieval@3`, compares baseline vs RAG validator pass rate, tracks whether the
+RAG variant changes response-format sets, and estimates distractor novelty from
+retrieved prior adaptations.
+
+Current RAG operational notes:
+- The curriculum store is already populated with 148 indexed UFLI lessons.
+- Live embedding currently works via API-key auto-selection from `.env`.
+- Vertex fallback remains supported through `RAG_GEMINI_BACKEND=vertex`.
+
 ## Companion layer
 
 Beyond worksheet transformation, the companion layer provides:
@@ -239,6 +318,84 @@ python complete.py --profile profiles/ian.yaml --buy space_helmet
 python complete.py --profile profiles/ian.yaml --set-chunking small
 ```
 
+### UFLI audio companion
+
+The repo includes a pilot-first audio companion pipeline for numeric UFLI lessons
+`1-128`. Audio is designed as support for explicit reading instruction, not a
+replacement for decoding instruction.
+
+**Current scope (Stage 2 — representative pilot):**
+- Pilot lessons: `1`, `14`, `34`, `64`, `95`, `128`
+- Winning voice: `dorothy` (ElevenLabs `eleven_multilingual_v2`)
+- Indexed clip taxonomy:
+  - `lesson_instruction`
+  - `phoneme_model`
+  - `word_model`
+  - `passage_sentence`
+  - `passage_full`
+  - `review`
+- Two Chroma collections: `audio_companion_clips` (per-clip) and `audio_companion_lessons` (per-lesson aggregate)
+- `encouragement` is not indexed as lesson content
+- Generation stays offline by default unless `--live` is passed
+
+Committed companion config lives under `data/ufli/companion/`:
+- `pronunciation_lexicon.yaml`
+- `voice_profiles.yaml`
+- `pilot_lessons.yaml`
+
+Core commands:
+
+```bash
+# Build voice-neutral lesson bundles (defaults to pilot_rep: 6 lessons)
+python -m corpus.ufli.ingest build-audio
+
+# Validate built bundles
+python -m corpus.ufli.ingest validate-audio
+
+# Dry-run estimation for pilot voices
+python -m corpus.ufli.ingest generate-audio --dry-run
+
+# Live-generate with Dorothy
+python -m corpus.ufli.ingest generate-audio \
+  --voice-profile dorothy \
+  --live \
+  --review-packet
+
+# Index into both clip-level and lesson-level collections
+python -m corpus.ufli.ingest index-audio \
+  --voice-profile dorothy \
+  --granularity both
+
+# Judge generated clips with Gemini
+python -m corpus.ufli.ingest judge-audio \
+  --voice-profile dorothy
+
+# Run controlled diagnostic probes on hard clips
+python -m corpus.ufli.ingest diagnose-audio \
+  --voice-profile dorothy
+```
+
+`generate-audio --review-packet` writes a timestamped packet under
+`data/ufli/companion/pilots/<timestamp>/` containing:
+- `review.md`
+- `review.csv`
+- `clips.json`
+- `playlist.m3u`
+- generated audio files
+
+### UFLI audio MVP test packet
+
+The smallest evaluation packet for checking whether the TTS companion is better
+than no TTS lives under `data/ufli/companion/mvp_test/`:
+
+- `facilitator_script.md`
+- `child_score_sheet.csv`
+- `adult_observation_rubric.md`
+- `summary_template.md`
+
+This packet is structured around a `No TTS` vs `TTS Companion` crossover test
+and explicitly preserves decoding-first instruction.
+
 ## Themes
 
 Four built-in calm themes with functional color coding:
@@ -257,7 +414,7 @@ Themes change only visual elements — content and structure remain identical. T
 ```bash
 make lint        # ruff check .
 make typecheck   # mypy . (strict mode)
-make test        # pytest (214 tests)
+make test        # pytest (418 tests)
 make format      # ruff format .
 make clean       # rm -rf artifacts/ __pycache__ .mypy_cache
 ```
@@ -271,7 +428,7 @@ skill/          K-3 literacy skill taxonomy + extraction
 adapt/          ADHD activity adaptation + accommodation rules
 theme/          Calm theme engine + 3 built-in themes
 companion/      Learner profiles, avatar catalog, token economy, caregiver
-render/         ReportLab vector PDF generation + scene planning + AI asset generation
+render/         ReportLab vector PDF generation + scene planning + AI asset generation + PDF merge
 validate/       Skill-parity, ADHD compliance, format variety, print quality, AI quality review
 transform.py    CLI: transform worksheets (full pipeline)
 complete.py     CLI: mark completion, manage rewards and accommodations
@@ -279,7 +436,7 @@ complete.py     CLI: mark completion, manage rewards and accommodations
 
 ### Testing
 
-214 tests covering all pipeline stages:
+418 tests covering all pipeline stages:
 
 ```
 tests/test_capture.py     11 tests — preprocessing, storage, archival PDF
@@ -288,7 +445,8 @@ tests/test_skill.py       31 tests — taxonomy, extraction (phonics, fluency, g
 tests/test_adapt.py       40 tests — profile, rules, adaptation engine, multi-worksheet
 tests/test_validate.py    25 tests — skill parity, age band, ADHD compliance
 tests/test_theme.py       11 tests — theme loading, application
-tests/test_render.py      20 tests — PDF rendering, multi-format rendering, print quality
+tests/test_render.py      21 tests — PDF rendering, cover page, multi-format rendering, print quality
+tests/test_merge.py        4 tests — PDF merge, page stamping, cleanup
 tests/test_companion.py   28 tests — profile CRUD, catalog, rewards, caregiver
 tests/test_adapter.py     29 tests — AI adapter contracts, factory, image gen, providers
 tests/test_smoke.py        1 test  — all packages importable

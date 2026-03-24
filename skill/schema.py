@@ -27,3 +27,4 @@ class LiteracySkillModel(BaseModel):
     source_items: list[SourceItem]  # extracted questions/activities
     extraction_confidence: float  # overall confidence in skill extraction 0-1
     template_type: str  # from SourceWorksheetModel, passed through
+    lesson_number: int | None = None  # UFLI lesson number (1-128), used for corpus lookup
