@@ -315,7 +315,7 @@ class TestMultiWorksheetRender:
     def test_render_match_items(self) -> None:
         """Word-picture matching items should render without error."""
         worksheets = adapt_lesson(_ufli_59_skill(), _profile())
-        discovery = [ws for ws in worksheets if ws.worksheet_title == "Word Discovery"]
+        discovery = [ws for ws in worksheets if ws.worksheet_title == "Word Practice"]
         assert len(discovery) == 1
         theme = load_theme("space")
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
@@ -335,7 +335,7 @@ class TestMultiWorksheetRender:
             ),
         )
         worksheets = adapt_lesson(_ufli_59_skill(), profile)
-        discovery = [ws for ws in worksheets if ws.worksheet_title == "Word Discovery"]
+        discovery = [ws for ws in worksheets if ws.worksheet_title == "Word Practice"]
         assert len(discovery) == 1
         # Verify trace items exist
         trace_items = [
@@ -355,7 +355,7 @@ class TestMultiWorksheetRender:
     def test_render_fill_blank_items(self) -> None:
         """Fill-blank items should render without error."""
         worksheets = adapt_lesson(_ufli_59_skill(), _profile())
-        builder = [ws for ws in worksheets if ws.worksheet_title == "Word Builder"]
+        builder = [ws for ws in worksheets if ws.worksheet_title == "Word Work"]
         assert len(builder) == 1
         theme = load_theme("space")
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
@@ -427,7 +427,7 @@ class TestMultiWorksheetRender:
     def test_chunk_starts_on_new_page_before_bottom_clip(self) -> None:
         """Integrated-scene layouts should move the next chunk to a new page before clipping."""
         worksheets = adapt_lesson(_lesson74_home_skill(), _profile(), theme_id="roblox_obby")
-        discovery = [ws for ws in worksheets if ws.worksheet_title == "Word Discovery"]
+        discovery = [ws for ws in worksheets if ws.worksheet_title == "Word Practice"]
         assert len(discovery) == 1
 
         theme = load_theme("roblox_obby")
@@ -454,6 +454,6 @@ class TestMultiWorksheetRender:
         doc.close()
 
         # Default profile has no "trace" in prefs, so discovery uses "write"
-        assert "Write 4 words" not in first_page
-        assert "Write 4 words" in later_pages_text
+        assert "Write 5 words" not in first_page
+        assert "Write 5 words" in later_pages_text
         Path(pdf_path).unlink()

@@ -110,15 +110,32 @@ def adapt_lesson(
 ) -> list[AdaptedActivityModel]:
     """Transform a skill model into 2-3 ADHD-optimized mini-worksheets.
 
-    Each mini-worksheet focuses on a different activity type for multi-sensory variety:
-    1. Word Discovery — word-picture matching, trace, circle
-    2. Word Builder — word chains, fill-blank, sight words
-    3. Story Time — sentence completion, read-aloud passage, comprehension
+    Tries LLM-assisted adaptation first (Gemini plans the worksheet structure),
+    then falls back to the deterministic rule-based engine if LLM is unavailable
+    or fails validation.
 
     Returns a list of 1-3 AdaptedActivityModels, one per mini-worksheet.
     """
     if rules is None:
         rules = build_rules(profile)
+
+    # Try LLM-assisted adaptation first
+    try:
+        from adapt.llm_adapt import llm_adapt_lesson
+
+        llm_result = llm_adapt_lesson(
+            skill,
+            profile,
+            theme_id=theme_id,
+            rules=rules,
+            rag_curriculum_references=rag_curriculum_references,
+        )
+        if llm_result:
+            return llm_result
+    except Exception as exc:
+        logger.warning("LLM adaptation failed, using deterministic engine: %s", exc)
+
+    # Deterministic fallback
 
     prior_adaptations = rag_prior_adaptations or []
     distractor_blacklist = _extract_distractor_blacklist(prior_adaptations)
@@ -313,10 +330,44 @@ def adapt_lesson(
             break_prompt=None,  # Last worksheet — no break needed
         ))
 
-    # Set worksheet_count on all worksheets
+    # For UFLI word work: reorder so word chains (the core lesson activity)
+    # come first, then sample word practice, then sentences. The default
+    # order (Discovery → Builder → Story) buries the chains in Worksheet 2
+    # behind generic match/write/circle activities that don't teach the
+    # UFLI concept.
+    if skill.template_type == "ufli_word_work" and len(worksheets) >= 2:
+        builder_idx = next(
+            (i for i, ws in enumerate(worksheets) if ws.worksheet_title == "Word Builder"),
+            None,
+        )
+        discovery_idx = next(
+            (i for i, ws in enumerate(worksheets) if ws.worksheet_title == "Word Discovery"),
+            None,
+        )
+        # Only reorder when Builder actually has word chain content
+        has_chains = builder_idx is not None and any(
+            item.metadata.get("display") in ("chain_step", "chain")
+            for chunk in worksheets[builder_idx].chunks
+            for item in chunk.items
+        )
+        if (
+            has_chains
+            and builder_idx is not None
+            and discovery_idx is not None
+            and builder_idx > discovery_idx
+        ):
+            worksheets[discovery_idx], worksheets[builder_idx] = (
+                worksheets[builder_idx],
+                worksheets[discovery_idx],
+            )
+            worksheets[discovery_idx].worksheet_title = "Word Work"
+            worksheets[builder_idx].worksheet_title = "Word Practice"
+
+    # Set worksheet_count and worksheet_number on all worksheets
     count = len(worksheets)
-    for ws in worksheets:
+    for i, ws in enumerate(worksheets):
         ws.worksheet_count = count
+        ws.worksheet_number = i + 1
 
     # Fallback: if nothing produced, return single worksheet via existing path
     if not worksheets:
@@ -406,7 +457,7 @@ def _build_discovery_chunks(
             ))
 
         if fmt == "trace":
-            trace_words = words[:4]
+            trace_words = words[:5]
             if not trace_words:
                 continue
             items = []
@@ -436,7 +487,7 @@ def _build_discovery_chunks(
             ))
 
         if fmt == "write":
-            write_words = words[:4]
+            write_words = words[:5]
             if not write_words:
                 continue
             items = []
@@ -473,7 +524,7 @@ def _build_discovery_chunks(
                 min(4, len(words)),
                 blacklist=distractor_blacklist,
             )
-            all_options = words[:4] + distractors
+            all_options = words[:6] + distractors
             item_id += 1
             item = ActivityItem(
                 item_id=item_id,
@@ -586,7 +637,7 @@ def _build_builder_chunks(
         ))
 
     # Chunk 2: Fill in the missing letter
-    fill_words = words[:4]
+    fill_words = words[:5]
     if fill_words:
         items = []
         for w in fill_words:
@@ -664,6 +715,11 @@ def _build_warmup_chunk(
     Only produced for grades K-1. Returns None otherwise.
     """
     if skill.grade_level not in ("K", "1"):
+        return None
+
+    # Skip for consonant-le syllable patterns — Elkonin sound-box segmentation
+    # breaks the -le unit apart, contradicting the lesson's teaching goal.
+    if "-le" in skill.specific_skill.lower():
         return None
 
     # Pick up to 3 short target words for sound segmentation

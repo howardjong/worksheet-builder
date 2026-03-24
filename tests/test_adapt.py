@@ -408,8 +408,9 @@ class TestAdaptLesson:
     def test_worksheet_titles_set(self) -> None:
         worksheets = adapt_lesson(_ufli_59_skill(), _grade_1_profile())
         titles = [ws.worksheet_title for ws in worksheets]
-        assert "Word Discovery" in titles
-        assert "Word Builder" in titles
+        # UFLI word work with chains: reordered to Word Work / Word Practice
+        assert "Word Work" in titles
+        assert "Word Practice" in titles
 
     def test_activity_format_variety(self) -> None:
         """Not all response formats should be 'write' across all worksheets."""
@@ -469,9 +470,10 @@ class TestAdaptLesson:
         assert len(model.chunks) >= 1
 
     def test_word_discovery_has_match_items(self) -> None:
-        """Worksheet 1 (Word Discovery) should have match-format items."""
+        """Word practice worksheet should have match-format items."""
         worksheets = adapt_lesson(_ufli_59_skill(), _grade_1_profile())
-        discovery = [ws for ws in worksheets if ws.worksheet_title == "Word Discovery"]
+        # UFLI word work with chains: Discovery is renamed to Word Practice
+        discovery = [ws for ws in worksheets if ws.worksheet_title == "Word Practice"]
         assert len(discovery) == 1
         match_items = [
             item
@@ -509,9 +511,10 @@ class TestAdaptLesson:
         assert len(worksheets) >= 1
 
     def test_warmup_chunk_present_grade_1(self) -> None:
-        """Grade 1 profiles should have sound_box warmup chunk in Word Discovery."""
+        """Grade 1 profiles should have sound_box warmup chunk in Word Practice."""
         worksheets = adapt_lesson(_ufli_59_skill(), _grade_1_profile())
-        discovery = [ws for ws in worksheets if ws.worksheet_title == "Word Discovery"]
+        # UFLI word work with chains: Discovery is renamed to Word Practice
+        discovery = [ws for ws in worksheets if ws.worksheet_title == "Word Practice"]
         assert len(discovery) == 1
         # Find chunk with sound_box format
         sound_box_chunks = [

@@ -420,6 +420,27 @@ def _run_multi_worksheet_pipeline(
     )
     logger.info("  Generated %s mini-worksheets", len(worksheets))
 
+    # Stage 5c: Pedagogical judge (GPT 5.4 evaluates adaptation quality)
+    judge_result: dict[str, object] = {"enabled": False}
+    try:
+        from adapt.llm_judge import judge_adaptation
+
+        verdict = judge_adaptation(skill_model, worksheets)
+        if verdict is not None:
+            judge_result = verdict.model_dump()
+            if verdict.approved:
+                logger.info("  Pedagogical judge: APPROVED (%.2f)", verdict.overall_score)
+            else:
+                logger.warning(
+                    "  Pedagogical judge: NOT APPROVED (%.2f) — %s",
+                    verdict.overall_score,
+                    verdict.rationale,
+                )
+    except Exception as exc:
+        logger.warning("  Pedagogical judge skipped: %s", exc)
+    judge_json = artifacts / "judge_verdict.json"
+    judge_json.write_text(json.dumps(judge_result, indent=2))
+
     pdf_paths: list[str] = []
     adapted_summaries: list[dict[str, str | int | float | bool]] = []
     validation_runs: list[dict[str, bool]] = []
