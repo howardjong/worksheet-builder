@@ -5,6 +5,7 @@ artifacts/
 asset_cache/
 vector_store/
 output/
+logs/
 tmp/
 
 # Local agent/tool state

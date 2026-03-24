@@ -107,6 +107,7 @@ def adapt_lesson(
     rules: AccommodationRules | None = None,
     rag_prior_adaptations: list[dict[str, object]] | None = None,
     rag_curriculum_references: list[dict[str, object]] | None = None,
+    artifacts_dir: str | None = None,
 ) -> list[AdaptedActivityModel]:
     """Transform a skill model into 2-3 ADHD-optimized mini-worksheets.
 
@@ -119,21 +120,22 @@ def adapt_lesson(
     if rules is None:
         rules = build_rules(profile)
 
-    # Try LLM-assisted adaptation first
+    # Try orchestrated LLM adaptation (Gemini → Judge → retry → GPT takeover)
     try:
-        from adapt.llm_adapt import llm_adapt_lesson
+        from adapt.llm_orchestrator import orchestrate_llm_adaptation
 
-        llm_result = llm_adapt_lesson(
+        llm_result = orchestrate_llm_adaptation(
             skill,
             profile,
             theme_id=theme_id,
             rules=rules,
             rag_curriculum_references=rag_curriculum_references,
+            artifacts_dir=artifacts_dir,
         )
         if llm_result:
             return llm_result
     except Exception as exc:
-        logger.warning("LLM adaptation failed, using deterministic engine: %s", exc)
+        logger.warning("LLM orchestration failed, using deterministic engine: %s", exc)
 
     # Deterministic fallback
 

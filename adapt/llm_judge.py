@@ -110,7 +110,7 @@ Approve if overall_score >= 0.7 and no criterion is below 0.5.
 Be rigorous but fair — the worksheets should teach the concept effectively."""
 
 
-def _call_openai(prompt: str) -> str | None:
+def _call_openai(prompt: str, max_completion_tokens: int = 1024) -> str | None:
     """Call GPT 5.4 and return the response text."""
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
@@ -123,7 +123,7 @@ def _call_openai(prompt: str) -> str | None:
         response = client.chat.completions.create(
             model="gpt-5.4",
             messages=[{"role": "user", "content": prompt}],
-            max_completion_tokens=1024,
+            max_completion_tokens=max_completion_tokens,
         )
         return response.choices[0].message.content or ""
     except Exception as e:

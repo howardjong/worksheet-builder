@@ -417,29 +417,47 @@ def _run_multi_worksheet_pipeline(
         theme_id=theme_id,
         rag_prior_adaptations=rag_prior_adaptations,
         rag_curriculum_references=rag_curriculum_references,
+        artifacts_dir=str(artifacts),
     )
     logger.info("  Generated %s mini-worksheets", len(worksheets))
 
-    # Stage 5c: Pedagogical judge (GPT 5.4 evaluates adaptation quality)
-    judge_result: dict[str, object] = {"enabled": False}
-    try:
-        from adapt.llm_judge import judge_adaptation
-
-        verdict = judge_adaptation(skill_model, worksheets)
-        if verdict is not None:
-            judge_result = verdict.model_dump()
-            if verdict.approved:
-                logger.info("  Pedagogical judge: APPROVED (%.2f)", verdict.overall_score)
-            else:
-                logger.warning(
-                    "  Pedagogical judge: NOT APPROVED (%.2f) — %s",
-                    verdict.overall_score,
-                    verdict.rationale,
-                )
-    except Exception as exc:
-        logger.warning("  Pedagogical judge skipped: %s", exc)
+    # Stage 5c: Pedagogical judge verdict
+    # When the LLM orchestrator ran, it already judged the adaptation and
+    # wrote judge_verdict.json. Read it back if present; otherwise run the
+    # judge as advisory-only (e.g., when the deterministic engine was used).
     judge_json = artifacts / "judge_verdict.json"
-    judge_json.write_text(json.dumps(judge_result, indent=2))
+    judge_result: dict[str, object]
+    if judge_json.exists():
+        judge_result = json.loads(judge_json.read_text())
+        approved = judge_result.get("approved")
+        score = judge_result.get("overall_score")
+        if approved is True:
+            logger.info("  Pedagogical judge: APPROVED (%.2f)", score)
+        elif approved is False:
+            logger.warning(
+                "  Pedagogical judge: NOT APPROVED (%.2f) — %s",
+                score,
+                judge_result.get("rationale", ""),
+            )
+    else:
+        judge_result = {"enabled": False}
+        try:
+            from adapt.llm_judge import judge_adaptation
+
+            verdict = judge_adaptation(skill_model, worksheets)
+            if verdict is not None:
+                judge_result = verdict.model_dump()
+                if verdict.approved:
+                    logger.info("  Pedagogical judge: APPROVED (%.2f)", verdict.overall_score)
+                else:
+                    logger.warning(
+                        "  Pedagogical judge: NOT APPROVED (%.2f) — %s",
+                        verdict.overall_score,
+                        verdict.rationale,
+                    )
+        except Exception as exc:
+            logger.warning("  Pedagogical judge skipped: %s", exc)
+        judge_json.write_text(json.dumps(judge_result, indent=2))
 
     pdf_paths: list[str] = []
     adapted_summaries: list[dict[str, str | int | float | bool]] = []
