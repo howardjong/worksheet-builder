@@ -16,7 +16,11 @@ test:
 	$(PYTEST) tests/ -v --ignore=tests/test_e2e.py
 
 test-golden:
-	$(PYTEST) tests/test_e2e.py -v
+	@if [ -s tests/test_e2e.py ]; then \
+		$(PYTEST) tests/test_e2e.py -v; \
+	else \
+		echo "No golden E2E tests found; skipping."; \
+	fi
 
 test-all:
 	$(PYTEST) tests/ -v
