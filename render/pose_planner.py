@@ -59,6 +59,15 @@ _THEMED_POSES: dict[str, dict[str, tuple[str, str]]] = {
         "read_aloud": ("reading", "sitting on a giant book block reading a storybook"),
         "sound_box": ("listening", "cupping hand to ear listening for sounds"),
     },
+    "roblox_2d_comic_avatar": {
+        "match": ("pointing", "standing on a calm obby platform pointing at picture cards"),
+        "trace": ("writing", "carefully writing on a clipboard beside soft obby blocks"),
+        "circle": ("thinking", "looking thoughtfully at word cards on a light blue wall"),
+        "fill_blank": ("building", "placing letter blocks into simple word slots"),
+        "write": ("writing", "writing on a clipboard beside a rainbow path"),
+        "read_aloud": ("reading", "holding a story card and reading aloud"),
+        "sound_box": ("listening", "cupping one hand to listen for sounds"),
+    },
 }
 
 
@@ -113,7 +122,8 @@ def plan_word_pictures(adapted: AdaptedActivityModel) -> dict[str, str]:
     for chunk in adapted.chunks:
         for item in chunk.items:
             if item.response_format == "match" and item.picture_prompt:
-                prompts[item.content] = (
+                picture_word = item.options[0] if item.options else item.content
+                prompts[picture_word] = (
                     f"A simple cartoon illustration of {item.picture_prompt}. "
                     f"No text, no words, no letters. Clean white background, "
                     f"bright colors, child-friendly style. Small square icon format."

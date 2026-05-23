@@ -17,33 +17,30 @@ decorative_elements:
   max_per_page: 2
   assets: []
 character_spec:
-  art_style: "roblox_3d_cartoon"
+  art_style: "roblox_2d_comic_avatar"
   style_description: >
-    Roblox-style 3D cartoon character rendered in low-poly blocky geometry with
-    flat cell-shading, hard edges, and no gradients. The character should look
-    like it came directly from a Roblox game — matching the R15 humanoid rig
-    proportions with segmented rectangular limbs, a large cubic head with rounded
-    edges, and a compact blocky torso. The rendering style is clean, toy-like,
-    with bright saturated colors and minimal shadows. Think 3D plastic toy
-    figure, not 2D illustration.
+    Roblox-inspired 2D comic/game-instruction-card character with bold black
+    outlines, saturated colors, simple readable shapes, and light cel shading.
+    The character should preserve Ian's learning buddy likeness from the profile
+    style sheet: rainbow spiky hair, square peach head, blue shirt with yellow
+    lightning bolt, brown pants, and orange sneakers. Think a printable Roblox
+    learning comic panel, not a generic 3D plastic toy render.
   body_description: >
-    Roblox R15 rig: large square head (roughly 1/3 of total height) on a narrow
-    rectangular torso split into upper and lower segments. Arms and legs are
-    segmented rectangular tubes (upper arm, lower arm, hand as separate blocks).
-    Hands are flat block shapes. Feet are flat rectangular blocks. Overall
-    proportions are stubby and toy-like with a large head-to-body ratio.
-    The character has a boxy silhouette — no curves, no organic shapes.
+    Blocky Roblox-like proportions: large square head with softly rounded
+    corners, compact rectangular torso, rectangular arms and hands, straight
+    blocky legs, and broad simple shoes. For Ian, clothing must stay consistent:
+    bright blue short-sleeve shirt with a large yellow lightning bolt, brown
+    pants, orange sneakers with white soles and white lace accents, and optional
+    brown backpack only when scene-appropriate.
   face_description: >
-    Classic Roblox smiley face rendered as a 2D decal texture on the front of
-    the cubic head: two simple black oval eyes, a small dot nose, and a wide
-    curved smile. The face is flat (not 3D modeled) — it looks painted or
-    printed onto the block head surface.
+    Friendly simple Roblox-style face: square peach face, two black oval eyes,
+    no detailed nose, and a simple curved smile. Some happy scenes may use an
+    open cheerful smile, but the face must remain simple and decal-like.
   scene_environment: >
-    Roblox obby (obstacle course) environment with floating geometric block
-    platforms, neon-edged checkpoints, spinning collectible coins, rainbow-striped
-    paths, jump pads with glowing arrows, and a bright gradient skybox. The
-    environment is built from simple geometric shapes (cubes, cylinders, wedges)
-    in bright saturated colors — like a Roblox Studio build.
+    Calm printable Roblox/obby learning environment with light blue walls or sky,
+    simple geometric platforms, classroom/home-practice props, and plenty of
+    white space around literacy content. Backgrounds should support focus rather
+    than compete with worksheet text.
   scene_elements:
     - "floating neon block platforms"
     - "spinning yellow coins"
@@ -53,23 +50,21 @@ character_spec:
     - "lava pit with orange glow"
     - "star collectibles"
   color_palette: >
-    Bright saturated primaries and neons. Character skin is peach/warm beige,
-    hair in vivid rainbow (red, orange, yellow, green, blue, purple). Clothing
-    in bold solid colors (blue, red, green). Environment uses neon greens,
-    hot pinks, electric blues, bright yellows against a light blue gradient sky.
-    No pastels, no muted tones, no gradients on character surfaces.
+    Bright saturated avatar colors: peach skin, vivid rainbow hair (red, orange,
+    yellow, green, cyan, blue, purple, magenta), blue shirt, yellow lightning
+    bolt, brown pants, and orange shoes. Use calmer light blue, soft gray,
+    white, and pale platform colors in backgrounds for print readability.
   reference_keywords:
-    - "Roblox character"
-    - "Roblox obby obstacle course"
-    - "Roblox R15 avatar"
-    - "blocky 3D game character"
-    - "Roblox game screenshot"
+    - "Roblox inspired comic avatar"
+    - "blocky learning buddy"
+    - "rainbow spiky hair"
+    - "blue lightning shirt"
+    - "orange sneakers"
   judge_criteria:
-    - "Character has blocky rectangular body parts — no smooth curves or organic shapes"
-    - "Head is a large cube/block shape, roughly 1/3 of total character height"
-    - "Face is a flat 2D decal (painted on), not 3D modeled features"
-    - "Rendering is flat cell-shaded with hard edges, no soft gradients on the character"
-    - "Proportions match Roblox R15 rig — large head, stubby segmented limbs"
-    - "Environment elements (if any) use geometric block shapes like Roblox Studio"
-    - "Colors are bright and saturated, not muted or pastel"
-    - "A child who plays Roblox would recognize this as a Roblox character"
+    - "Ian's rainbow spiky hair is preserved with multiple vivid color sections"
+    - "Character wears the blue shirt with a large yellow lightning bolt"
+    - "Character wears brown pants and orange sneakers with white soles"
+    - "Face is square, peach, simple, and friendly with black oval eyes"
+    - "Body remains blocky and Roblox-inspired, not realistic or anime"
+    - "Background is calm and print-readable with limited decorative clutter"
+    - "No generated scene changes the core avatar identity or clothing"

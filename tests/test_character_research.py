@@ -22,9 +22,9 @@ from theme.schema import CharacterSpec
 class TestCharacterSpec:
     def test_roblox_obby_has_character_spec(self) -> None:
         theme = load_theme("roblox_obby")
-        assert theme.character_spec.art_style == "roblox_3d_cartoon"
-        assert "blocky" in theme.character_spec.style_description.lower()
-        assert "R15" in theme.character_spec.body_description
+        assert theme.character_spec.art_style == "roblox_2d_comic_avatar"
+        assert "blocky" in theme.character_spec.body_description.lower()
+        assert "lightning bolt" in theme.character_spec.body_description
         assert len(theme.character_spec.judge_criteria) >= 5
         assert len(theme.character_spec.scene_elements) >= 3
 
@@ -149,8 +149,11 @@ class TestResearchCharacterStyle:
             ),
         )
         sheet = research_character_style(
-            profile, theme, "roblox_obby",
-            skip_images=True, skip_research=True,
+            profile,
+            theme,
+            "roblox_obby",
+            skip_images=True,
+            skip_research=True,
         )
         assert sheet.theme_id == "roblox_obby"
         assert "blocky" in sheet.character_block.lower() or "R15" in sheet.character_block
@@ -164,8 +167,11 @@ class TestResearchCharacterStyle:
         theme = ThemeConfig(name="empty")
         profile = LearnerProfile(name="Test", grade_level="1")
         sheet = research_character_style(
-            profile, theme, "empty",
-            skip_images=True, skip_research=True,
+            profile,
+            theme,
+            "empty",
+            skip_images=True,
+            skip_research=True,
         )
         assert sheet.theme_id == "empty"
         assert "cartoon" in sheet.character_block.lower()

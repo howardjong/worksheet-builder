@@ -6,9 +6,11 @@ import tempfile
 from pathlib import Path
 
 import fitz
+from pytest import MonkeyPatch
 
 from adapt.engine import adapt_activity, adapt_lesson
 from companion.schema import Accommodations, LearnerProfile
+from render.asset_gen import generate_worksheet_assets
 from render.pdf import (
     CONTENT_BOTTOM,
     CONTENT_TOP,
@@ -18,6 +20,7 @@ from render.pdf import (
     render_cover_page,
     render_worksheet,
 )
+from render.pose_planner import plan_scenes, plan_word_pictures
 from skill.schema import LiteracySkillModel, SourceItem
 from theme.engine import load_theme
 from theme.schema import AssetManifest
@@ -448,12 +451,60 @@ class TestMultiWorksheetRender:
         first_page = doc.load_page(0).get_text()
         # Trace chunk should appear on a subsequent page (not necessarily page 2
         # since a phonemic awareness warm-up may also precede it)
-        later_pages_text = "".join(
-            doc.load_page(p).get_text() for p in range(1, doc.page_count)
-        )
+        later_pages_text = "".join(doc.load_page(p).get_text() for p in range(1, doc.page_count))
         doc.close()
 
         # Default profile has no "trace" in prefs, so discovery uses "write"
         assert "Write 5 words" not in first_page
         assert "Write 5 words" in later_pages_text
         Path(pdf_path).unlink()
+
+    def test_word_picture_prompts_key_shuffled_picture_word(self) -> None:
+        """Match pictures are looked up by the shuffled picture word."""
+        worksheets = adapt_lesson(_lesson74_home_skill(), _profile(), theme_id="roblox_obby")
+        word_practice = [ws for ws in worksheets if ws.worksheet_title == "Word Practice"][0]
+
+        prompts = plan_word_pictures(word_practice)
+        match_items = [
+            item
+            for chunk in word_practice.chunks
+            for item in chunk.items
+            if item.response_format == "match"
+        ]
+        picture_words = {item.options[0] for item in match_items if item.options}
+
+        assert picture_words
+        assert picture_words.issubset(prompts.keys())
+
+    def test_local_asset_fallback_embeds_images_without_api_key(
+        self,
+        monkeypatch: MonkeyPatch,
+    ) -> None:
+        """Offline generation should still produce printable raster assets."""
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+        monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+
+        worksheets = adapt_lesson(_lesson74_home_skill(), _profile(), theme_id="roblox_obby")
+        word_practice = [ws for ws in worksheets if ws.worksheet_title == "Word Practice"][0]
+        theme = load_theme("roblox_obby")
+        manifest = generate_worksheet_assets(
+            plan_scenes(word_practice, character_spec=theme.character_spec),
+            plan_word_pictures(word_practice),
+            "test_local_fallback",
+            character_spec=theme.character_spec,
+        )
+
+        assert manifest is not None
+        assert manifest.scene_paths
+        assert manifest.word_picture_paths
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            pdf_path = f.name
+        render_worksheet(word_practice, theme, pdf_path, asset_manifest=manifest)
+
+        doc = fitz.open(pdf_path)
+        image_count = sum(len(page.get_images(full=True)) for page in doc)
+        doc.close()
+        Path(pdf_path).unlink()
+
+        assert image_count > 0

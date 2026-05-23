@@ -1661,3 +1661,222 @@ Note: index step requires GOOGLE_CLOUD_PROJECT=ws-builder-rag env var.
 **What’s next:**
 - Push this commit and re-run GitHub Actions to confirm the hosted CI jobs now pass on the branch.
 - If any GitHub job still fails, use the exact failing step/log rather than assuming the previous OpenCV-runtime issue recurred.
+
+### Session 34 — 2026-05-09 (UFLI Lessons 83-88 Worksheet Image Rendering Repair)
+**Participants:** User + Codex (GPT-5)
+**What happened:**
+- Investigated `output/ufli_lessons_83_88_adhd/` after the user reported that the printable worksheets contained no images.
+- Confirmed with PyMuPDF that all 12 final lesson PDFs initially had `images=0`, despite the adapted models and objective coverage reports being present.
+- Identified two rendering/asset causes:
+  - The rerender path needs an `AssetManifest`; without generated or cached assets, `render_worksheet()` falls back to text/dashed placeholders.
+  - `render/pose_planner.py::plan_word_pictures()` keyed match picture prompts by `item.content`, while `render/pdf.py::_draw_match_group()` correctly looks up the shuffled picture word from `item.options[0]`. This could make generated match images miss lookup even when assets existed.
+- Fixed `plan_word_pictures()` to key prompts by the shuffled picture word.
+- Added a local, deterministic Pillow fallback in `render/asset_gen.py` for scene cards, word-picture phonics cue cards, and cover images. This keeps worksheet image rendering available when API keys are absent, sandbox networking is blocked, or external image generation is not approved.
+- Regenerated all lesson 83-88 home-practice and decodable packages offline from their existing `artifacts/adapted_model_*.json` files. The final PDFs now embed raster images:
+  - decodable packages: 6 embedded images each
+  - home-practice packages: 9-10 embedded images each, except lesson 88 home practice with 9 embedded images across 12 pages
+- Added regression tests in `tests/test_render.py` for the shuffled picture-word key and for offline local asset generation embedding images in a rendered PDF.
+
+**Validation run:**
+- PDF image-count check over `output/ufli_lessons_83_88_adhd/lesson_*/*_roblox_obby.pdf` → every final PDF now has embedded images (`6-10` images depending on package/page count).
+- `.venv/bin/ruff check render/asset_gen.py render/pose_planner.py tests/test_render.py` → clean
+- `.venv/bin/mypy render/asset_gen.py render/pose_planner.py tests/test_render.py` → clean
+- `.venv/bin/pytest -q tests/test_render.py` → `24 passed`
+
+**Files changed:**
+- `render/asset_gen.py`
+- `render/pose_planner.py`
+- `tests/test_render.py`
+- `.claude/worksheet-project-context.md`
+
+**Gotchas/notes for next session:**
+- The external Gemini rerender attempt was rejected by the approval reviewer because it would send worksheet/profile-derived prompts to an external service. The current fixed outputs use local deterministic art instead.
+- The local fallback is intentionally pedagogical and print-safe, not rich AI illustration. It provides embedded scene/phonics cue images so the worksheet layout and match activities render correctly without depending on network access.
+
+### Session 35 — 2026-05-09 (UFLI Lessons 83-88 Final Pedagogy + Roblox Avatar Regeneration)
+**Participants:** User + Codex (GPT-5)
+**What happened:**
+- User rejected the first offline image repair as too static and not close enough to the intended Roblox learning avatar, and asked for all pedagogical issues to be fixed before final printing.
+- Improved `render/asset_gen.py` local fallback art:
+  - versioned the local fallback cache (`local_v2`) so stale static cards are not reused
+  - crops and embeds the committed `assets/characters/rainbow_roblox.png` avatar in cover, scene, and match-card assets
+  - draws calmer obby-platform backgrounds and more semantic word-picture icons
+- Fixed cover title derivation in `render/pdf.py` so one-word fluency warmups such as `aid` are not mistaken for story titles.
+- Enlarged match-card pictures in `render/pdf.py` from 56pt to 72pt and adjusted match height estimates.
+- Repaired all saved lesson 83-88 adapted models under `output/ufli_lessons_83_88_adhd/**/artifacts/`:
+  - aligned adapted grade to Ian's grade 1 profile
+  - added missing self-assessment checklists
+  - added missing first worked examples
+  - added fluency warmups to decodable Word Discovery worksheets
+  - split dense story read-aloud chunks into shorter read-aloud parts
+  - split the lesson 88 six-item sight-word chunk to satisfy grade-1 chunk limits
+  - tightened Story Time chunk estimates to stay within the ADHD mini-worksheet time budget
+- Regenerated all final PDFs, part PDFs, asset manifests, `generation_summary.json`, `generation_report.md`, and representative preview PNGs in `output/ufli_lessons_83_88_adhd/`.
+
+**Validation run:**
+- Cross-folder validation over every adapted worksheet and part PDF:
+  - skill parity: 0 errors, 0 warnings
+  - age band: 0 errors, 0 warnings
+  - ADHD compliance: 0 errors, 0 warnings
+  - print quality: 0 errors, 0 warnings
+- Final package image/page counts:
+  - Lesson 83 home practice: 12 pages, 9 embedded images
+  - Lesson 83 decodable: 8 pages, 5 embedded images
+  - Lesson 84 home practice: 12 pages, 9 embedded images
+  - Lesson 84 decodable: 8 pages, 5 embedded images
+  - Lesson 85 home practice: 13 pages, 9 embedded images
+  - Lesson 85 decodable: 9 pages, 5 embedded images
+  - Lesson 86 home practice: 12 pages, 9 embedded images
+  - Lesson 86 decodable: 8 pages, 5 embedded images
+  - Lesson 87 home practice: 12 pages, 9 embedded images
+  - Lesson 87 decodable: 8 pages, 5 embedded images
+  - Lesson 88 home practice: 15 pages, 11 embedded images
+  - Lesson 88 decodable: 9 pages, 6 embedded images
+- `.venv/bin/ruff check render/asset_gen.py render/pose_planner.py render/pdf.py tests/test_render.py` → clean
+- `.venv/bin/mypy render/asset_gen.py render/pose_planner.py render/pdf.py tests/test_render.py` → clean
+- `.venv/bin/pytest -q tests/test_render.py` → `24 passed`
+
+**Current output status:**
+- Ready-to-print folder: `output/ufli_lessons_83_88_adhd/`
+- Representative preview checks:
+  - `output/ufli_lessons_83_88_adhd/previews/lesson_084_home_practice_cover_ready_check.png`
+  - `output/ufli_lessons_83_88_adhd/previews/lesson_084_home_practice_match_ready_check.png`
+  - `output/ufli_lessons_83_88_adhd/previews/lesson_085_decodable_story_ready_check.png`
+  - `output/ufli_lessons_83_88_adhd/previews/lesson_088_home_practice_sight_words_ready_check.png`
+
+**Gotchas/notes for next session:**
+- This pass intentionally stayed local/offline. It did not send worksheet/profile-derived prompts to external image generation services.
+- The images now use the committed Roblox-style learner avatar and better semantic/local art, but they are still deterministic local illustrations rather than AI-generated bespoke scenes.
+
+### Session 36 — 2026-05-09 (Ian Learning Buddy Canonical Reference)
+**Participants:** User + Codex (GPT-5)
+**What happened:**
+- User provided `samples/input/home-instructions.jpg` as the actual learning buddy avatar reference for Ian.
+- Added a canonical Ian-specific reference pack at `assets/style_sheets/ian_roblox_buddy/`:
+  - `source_home_instructions.jpg` — original reference image
+  - `ref_front.png`, `ref_shoes_pose.png`, `ref_jacket_pose.png`, `ref_backpack_pose.png`, `ref_celebration_pose.png`
+  - `ref_front_character_crop.png`
+  - `local_fallback_sprite.png`
+  - `style_sheet.yaml`
+  - `README.md` with required likeness/instructions
+- Added `assets/characters/ian_learning_buddy.png` as the profile-specific local fallback sprite, leaving the generic `rainbow_roblox.png` untouched.
+- Updated `profiles/ian.yaml`:
+  - `avatar.base_character: ian_learning_buddy`
+  - `avatar.style_sheet.reference_image_dir: assets/style_sheets/ian_roblox_buddy`
+  - frozen character block now requires rainbow spiky hair, square peach face, blue shirt with yellow lightning bolt, brown pants, orange sneakers, optional medium-brown backpack, bold black outlines, and 2D Roblox comic style
+  - equipped backpack changed from `green_backpack` to `brown_backpack` to match the supplied reference
+- Added `brown_backpack` to `companion/catalog.py` and its generation description to `companion/generate_overlays.py`.
+- Updated `theme/themes/roblox_obby/config.yaml` from generic 3D Roblox/R15 language to Ian's 2D comic learning-buddy style and likeness criteria.
+- Updated the rendering/generation path:
+  - `render/asset_gen.py` now includes `character_name` in local fallback cache keys and loads the profile style-sheet fallback sprite when present
+  - `transform.py` passes `profile.avatar.base_character` and `profile.avatar.style_sheet` into cover generation
+  - `companion/generate_overlays.py` uses the style-sheet reference pack for AI-generated variants
+  - `render/pose_planner.py` includes pose descriptions for `roblox_2d_comic_avatar`
+- Rerendered `output/ufli_lessons_83_88_adhd/` using Ian's updated profile/style sheet and updated `generation_summary.json` with `avatar_reference`.
+
+**Validation run:**
+- `load_profile("profiles/ian.yaml")` confirms `base_character=ian_learning_buddy` and reference dir `assets/style_sheets/ian_roblox_buddy`.
+- Folder validation over `output/ufli_lessons_83_88_adhd/`: 0 errors, 0 warnings.
+- `.venv/bin/ruff check render/asset_gen.py render/pose_planner.py render/pdf.py transform.py companion/generate_overlays.py tests/test_companion.py tests/test_render.py tests/test_character_research.py` → clean
+- `.venv/bin/mypy render/asset_gen.py render/pose_planner.py render/pdf.py transform.py companion/generate_overlays.py tests/test_companion.py tests/test_render.py tests/test_character_research.py` → clean
+- `.venv/bin/pytest -q tests/test_companion.py tests/test_character_research.py tests/test_render.py` → `74 passed`
+
+**Gotchas/notes for next session:**
+- Do not use a generic Roblox avatar for Ian. Load `profiles/ian.yaml` and respect `avatar.style_sheet` for all future Ian worksheet art, cover art, reward art, avatar variants, and generated scenes.
+- External image generation should use the reference pack as visual input where available; local/offline fallback uses `assets/characters/ian_learning_buddy.png` / `local_fallback_sprite.png`.
+
+### Session 37 — 2026-05-09 (Dynamic Ian Learning Buddy Scenes)
+**Participants:** User + Codex (GPT-5)
+**What happened:**
+- User reported that the revised worksheets looked better but Ian was still mostly static; root cause was that `render.pose_planner` planned action poses but the local/offline renderer always pasted `local_fallback_sprite.png`.
+- Added pose-specific crops to `assets/style_sheets/ian_roblox_buddy/`:
+  - `pose_working.png`
+  - `pose_pointing.png`
+  - `pose_backpack.png`
+  - `pose_celebration.png`
+  - `pose_front.png`
+- Updated `assets/style_sheets/ian_roblox_buddy/style_sheet.yaml` and `README.md` with the revised rule: Ian art should be full activity scenes, not static avatar stickers.
+- Updated `render/asset_gen.py`:
+  - local asset cache version bumped to `local_v3`
+  - local scenes now load pose-specific Ian references by activity (`pointing`, `writing`, `building`, `reading`, `listening`, `thinking`, `celebrating`)
+  - local scenes draw worksheet-relevant props such as picture-match cards, letter blocks/writing lines, story cards, and sound cues
+  - cover fallback now uses an Ian celebration pose
+- Updated `render/pdf.py` so integrated scene art gets a larger page slot (`38%` content width, `150pt` height), making the learning buddy more visible without breaking the ADHD-safe page structure.
+- Updated `transform.py` so worksheet asset generation receives `profile.avatar.base_character`, matching the cover generation path.
+- Regenerated all final PDFs, part PDFs, asset manifests, `generation_summary.json`, `generation_report.md`, and preview PNGs under `output/ufli_lessons_83_88_adhd/`.
+
+**Validation run:**
+- Final package image/page counts remain stable:
+  - Lesson 83 home practice: 12 pages, 9 embedded images
+  - Lesson 83 decodable: 8 pages, 5 embedded images
+  - Lesson 84 home practice: 12 pages, 9 embedded images
+  - Lesson 84 decodable: 8 pages, 5 embedded images
+  - Lesson 85 home practice: 13 pages, 9 embedded images
+  - Lesson 85 decodable: 9 pages, 5 embedded images
+  - Lesson 86 home practice: 12 pages, 9 embedded images
+  - Lesson 86 decodable: 8 pages, 5 embedded images
+  - Lesson 87 home practice: 12 pages, 9 embedded images
+  - Lesson 87 decodable: 8 pages, 5 embedded images
+  - Lesson 88 home practice: 15 pages, 11 embedded images
+  - Lesson 88 decodable: 9 pages, 6 embedded images
+- Print-quality validation over all 12 final package PDFs: passed.
+- `.venv/bin/ruff check render/asset_gen.py render/pdf.py transform.py companion/generate_overlays.py companion/catalog.py tests/test_companion.py tests/test_render.py tests/test_character_research.py` → clean
+- `.venv/bin/mypy render/asset_gen.py render/pdf.py transform.py companion/generate_overlays.py companion/catalog.py tests/test_companion.py tests/test_render.py tests/test_character_research.py` → clean
+- `.venv/bin/pytest -q tests/test_companion.py tests/test_character_research.py tests/test_render.py` → `74 passed`
+
+**Current output status:**
+- Ready-to-print folder: `output/ufli_lessons_83_88_adhd/`
+- Representative preview checks:
+  - `output/ufli_lessons_83_88_adhd/previews/lesson_084_home_dynamic_cover.png`
+  - `output/ufli_lessons_83_88_adhd/previews/lesson_084_home_dynamic_page1.png`
+  - `output/ufli_lessons_83_88_adhd/previews/lesson_084_home_dynamic_page5.png`
+
+**Gotchas/notes for next session:**
+- The dynamic scene upgrade is still local/offline and deterministic. It does not call external image generation or transmit Ian's reference art.
+- Future live image generation should preserve the same rule: generate a complete activity scene with Ian doing the task, not a static character pasted next to worksheet content.
+
+### Session 38 — 2026-05-09 (No Reference Crops in Ian Worksheet Art)
+**Participants:** User + Codex (GPT-5)
+**What happened:**
+- User clarified that `samples/input/home-instructions.jpg` is only a likeness reference and should not be cropped into worksheets.
+- Updated `render/asset_gen.py` so local scene art draws new Ian activity poses from character attributes instead of pasting/cropping reference panels:
+  - rainbow spiky hair
+  - square peach face
+  - blue shirt with yellow lightning bolt
+  - brown pants
+  - orange shoes
+  - action-specific arms/props for writing, matching, thinking/listening, and celebration
+- Removed Ian from local matching/content tiles; those images now focus on standalone target-concept pictures.
+- Updated `assets/style_sheets/ian_roblox_buddy/style_sheet.yaml` and `README.md` to make the rule explicit: reference images are for likeness guidance only, not output art.
+- Bumped asset cache to `activity_v6` and regenerated all final PDFs, part PDFs, asset manifests, `generation_summary.json`, `generation_report.md`, and preview PNGs in `output/ufli_lessons_83_88_adhd/`.
+- Attempted a live external image-generation rebuild with `.env` loaded, but sandbox/network restrictions first caused DNS failures and then an escalated rerun was rejected because it would export lesson-derived worksheet content and Ian style/reference details to an external service. The final output is therefore the safer local deterministic version.
+
+**Validation run:**
+- Print-quality validation over all 12 final package PDFs: passed.
+- Final package image/page counts:
+  - Lesson 83 home practice: 12 pages, 9 embedded images
+  - Lesson 83 decodable: 8 pages, 5 embedded images
+  - Lesson 84 home practice: 12 pages, 9 embedded images
+  - Lesson 84 decodable: 8 pages, 5 embedded images
+  - Lesson 85 home practice: 13 pages, 9 embedded images
+  - Lesson 85 decodable: 9 pages, 5 embedded images
+  - Lesson 86 home practice: 12 pages, 9 embedded images
+  - Lesson 86 decodable: 8 pages, 5 embedded images
+  - Lesson 87 home practice: 12 pages, 9 embedded images
+  - Lesson 87 decodable: 8 pages, 5 embedded images
+  - Lesson 88 home practice: 15 pages, 11 embedded images
+  - Lesson 88 decodable: 9 pages, 6 embedded images
+- `.venv/bin/ruff check render/asset_gen.py render/pdf.py transform.py companion/generate_overlays.py companion/catalog.py tests/test_companion.py tests/test_render.py tests/test_character_research.py` → clean
+- `.venv/bin/mypy render/asset_gen.py render/pdf.py transform.py companion/generate_overlays.py companion/catalog.py tests/test_companion.py tests/test_render.py tests/test_character_research.py` → clean
+- `.venv/bin/pytest -q tests/test_companion.py tests/test_character_research.py tests/test_render.py` → `74 passed`
+
+**Current output status:**
+- Ready-to-print folder: `output/ufli_lessons_83_88_adhd/`
+- Representative preview checks:
+  - `output/ufli_lessons_83_88_adhd/previews/lesson_084_home_final_cover.png`
+  - `output/ufli_lessons_83_88_adhd/previews/lesson_084_home_final_page1.png`
+  - `output/ufli_lessons_83_88_adhd/previews/lesson_084_home_final_page5.png`
+
+**Gotchas/notes for next session:**
+- Do not paste or crop `home-instructions.jpg` into generated worksheets.
+- If the user explicitly wants cloud/API-generated illustrations, explain that it exports lesson content and Ian style/reference details and needs explicit user approval plus an environment that permits network export.

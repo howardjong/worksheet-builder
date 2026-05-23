@@ -51,11 +51,11 @@ _FALLBACK_CHARACTER_DESC = (
 _ITEM_DESCRIPTIONS: dict[str, str] = {
     "white_sneakers": "wearing white sneakers instead of orange sneakers",
     "red_hoodie": (
-        "wearing a bright red hoodie sweatshirt "
-        "instead of the blue lightning bolt t-shirt"
+        "wearing a bright red hoodie sweatshirt " "instead of the blue lightning bolt t-shirt"
     ),
     "blue_jeans": "wearing blue denim jeans instead of brown pants",
     "green_backpack": "wearing a small green backpack on his back",
+    "brown_backpack": "wearing the same medium-brown school backpack from Ian's reference art",
     "star_shades": "wearing fun star-shaped yellow sunglasses on his face",
     "wizard_hat": "wearing a tall purple wizard hat with gold stars on his head",
     "gold_crown": "wearing a shiny golden crown with jewels on his head",
@@ -309,14 +309,20 @@ def _judge_variant(
     Falls back to auto-pass if both judges fail.
     """
     result = _judge_with_gemini(
-        ref_bytes, generated_bytes, equipped_items, character_spec,
+        ref_bytes,
+        generated_bytes,
+        equipped_items,
+        character_spec,
     )
     if result and "passed" in result:
         logger.info(f"  Judge (Gemini): score={result.get('score')}, passed={result['passed']}")
         return result
 
     result = _judge_with_openai(
-        ref_bytes, generated_bytes, equipped_items, character_spec,
+        ref_bytes,
+        generated_bytes,
+        equipped_items,
+        character_spec,
     )
     if result and "passed" in result:
         logger.info(f"  Judge (OpenAI): score={result.get('score')}, passed={result['passed']}")
@@ -359,11 +365,21 @@ def generate_variant(
 
     Returns the output path on success, None on failure.
     """
-    if not _BASE_PATH.exists():
-        logger.error(f"Base character not found: {_BASE_PATH}")
+    base_path = _BASE_PATH
+    if style_sheet and style_sheet.reference_image_dir:
+        ref_pack = Path(style_sheet.reference_image_dir)
+        fallback_sprite = ref_pack / "local_fallback_sprite.png"
+        front_ref = ref_pack / "ref_front_character_crop.png"
+        if fallback_sprite.exists():
+            base_path = fallback_sprite
+        elif front_ref.exists():
+            base_path = front_ref
+
+    if not base_path.exists():
+        logger.error(f"Base character not found: {base_path}")
         return None
 
-    with open(_BASE_PATH, "rb") as f:
+    with open(base_path, "rb") as f:
         ref_bytes = f.read()
 
     best_result: tuple[int, bytes] | None = None  # (score, image_bytes)
@@ -378,7 +394,10 @@ def generate_variant(
 
         # Judge the result (with theme fidelity criteria if spec available)
         verdict = _judge_variant(
-            ref_bytes, generated_bytes, equipped_items, character_spec,
+            ref_bytes,
+            generated_bytes,
+            equipped_items,
+            character_spec,
         )
         score = int(verdict.get("score", 0))
 

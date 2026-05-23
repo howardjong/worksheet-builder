@@ -28,6 +28,7 @@ from companion.rewards import (
 )
 from companion.schema import (
     AvatarConfig,
+    CharacterStyleSheet,
     LearnerProfile,
     Preferences,
     Progress,
@@ -108,22 +109,50 @@ class TestProfile:
     def test_migrate_list_to_dict(self) -> None:
         """Old list format should be migrated to dict on load."""
         # Items that exist in the new catalog
-        avatar = AvatarConfig.model_validate({
-            "base_character": "rainbow_roblox",
-            "equipped_items": ["white_sneakers", "red_hoodie"],
-            "unlocked_items": ["white_sneakers", "red_hoodie"],
-        })
+        avatar = AvatarConfig.model_validate(
+            {
+                "base_character": "rainbow_roblox",
+                "equipped_items": ["white_sneakers", "red_hoodie"],
+                "unlocked_items": ["white_sneakers", "red_hoodie"],
+            }
+        )
         assert isinstance(avatar.equipped_items, dict)
         assert avatar.equipped_items.get("shoes") == "white_sneakers"
         assert avatar.equipped_items.get("shirt") == "red_hoodie"
 
     def test_migrate_empty_list_to_dict(self) -> None:
         """Empty list should become empty dict."""
-        avatar = AvatarConfig.model_validate({
-            "base_character": "rainbow_roblox",
-            "equipped_items": [],
-        })
+        avatar = AvatarConfig.model_validate(
+            {
+                "base_character": "rainbow_roblox",
+                "equipped_items": [],
+            }
+        )
         assert avatar.equipped_items == {}
+
+    def test_ian_learning_buddy_style_sheet_assets_exist(self) -> None:
+        style_sheet = CharacterStyleSheet(
+            character_block="Ian has rainbow spiky hair and a blue lightning shirt.",
+            reference_image_dir="assets/style_sheets/ian_roblox_buddy",
+            theme_id="roblox_obby",
+        )
+        profile = LearnerProfile(
+            name="Ian",
+            grade_level="1",
+            avatar=AvatarConfig(
+                base_character="ian_learning_buddy",
+                style_sheet=style_sheet,
+            ),
+        )
+
+        assert profile.avatar is not None
+        assert profile.avatar.base_character == "ian_learning_buddy"
+        assert profile.avatar.style_sheet is not None
+        assert "rainbow spiky" in profile.avatar.style_sheet.character_block
+        ref_dir = Path(profile.avatar.style_sheet.reference_image_dir)
+        assert (ref_dir / "source_home_instructions.jpg").exists()
+        assert (ref_dir / "ref_front_character_crop.png").exists()
+        assert (Path("assets/characters") / "ian_learning_buddy.png").exists()
 
 
 # --- Catalog Tests ---
@@ -143,6 +172,7 @@ class TestCatalog:
     def test_catalog_slot_field(self) -> None:
         """All catalog items have a valid slot."""
         from companion.catalog import VALID_SLOTS
+
         for item in CATALOG:
             assert item.slot in VALID_SLOTS, f"{item.item_id} has invalid slot: {item.slot}"
 
@@ -177,7 +207,8 @@ class TestCatalog:
 class TestRewards:
     def test_award_completion_basic(self) -> None:
         profile = LearnerProfile(
-            name="Test", grade_level="1",
+            name="Test",
+            grade_level="1",
             avatar=AvatarConfig(),
             progress=Progress(),
         )
@@ -190,7 +221,8 @@ class TestRewards:
 
     def test_milestone_at_interval(self) -> None:
         profile = LearnerProfile(
-            name="Test", grade_level="1",
+            name="Test",
+            grade_level="1",
             avatar=AvatarConfig(),
             progress=Progress(worksheets_completed=MILESTONE_INTERVAL - 1),
         )
@@ -201,7 +233,8 @@ class TestRewards:
 
     def test_milestone_unlocks_item(self) -> None:
         profile = LearnerProfile(
-            name="Test", grade_level="1",
+            name="Test",
+            grade_level="1",
             avatar=AvatarConfig(),
             progress=Progress(worksheets_completed=MILESTONE_INTERVAL - 1),
         )
@@ -212,7 +245,8 @@ class TestRewards:
 
     def test_tokens_accumulate(self) -> None:
         profile = LearnerProfile(
-            name="Test", grade_level="1",
+            name="Test",
+            grade_level="1",
             avatar=AvatarConfig(),
             progress=Progress(),
         )
@@ -225,7 +259,8 @@ class TestRewards:
 
     def test_completion_history_recorded(self) -> None:
         profile = LearnerProfile(
-            name="Test", grade_level="1",
+            name="Test",
+            grade_level="1",
             avatar=AvatarConfig(),
             progress=Progress(),
         )
@@ -237,7 +272,8 @@ class TestRewards:
 
     def test_purchase_item_success(self) -> None:
         profile = LearnerProfile(
-            name="Test", grade_level="1",
+            name="Test",
+            grade_level="1",
             avatar=AvatarConfig(),
             progress=Progress(tokens_available=20),
         )
@@ -248,7 +284,8 @@ class TestRewards:
 
     def test_purchase_insufficient_tokens(self) -> None:
         profile = LearnerProfile(
-            name="Test", grade_level="1",
+            name="Test",
+            grade_level="1",
             avatar=AvatarConfig(),
             progress=Progress(tokens_available=2),
         )
@@ -257,7 +294,8 @@ class TestRewards:
 
     def test_purchase_already_owned(self) -> None:
         profile = LearnerProfile(
-            name="Test", grade_level="1",
+            name="Test",
+            grade_level="1",
             avatar=AvatarConfig(unlocked_items=["white_sneakers"]),
             progress=Progress(tokens_available=20),
         )
@@ -268,7 +306,8 @@ class TestRewards:
         milestone_items = get_milestone_items()
         if milestone_items:
             profile = LearnerProfile(
-                name="Test", grade_level="1",
+                name="Test",
+                grade_level="1",
                 avatar=AvatarConfig(),
                 progress=Progress(tokens_available=100),
             )
@@ -277,7 +316,8 @@ class TestRewards:
 
     def test_equip_item(self) -> None:
         profile = LearnerProfile(
-            name="Test", grade_level="1",
+            name="Test",
+            grade_level="1",
             avatar=AvatarConfig(unlocked_items=["white_sneakers"]),
         )
         result = equip_item(profile, "white_sneakers")
@@ -288,7 +328,8 @@ class TestRewards:
 
     def test_equip_item_not_unlocked(self) -> None:
         profile = LearnerProfile(
-            name="Test", grade_level="1",
+            name="Test",
+            grade_level="1",
             avatar=AvatarConfig(),
         )
         result = equip_item(profile, "white_sneakers")
@@ -297,7 +338,8 @@ class TestRewards:
     def test_equip_replaces_same_slot(self) -> None:
         """Equipping a new item in the same slot replaces the old one."""
         profile = LearnerProfile(
-            name="Test", grade_level="1",
+            name="Test",
+            grade_level="1",
             avatar=AvatarConfig(
                 unlocked_items=["wizard_hat", "gold_crown"],
                 equipped_items={"hat": "wizard_hat"},
@@ -312,7 +354,8 @@ class TestRewards:
 
     def test_unequip_item(self) -> None:
         profile = LearnerProfile(
-            name="Test", grade_level="1",
+            name="Test",
+            grade_level="1",
             avatar=AvatarConfig(
                 unlocked_items=["white_sneakers"],
                 equipped_items={"shoes": "white_sneakers"},
@@ -325,7 +368,8 @@ class TestRewards:
 
     def test_unequip_not_equipped(self) -> None:
         profile = LearnerProfile(
-            name="Test", grade_level="1",
+            name="Test",
+            grade_level="1",
             avatar=AvatarConfig(unlocked_items=["white_sneakers"]),
         )
         result = unequip_item(profile, "white_sneakers")
@@ -334,7 +378,8 @@ class TestRewards:
     def test_effort_based_not_accuracy(self) -> None:
         """Tokens are always the same regardless of 'performance'."""
         profile = LearnerProfile(
-            name="Test", grade_level="1",
+            name="Test",
+            grade_level="1",
             avatar=AvatarConfig(),
             progress=Progress(),
         )
@@ -350,7 +395,8 @@ class TestRewards:
 class TestCaregiver:
     def test_view_progress(self) -> None:
         profile = LearnerProfile(
-            name="Ian", grade_level="1",
+            name="Ian",
+            grade_level="1",
             progress=Progress(
                 worksheets_completed=7,
                 tokens_available=45,

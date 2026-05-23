@@ -19,12 +19,18 @@ VALID_SLOTS = {"shirt", "pants", "shoes", "hat", "backpack", "face"}
 
 
 def _item(
-    item_id: str, name: str, slot: str, cost: int,
+    item_id: str,
+    name: str,
+    slot: str,
+    cost: int,
     milestone_only: bool = False,
 ) -> CatalogItem:
     return CatalogItem(
-        item_id=item_id, name=name, slot=slot,
-        cost=cost, milestone_only=milestone_only,
+        item_id=item_id,
+        name=name,
+        slot=slot,
+        cost=cost,
+        milestone_only=milestone_only,
     )
 
 
@@ -34,6 +40,7 @@ CATALOG: list[CatalogItem] = [
     _item("red_hoodie", "Red Hoodie", "shirt", 10),
     _item("blue_jeans", "Blue Jeans", "pants", 10),
     _item("green_backpack", "Green Backpack", "backpack", 5),
+    _item("brown_backpack", "Brown Backpack", "backpack", 0, milestone_only=True),
     _item("star_shades", "Star Shades", "face", 5),
     _item("wizard_hat", "Wizard Hat", "hat", 15),
     _item("gold_crown", "Gold Crown", "hat", 0, milestone_only=True),

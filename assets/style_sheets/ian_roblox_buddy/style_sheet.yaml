@@ -1,0 +1,33 @@
+theme_id: roblox_obby
+base_character: ian_learning_buddy
+reference_image_dir: assets/style_sheets/ian_roblox_buddy
+canonical_source: source_home_instructions.jpg
+required_likeness:
+  - Roblox-inspired blocky boy avatar in 2D comic/game-instruction style.
+  - Square peach head with rounded corners.
+  - Simple black oval eyes and friendly curved smile.
+  - Vivid rainbow spiky side-swept hair with red, orange, yellow, green, cyan, blue, purple, and magenta sections.
+  - Bright blue short-sleeve shirt with a large yellow lightning bolt.
+  - Peach rectangular block arms and hands.
+  - Brown straight blocky pants.
+  - Orange sneakers with white soles and small white lace details.
+  - Optional medium-brown backpack only when scene-appropriate.
+do_not_change:
+  - rainbow spiky hair
+  - square peach face
+  - simple Roblox-like eyes and smile
+  - blue shirt
+  - yellow lightning bolt
+  - brown pants
+  - orange sneakers
+  - blocky Roblox-inspired proportions
+generation_notes:
+  - Use reference images from this folder for all Ian-specific generated scenes.
+  - Treat the reference images as likeness guidance only; do not crop panels from the reference sheet into worksheet output.
+  - Generate full activity scenes with Ian doing the worksheet task; do not paste a static standing avatar unless no task-specific pose exists.
+  - Pick newly drawn/generated poses by activity: pointing for matching, working for writing/building, front/reading for read-aloud or thinking, celebration for rewards and covers.
+  - Scene art must include one simple worksheet-relevant prop set such as picture cards, letter blocks, a book/card, or sound-wave cues.
+  - Content images used inside activities should be attractive standalone pictures of the target word/concept; Ian does not need to appear in those tiles.
+  - Keep worksheet art calm, printable, and uncluttered.
+  - Do not put instructional speech-bubble text inside generated art; worksheet text is rendered separately.
+  - Accessories must not obscure the hair, face, lightning shirt, pants, or shoes.

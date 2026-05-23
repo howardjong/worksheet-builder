@@ -1,0 +1,25 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-added-large-files
+        args: ["--maxkb=1024"]
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.4
+    hooks:
+      - id: ruff
+        args: ["--fix"]
+      - id: ruff-format
+
+  - repo: local
+    hooks:
+      - id: no-claude-coauthor
+        name: Block Co-Authored-By Claude trailers
+        entry: |-
+          bash -c 'if grep -qiE "Co-Authored-By:.*(Claude|Anthropic|noreply@anthropic)" "$1"; then echo "Refusing commit - Co-Authored-By Claude trailer detected."; exit 1; fi' --
+        language: system
+        stages: [commit-msg]

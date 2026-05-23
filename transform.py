@@ -489,8 +489,14 @@ def _run_multi_worksheet_pipeline(
                 style_sheet = profile.avatar.style_sheet
 
             asset_manifest = generate_worksheet_assets(
-                scenes, word_prompts, ws_hash,
-                style_sheet=style_sheet, character_spec=char_spec,
+                scenes,
+                word_prompts,
+                ws_hash,
+                character_name=(
+                    profile.avatar.base_character if profile.avatar else "rainbow_roblox"
+                ),
+                style_sheet=style_sheet,
+                character_spec=char_spec,
             )
         except Exception as exc:
             logger.warning("  Asset generation skipped: %s", exc)
@@ -576,6 +582,7 @@ def _merge_lesson_package(
 
     assert isinstance(skill_model, LiteracySkillModel)
     assert isinstance(theme, ThemeConfig)
+    avatar = getattr(profile, "avatar", None)
 
     # Generate cover image (optional — falls back gracefully)
     cover_image_path = generate_cover_image(
@@ -583,6 +590,8 @@ def _merge_lesson_package(
         target_words=skill_model.target_words[:10],
         theme_spec=theme.character_spec if theme.character_spec.art_style else None,
         worksheet_hash=content_hash,
+        character_name=avatar.base_character if avatar else "rainbow_roblox",
+        style_sheet=(avatar.style_sheet if avatar and avatar.style_sheet else None),
     )
 
     # Render cover page PDF
@@ -635,12 +644,14 @@ def _validate_and_report(
     val_json = artifacts / f"validation{suffix}.json"
     val_json.write_text(json.dumps(validation, indent=2))
 
-    all_passed = all([
-        parity_result.passed,
-        age_result.passed,
-        adhd_result.passed,
-        print_result.passed,
-    ])
+    all_passed = all(
+        [
+            parity_result.passed,
+            age_result.passed,
+            adhd_result.passed,
+            print_result.passed,
+        ]
+    )
 
     if all_passed:
         logger.info("  All validations passed%s!", suffix)
@@ -692,10 +703,7 @@ def _aggregate_validation_results(
     for run in validations:
         keys.update(run.keys())
 
-    return {
-        key: all(run.get(key, False) for run in validations)
-        for key in keys
-    }
+    return {key: all(run.get(key, False) for run in validations) for key in keys}
 
 
 def _build_adapted_summary(
@@ -705,8 +713,7 @@ def _build_adapted_summary(
     total_items = sum(len(chunk.items) for chunk in adapted.chunks)
     response_formats = sorted({chunk.response_format for chunk in adapted.chunks})
     estimated_minutes = sum(
-        _extract_estimated_minutes(chunk.time_estimate)
-        for chunk in adapted.chunks
+        _extract_estimated_minutes(chunk.time_estimate) for chunk in adapted.chunks
     )
     distractors = sorted(_extract_distractor_words(adapted))
     curriculum_supported_items, curriculum_lesson_ids = _extract_curriculum_support(adapted)
@@ -744,9 +751,7 @@ def _extract_distractor_words(adapted: AdaptedActivityModel) -> set[str]:
             answers: set[str] = set()
             if item.answer:
                 answers = {
-                    answer.strip().lower()
-                    for answer in item.answer.split(",")
-                    if answer.strip()
+                    answer.strip().lower() for answer in item.answer.split(",") if answer.strip()
                 }
 
             for option in item.options:

@@ -40,9 +40,9 @@ GRADE_FONT_SIZES: dict[str, dict[str, int]] = {
 # ADHD-optimized spacing (evidence: 1.7x line height, generous char/word spacing)
 ADHD_SPACING: dict[str, float] = {
     "line_height_factor": 1.7,  # line spacing = font_size * 1.7
-    "char_space_body": 0.4,     # extra char spacing for body text (pts)
+    "char_space_body": 0.4,  # extra char spacing for body text (pts)
     "char_space_heading": 0.7,  # extra char spacing for headings (pts)
-    "word_space": 1.5,          # extra word spacing (pts)
+    "word_space": 1.5,  # extra word spacing (pts)
 }
 
 LAYOUT_SPACING: dict[str, float] = {
@@ -118,17 +118,13 @@ def render_worksheet(
             _draw_avatar(c, avatar_image, theme)
 
     # Render each chunk
-    use_scenes = (
-        asset_manifest is not None
-        and theme.avatar_position == "integrated"
-    )
+    use_scenes = asset_manifest is not None and theme.avatar_position == "integrated"
     for chunk_idx, chunk in enumerate(adapted.chunks):
         # Estimate with scenes first; fall back to full-width if too tall
         chunk_use_scene = use_scenes
         # Passage/read_aloud chunks always use full-width for readability
         has_passage = any(
-            it.response_format == "read_aloud"
-            and it.metadata.get("display") != "roll_and_read"
+            it.response_format == "read_aloud" and it.metadata.get("display") != "roll_and_read"
             for it in chunk.items
         )
         if has_passage:
@@ -169,19 +165,37 @@ def render_worksheet(
             first_item = chunk.items[0]
             col_w = CONTENT_WIDTH
             chunk_header_height += _estimate_item_height(
-                first_item, theme, sizes, MARGIN, PAGE_WIDTH - MARGIN, col_w,
+                first_item,
+                theme,
+                sizes,
+                MARGIN,
+                PAGE_WIDTH - MARGIN,
+                col_w,
             )
         if chunk_idx > 0 and y - chunk_header_height < content_bottom + PAGE_BREAK_BUFFER:
             start_new_page()
 
         if chunk_use_scene and asset_manifest is not None:
             y = _draw_chunk_with_scene(
-                c, chunk, adapted, theme, sizes, colors, y,
-                asset_manifest, chunk_idx,
+                c,
+                chunk,
+                adapted,
+                theme,
+                sizes,
+                colors,
+                y,
+                asset_manifest,
+                chunk_idx,
             )
         else:
             y = _draw_chunk(
-                c, chunk, adapted, theme, sizes, colors, y,
+                c,
+                chunk,
+                adapted,
+                theme,
+                sizes,
+                colors,
+                y,
                 asset_manifest=asset_manifest,
                 page_break_fn=start_new_page,
                 effective_bottom=content_bottom,
@@ -200,13 +214,21 @@ def render_worksheet(
 
     if adapted.break_prompt:
         y = _draw_break_prompt(
-            c, adapted.break_prompt, theme, sizes, y,
+            c,
+            adapted.break_prompt,
+            theme,
+            sizes,
+            y,
             effective_bottom=content_bottom,
         )
 
     if adapted.self_assessment:
         y = _draw_self_assessment(
-            c, adapted.self_assessment, theme, sizes, y,
+            c,
+            adapted.self_assessment,
+            theme,
+            sizes,
+            y,
             effective_bottom=content_bottom,
         )
 
@@ -322,9 +344,9 @@ def _estimate_chunk_height(
     if use_scene and asset_manifest is not None:
         scene_path = asset_manifest.scene_paths.get(chunk.chunk_id)
         if scene_path and Path(scene_path).exists():
-            scene_height = 128.0
+            scene_height = 158.0
             gap = 10.0
-            scene_width = CONTENT_WIDTH * 0.32
+            scene_width = CONTENT_WIDTH * 0.38
             col_width = CONTENT_WIDTH - scene_width - gap
 
     body = sizes["body"]
@@ -570,16 +592,24 @@ def _draw_chunk(
         box_height = sizes["body"] * 2 + 36
         c.setFillColor(HexColor(theme_colors.example_bg))
         c.roundRect(
-            left + 5, y - box_height,
-            col_width - 10, box_height, 8,
-            fill=True, stroke=False,
+            left + 5,
+            y - box_height,
+            col_width - 10,
+            box_height,
+            8,
+            fill=True,
+            stroke=False,
         )
         c.setStrokeColor(HexColor(theme_colors.example_border))
         c.setLineWidth(0.75)
         c.roundRect(
-            left + 5, y - box_height,
-            col_width - 10, box_height, 8,
-            fill=False, stroke=True,
+            left + 5,
+            y - box_height,
+            col_width - 10,
+            box_height,
+            8,
+            fill=False,
+            stroke=True,
         )
 
         c.setFillColor(HexColor(theme_colors.examples))
@@ -630,8 +660,14 @@ def _draw_chunk(
                 c.setFillColor(HexColor(theme_colors.text))
                 c.setFont(theme.fonts.primary, sizes["body"])
             y = _draw_match_group(
-                c, entry, theme, sizes, y,
-                left, right, asset_manifest,
+                c,
+                entry,
+                theme,
+                sizes,
+                y,
+                left,
+                right,
+                asset_manifest,
             )
             continue
 
@@ -663,31 +699,68 @@ def _draw_chunk(
             y = write_y - 10
         elif is_chain_step:
             y = _draw_chain_step_item(
-                c, item, theme, sizes, y, left, col_width,
+                c,
+                item,
+                theme,
+                sizes,
+                y,
+                left,
+                col_width,
                 write_line_height,
             )
         elif item.response_format == "trace":
             y = _draw_trace_item(c, item, theme, sizes, y, left)
         elif item.response_format == "circle" and item.options:
             y = _draw_circle_item(
-                c, item, theme, sizes, y, left, right,
+                c,
+                item,
+                theme,
+                sizes,
+                y,
+                left,
+                right,
             )
         elif item.response_format == "fill_blank":
             y = _draw_fill_blank_item(
-                c, item, theme, sizes, y, left, col_width,
+                c,
+                item,
+                theme,
+                sizes,
+                y,
+                left,
+                col_width,
             )
-        elif (item.response_format == "read_aloud"
-              and item.metadata.get("display") == "roll_and_read"):
+        elif (
+            item.response_format == "read_aloud" and item.metadata.get("display") == "roll_and_read"
+        ):
             y = _draw_fluency_word_item(
-                c, item, theme, sizes, y, left, col_width,
+                c,
+                item,
+                theme,
+                sizes,
+                y,
+                left,
+                col_width,
             )
         elif item.response_format == "read_aloud":
             y = _draw_read_aloud_item(
-                c, item, theme, sizes, y, left, col_width,
+                c,
+                item,
+                theme,
+                sizes,
+                y,
+                left,
+                col_width,
             )
         elif item.response_format == "sound_box":
             y = _draw_sound_box_item(
-                c, item, theme, sizes, y, left, col_width,
+                c,
+                item,
+                theme,
+                sizes,
+                y,
+                left,
+                col_width,
             )
         else:
             text = f"  {item.item_id}. {item.content}"
@@ -702,13 +775,18 @@ def _draw_chunk(
                 write_y = y - write_line_height + 6
                 line_color = theme_colors.writing_line
                 _draw_writing_line(
-                    c, left + 30, write_y, line_color,
+                    c,
+                    left + 30,
+                    write_y,
+                    line_color,
                     col_width=col_width,
                 )
                 y = write_y - 10
             elif item.response_format == "circle":
                 c.drawString(
-                    left + 30, y - sizes["body"], "(circle one)",
+                    left + 30,
+                    y - sizes["body"],
+                    "(circle one)",
                 )
                 y -= sizes["body"] + 8
 
@@ -786,7 +864,7 @@ def _estimate_match_group_height(
     sizes: dict[str, int],
 ) -> float:
     """Estimate total height for a two-column match group."""
-    row_height = 68  # pic_size(56) + gap(12)
+    row_height = 88  # pic_size(72) + gap(16)
     return row_height * len(items) + 20
 
 
@@ -810,14 +888,11 @@ def _draw_match_group(
     lx = left if left is not None else MARGIN
     rx = right if right is not None else (PAGE_WIDTH - MARGIN)
     col_width = rx - lx
-    pic_size = 56
-    row_height = pic_size + 12
+    pic_size = 72
+    row_height = pic_size + 16
 
     # Build picture list from shuffled options
-    pic_words = [
-        (item.options[0] if item.options else item.content)
-        for item in items
-    ]
+    pic_words = [(item.options[0] if item.options else item.content) for item in items]
 
     # Draw each row
     for row_idx, item in enumerate(items):
@@ -840,9 +915,13 @@ def _draw_match_group(
             if pic_path and Path(pic_path).exists():
                 try:
                     c.drawImage(
-                        pic_path, pic_x, pic_y,
-                        width=pic_size, height=pic_size,
-                        preserveAspectRatio=True, mask="auto",
+                        pic_path,
+                        pic_x,
+                        pic_y,
+                        width=pic_size,
+                        height=pic_size,
+                        preserveAspectRatio=True,
+                        mask="auto",
                     )
                     word_drawn = True
                 except Exception as e:
@@ -1175,7 +1254,13 @@ def _draw_chunk_with_scene(
 
     if not scene_path or not Path(scene_path).exists():
         return _draw_chunk(
-            c, chunk, adapted, theme, sizes, colors, y,
+            c,
+            chunk,
+            adapted,
+            theme,
+            sizes,
+            colors,
+            y,
             asset_manifest=asset_manifest,
         )
 
@@ -1183,8 +1268,8 @@ def _draw_chunk_with_scene(
     scene_right = chunk_idx % 2 == 0
     gap = 10  # gap between content and scene columns
 
-    scene_width = CONTENT_WIDTH * 0.32
-    scene_height = 120
+    scene_width = CONTENT_WIDTH * 0.38
+    scene_height = 150
 
     if scene_right:
         content_left = MARGIN
@@ -1198,18 +1283,26 @@ def _draw_chunk_with_scene(
     # Draw scene image
     try:
         c.drawImage(
-            scene_path, scene_x, y - scene_height,
-            width=scene_width, height=scene_height,
-            preserveAspectRatio=True, mask="auto",
+            scene_path,
+            scene_x,
+            y - scene_height,
+            width=scene_width,
+            height=scene_height,
+            preserveAspectRatio=True,
+            mask="auto",
         )
     except Exception as e:
-        logger.warning(
-            f"Failed to draw scene for chunk {chunk.chunk_id}: {e}"
-        )
+        logger.warning(f"Failed to draw scene for chunk {chunk.chunk_id}: {e}")
 
     # Draw content constrained to the content column
     y_after = _draw_chunk(
-        c, chunk, adapted, theme, sizes, colors, y,
+        c,
+        chunk,
+        adapted,
+        theme,
+        sizes,
+        colors,
+        y,
         content_left=content_left,
         content_right=content_right,
         asset_manifest=asset_manifest,
@@ -1290,8 +1383,11 @@ def _draw_avatar(
 
     try:
         c.drawImage(
-            str(avatar_file), x, y,
-            width=avatar_size, height=avatar_size,
+            str(avatar_file),
+            x,
+            y,
+            width=avatar_size,
+            height=avatar_size,
             preserveAspectRatio=True,
             mask="auto",
         )
@@ -1340,8 +1436,11 @@ def _draw_decorations(
         x, y, size = zones[i]
         try:
             c.drawImage(
-                str(asset_path), x, y,
-                width=size, height=size,
+                str(asset_path),
+                x,
+                y,
+                width=size,
+                height=size,
                 preserveAspectRatio=True,
                 mask="auto",
             )
@@ -1532,7 +1631,11 @@ def _derive_cover_title(
                 if item.response_format == "read_aloud" and item.content:
                     # Look for a story title in the content
                     first_line = item.content.split("\n")[0].strip()
-                    if len(first_line) < 40 and not first_line.endswith("."):
+                    if (
+                        2 <= len(first_line.split()) <= 8
+                        and len(first_line) < 40
+                        and not first_line.endswith(".")
+                    ):
                         return f"{first_line}!"
 
     # Fall back to skill-based title
