@@ -1951,4 +1951,4 @@ Note: index step requires GOOGLE_CLOUD_PROJECT=ws-builder-rag env var.
 **Known risks / follow-ups:**
 - No real transform smoke passed in this Task 9 handoff because the checked-in sample input was absent. Add or point to a stable no-network fixture image before merge if smoke coverage is required.
 - `make test-golden` currently skips because no golden E2E tests are present, so final confidence comes from unit/integration tests rather than golden PDF fixtures.
-- The branch remains uncommitted by request. No commits were created during Task 9.
+- Branch changes were committed after UAT prep as `e58dc18` (`Improve worksheet quality gates and buddy consistency`). The working tree was clean after that commit.
