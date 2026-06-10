@@ -2,6 +2,13 @@
 
 from __future__ import annotations
 
+import io
+import tempfile
+from pathlib import Path
+
+from PIL import Image
+from pytest import MonkeyPatch
+
 from companion.character_research import (
     _compose_character_block,
     _compose_item_style_notes,
@@ -134,6 +141,67 @@ class TestCharacterStyleSheet:
         restored = CharacterStyleSheet.model_validate(data)
         assert restored.character_block == "blocky character"
         assert restored.theme_id == "roblox_obby"
+
+    def test_optional_identity_reference_fields_round_trip(self) -> None:
+        sheet = CharacterStyleSheet(
+            character_block="blocky character",
+            theme_id="roblox_obby",
+            reference_image_dir="assets/style_sheets/ian_roblox_buddy",
+            canonical_reference_path="assets/style_sheets/ian_roblox_buddy/ref_front_character_crop.png",
+            pose_references={"pointing": "assets/style_sheets/ian_roblox_buddy/pose_pointing.png"},
+            identity_version="identity_v1_static",
+        )
+
+        restored = CharacterStyleSheet.model_validate(sheet.model_dump())
+
+        assert restored.canonical_reference_path == sheet.canonical_reference_path
+        assert restored.pose_references == sheet.pose_references
+        assert restored.identity_version == "identity_v1_static"
+
+    def test_variant_generation_and_judge_share_canonical_reference(
+        self,
+        monkeypatch: MonkeyPatch,
+    ) -> None:
+        from companion import generate_overlays
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            ref_path = Path(tmpdir) / "ref_front_character_crop.png"
+            Image.new("RGBA", (4, 4), "#123456").save(ref_path)
+            generated = io.BytesIO()
+            Image.new("RGBA", (4, 4), "#654321").save(generated, format="PNG")
+            generated_bytes = generated.getvalue()
+            observed: dict[str, bytes] = {}
+
+            def fake_generate(
+                equipped_items: dict[str, str],
+                style_sheet: CharacterStyleSheet | None,
+                reference_bytes: bytes,
+            ) -> bytes:
+                observed["generation"] = reference_bytes
+                return generated_bytes
+
+            def fake_judge(
+                ref_bytes: bytes,
+                image_bytes: bytes,
+                equipped_items: dict[str, str],
+                character_spec: object | None = None,
+            ) -> dict[str, object]:
+                observed["judge"] = ref_bytes
+                return {"passed": True, "score": 10, "issues": []}
+
+            monkeypatch.setattr(generate_overlays, "_generate_single_variant", fake_generate)
+            monkeypatch.setattr(generate_overlays, "_judge_variant", fake_judge)
+
+            output_path = Path(tmpdir) / "variant.png"
+            result = generate_overlays.generate_variant(
+                {"backpack": "brown_backpack"},
+                output_path,
+                style_sheet=CharacterStyleSheet(reference_image_dir=tmpdir),
+            )
+
+            assert result == output_path
+            assert observed["generation"] == ref_path.read_bytes()
+            assert observed["judge"] == ref_path.read_bytes()
 
 
 class TestResearchCharacterStyle:

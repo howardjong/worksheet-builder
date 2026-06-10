@@ -5,6 +5,9 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
+from pytest import MonkeyPatch
+
+from companion.avatar import _cache_key, compose_avatar
 from companion.caregiver import adjust_accommodations, view_progress
 from companion.catalog import (
     CATALOG,
@@ -13,6 +16,7 @@ from companion.catalog import (
     get_items_by_slot,
     get_milestone_items,
 )
+from companion.character_identity import resolve_character_identity
 from companion.profile import (
     create_profile,
     ensure_companion_fields,
@@ -153,6 +157,58 @@ class TestProfile:
         assert (ref_dir / "source_home_instructions.jpg").exists()
         assert (ref_dir / "ref_front_character_crop.png").exists()
         assert (Path("assets/characters") / "ian_learning_buddy.png").exists()
+
+    def test_avatar_cache_key_changes_with_identity_version(self) -> None:
+        style_sheet = CharacterStyleSheet(
+            character_block="Ian has rainbow spiky hair and a blue lightning shirt.",
+            reference_image_dir="assets/style_sheets/ian_roblox_buddy",
+            theme_id="roblox_obby",
+        )
+        plain = LearnerProfile(
+            name="Ian",
+            grade_level="1",
+            avatar=AvatarConfig(
+                base_character="ian_learning_buddy",
+                style_sheet=style_sheet,
+            ),
+        )
+        equipped = LearnerProfile(
+            name="Ian",
+            grade_level="1",
+            avatar=AvatarConfig(
+                base_character="ian_learning_buddy",
+                equipped_items={"backpack": "brown_backpack"},
+                style_sheet=style_sheet,
+            ),
+        )
+
+        plain_identity = resolve_character_identity(plain, "roblox_obby")
+        equipped_identity = resolve_character_identity(equipped, "roblox_obby")
+
+        assert plain_identity.identity_version != equipped_identity.identity_version
+        assert _cache_key(plain, "companion", "roblox_obby", plain_identity) != _cache_key(
+            equipped,
+            "companion",
+            "roblox_obby",
+            equipped_identity,
+        )
+
+    def test_compose_avatar_resolves_base_path_from_non_repo_cwd(
+        self,
+        tmp_path: Path,
+        monkeypatch: MonkeyPatch,
+    ) -> None:
+        profile = LearnerProfile(
+            name="Ian",
+            grade_level="1",
+            avatar=AvatarConfig(base_character="ian_learning_buddy"),
+        )
+
+        monkeypatch.chdir(tmp_path)
+        avatar_path = compose_avatar(profile, size="icon", theme_id="roblox_obby")
+
+        assert avatar_path is not None
+        assert avatar_path.exists()
 
 
 # --- Catalog Tests ---

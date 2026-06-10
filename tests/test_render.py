@@ -9,8 +9,15 @@ import fitz
 from pytest import MonkeyPatch
 
 from adapt.engine import adapt_activity, adapt_lesson
-from companion.schema import Accommodations, LearnerProfile
-from render.asset_gen import generate_worksheet_assets
+from companion.character_identity import CharacterIdentity
+from companion.character_judge import CharacterJudgeResult
+from companion.schema import Accommodations, AvatarConfig, CharacterStyleSheet, LearnerProfile
+from render.asset_gen import (
+    _build_cover_prompt,
+    _build_scene_generation_prompt,
+    compute_worksheet_hash,
+    generate_worksheet_assets,
+)
 from render.pdf import (
     CONTENT_BOTTOM,
     CONTENT_TOP,
@@ -20,7 +27,7 @@ from render.pdf import (
     render_cover_page,
     render_worksheet,
 )
-from render.pose_planner import plan_scenes, plan_word_pictures
+from render.pose_planner import ScenePlan, plan_scenes, plan_word_pictures
 from skill.schema import LiteracySkillModel, SourceItem
 from theme.engine import load_theme
 from theme.schema import AssetManifest
@@ -455,8 +462,8 @@ class TestMultiWorksheetRender:
         doc.close()
 
         # Default profile has no "trace" in prefs, so discovery uses "write"
-        assert "Write 5 words" not in first_page
-        assert "Write 5 words" in later_pages_text
+        assert "Write 4 words" not in first_page
+        assert "Write 4 words" in later_pages_text
         Path(pdf_path).unlink()
 
     def test_word_picture_prompts_key_shuffled_picture_word(self) -> None:
@@ -508,3 +515,372 @@ class TestMultiWorksheetRender:
         Path(pdf_path).unlink()
 
         assert image_count > 0
+
+    def test_worksheet_hash_changes_with_identity_version(self) -> None:
+        base = compute_worksheet_hash("source", 1, "roblox_obby")
+        first_identity = compute_worksheet_hash(
+            "source",
+            1,
+            "roblox_obby",
+            identity_version="identity_v1_plain",
+        )
+        equipped_identity = compute_worksheet_hash(
+            "source",
+            1,
+            "roblox_obby",
+            identity_version="identity_v1_brown_backpack",
+        )
+
+        assert base != first_identity
+        assert first_identity != equipped_identity
+
+    def test_scene_cache_path_changes_when_pose_reference_changes(
+        self,
+        tmp_path: Path,
+        monkeypatch: MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+        monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+        ref_dir = tmp_path / "refs"
+        ref_dir.mkdir()
+        (ref_dir / "ref_front_character_crop.png").write_bytes(b"canonical")
+        pose_ref = ref_dir / "pose_pointing.png"
+        pose_ref.write_bytes(b"pointing v1")
+        profile = LearnerProfile(
+            name="Ian",
+            grade_level="1",
+            avatar=AvatarConfig(
+                base_character="ian_learning_buddy",
+                style_sheet=CharacterStyleSheet(
+                    character_block="Ian has rainbow spiky hair.",
+                    reference_image_dir=str(ref_dir),
+                ),
+            ),
+        )
+        theme = load_theme("roblox_obby")
+        scenes = [ScenePlan(1, "pointing at picture cards", "pointing", "sunny")]
+
+        first = generate_worksheet_assets(
+            scenes,
+            {},
+            "pose_reference_cache_test",
+            profile=profile,
+            theme_id="roblox_obby",
+            character_spec=theme.character_spec,
+        )
+        pose_ref.write_bytes(b"pointing v2")
+        second = generate_worksheet_assets(
+            scenes,
+            {},
+            "pose_reference_cache_test",
+            profile=profile,
+            theme_id="roblox_obby",
+            character_spec=theme.character_spec,
+        )
+
+        assert first is not None
+        assert second is not None
+        assert first.cache_dir != second.cache_dir
+        assert first.scene_paths[1] != second.scene_paths[1]
+
+    def test_scene_generation_prompt_uses_identity_guidelines_and_equipped_items(self) -> None:
+        theme = load_theme("roblox_obby")
+        identity = CharacterIdentity(
+            base_character="ian_learning_buddy",
+            base_image_path="assets/characters/ian_learning_buddy.png",
+            reference_image_dir="assets/style_sheets/ian_roblox_buddy",
+            canonical_reference_path="assets/style_sheets/ian_roblox_buddy/ref_front_character_crop.png",
+            pose_reference_path="assets/style_sheets/ian_roblox_buddy/pose_pointing.png",
+            character_block="Ian has rainbow spiky hair and a blue lightning shirt.",
+            scene_guidelines="Use calm printable learning panels.",
+            item_style_notes="Accessories must not hide Ian's hair or shirt.",
+            equipped_items={"backpack": "brown_backpack"},
+            identity_version="identity_v1_brown_backpack",
+        )
+
+        prompt = _build_scene_generation_prompt(
+            "pointing at picture cards",
+            identity,
+            theme.character_spec,
+        )
+
+        assert "Ian has rainbow spiky hair" in prompt
+        assert "calm printable learning panels" in prompt
+        assert "backpack=brown_backpack" in prompt
+        assert "Calm printable Roblox/obby learning environment" in prompt
+
+    def test_cover_prompt_uses_identity_without_pixar_style_conflict(self) -> None:
+        theme = load_theme("roblox_obby")
+        identity = CharacterIdentity(
+            base_character="ian_learning_buddy",
+            base_image_path="assets/characters/ian_learning_buddy.png",
+            reference_image_dir="assets/style_sheets/ian_roblox_buddy",
+            canonical_reference_path="assets/style_sheets/ian_roblox_buddy/ref_front_character_crop.png",
+            pose_reference_path=None,
+            character_block="Ian has rainbow spiky hair and a blue lightning shirt.",
+            scene_guidelines="Use calm printable learning panels.",
+            item_style_notes="Accessories must not hide Ian's hair or shirt.",
+            equipped_items={},
+            identity_version="identity_v1_plain",
+        )
+
+        prompt = _build_cover_prompt(
+            "phonics: cvce_pattern",
+            ["grade", "slide"],
+            theme.character_spec,
+            identity,
+        )
+
+        assert "Ian has rainbow spiky hair" in prompt
+        assert "calm printable learning panels" in prompt
+        assert "Calm printable Roblox/obby learning environment" in prompt
+        assert "Pixar-like" not in prompt
+
+    def test_scene_generation_invokes_judge_with_reference_and_generated_bytes(
+        self,
+        tmp_path: Path,
+        monkeypatch: MonkeyPatch,
+    ) -> None:
+        from render import asset_gen
+
+        ref_path = tmp_path / "pose_pointing.png"
+        ref_path.write_bytes(b"reference bytes")
+        generated_bytes = b"approved ai scene"
+        observed: dict[str, bytes] = {}
+        monkeypatch.setattr(asset_gen, "_CACHE_DIR", tmp_path / "cache")
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+
+        def fake_generate_scene(
+            prompt: str,
+            output_path: str,
+            ref_bytes: bytes | None,
+            **kwargs: object,
+        ) -> str:
+            Path(output_path).write_bytes(generated_bytes)
+            return output_path
+
+        def fake_judge(
+            reference_bytes: bytes,
+            image_bytes: bytes,
+            criteria: list[str],
+        ) -> CharacterJudgeResult:
+            observed["reference"] = reference_bytes
+            observed["generated"] = image_bytes
+            return CharacterJudgeResult(available=True, approved=True, score=9, issues=[])
+
+        monkeypatch.setattr(asset_gen, "_generate_scene", fake_generate_scene)
+        monkeypatch.setattr(asset_gen, "judge_character_consistency", fake_judge)
+
+        manifest = generate_worksheet_assets(
+            [ScenePlan(1, "pointing at picture cards", "pointing", "sunny")],
+            {},
+            "scene_judge_accepts",
+            identity=CharacterIdentity(
+                base_character="ian_learning_buddy",
+                base_image_path=None,
+                reference_image_dir=str(tmp_path),
+                canonical_reference_path=str(ref_path),
+                pose_reference_path=str(ref_path),
+                character_block="Ian has rainbow spiky hair.",
+                scene_guidelines="Keep Ian consistent.",
+                item_style_notes="",
+                equipped_items={},
+                identity_version="identity_v1_scene_judge_accepts",
+            ),
+        )
+
+        assert manifest is not None
+        assert observed["reference"] == ref_path.read_bytes()
+        assert observed["generated"] == generated_bytes
+        assert Path(manifest.scene_paths[1]).read_bytes() == generated_bytes
+
+    def test_rejected_scene_falls_back_without_caching_rejected_ai_bytes(
+        self,
+        tmp_path: Path,
+        monkeypatch: MonkeyPatch,
+    ) -> None:
+        from render import asset_gen
+
+        ref_path = tmp_path / "pose_pointing.png"
+        ref_path.write_bytes(b"reference bytes")
+        monkeypatch.setattr(asset_gen, "_CACHE_DIR", tmp_path / "cache")
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+
+        def fake_generate_scene(
+            prompt: str,
+            output_path: str,
+            ref_bytes: bytes | None,
+            **kwargs: object,
+        ) -> str:
+            Path(output_path).write_bytes(b"rejected ai bytes")
+            return output_path
+
+        def fake_local_scene(
+            plan: ScenePlan,
+            output_path: str,
+            character_spec: object | None,
+            **kwargs: object,
+        ) -> str:
+            Path(output_path).write_bytes(b"approved local pose bytes")
+            return output_path
+
+        monkeypatch.setattr(asset_gen, "_generate_scene", fake_generate_scene)
+        monkeypatch.setattr(asset_gen, "_generate_local_scene", fake_local_scene)
+        monkeypatch.setattr(
+            asset_gen,
+            "judge_character_consistency",
+            lambda reference_bytes, image_bytes, criteria: CharacterJudgeResult(
+                available=True,
+                approved=False,
+                score=3,
+                issues=["hair changed"],
+            ),
+        )
+
+        manifest = generate_worksheet_assets(
+            [ScenePlan(1, "pointing at picture cards", "pointing", "sunny")],
+            {},
+            "scene_judge_rejects",
+            identity=CharacterIdentity(
+                base_character="ian_learning_buddy",
+                base_image_path=str(ref_path),
+                reference_image_dir=str(tmp_path),
+                canonical_reference_path=None,
+                pose_reference_path=None,
+                character_block="Ian has rainbow spiky hair.",
+                scene_guidelines="Keep Ian consistent.",
+                item_style_notes="",
+                equipped_items={},
+                identity_version="identity_v1_scene_judge_rejects",
+            ),
+        )
+
+        assert manifest is not None
+        scene_path = Path(manifest.scene_paths[1])
+        assert scene_path.read_bytes() == b"approved local pose bytes"
+        assert scene_path.read_bytes() != b"rejected ai bytes"
+        assert (scene_path.parent / "scene_1_rejected.json").exists()
+
+    def test_unavailable_scene_judge_prefers_local_fallback_over_unverified_ai(
+        self,
+        tmp_path: Path,
+        monkeypatch: MonkeyPatch,
+    ) -> None:
+        from render import asset_gen
+
+        ref_path = tmp_path / "pose_pointing.png"
+        ref_path.write_bytes(b"reference bytes")
+        monkeypatch.setattr(asset_gen, "_CACHE_DIR", tmp_path / "cache")
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+
+        def fake_generate_scene(
+            prompt: str,
+            output_path: str,
+            ref_bytes: bytes | None,
+            **kwargs: object,
+        ) -> str:
+            Path(output_path).write_bytes(b"unverified ai bytes")
+            return output_path
+
+        def fake_local_scene(
+            plan: ScenePlan,
+            output_path: str,
+            character_spec: object | None,
+            **kwargs: object,
+        ) -> str:
+            Path(output_path).write_bytes(b"canonical local pose bytes")
+            return output_path
+
+        monkeypatch.setattr(asset_gen, "_generate_scene", fake_generate_scene)
+        monkeypatch.setattr(asset_gen, "_generate_local_scene", fake_local_scene)
+        monkeypatch.setattr(
+            asset_gen,
+            "judge_character_consistency",
+            lambda reference_bytes, image_bytes, criteria: CharacterJudgeResult(
+                available=False,
+                approved=False,
+                score=0,
+                issues=["no judge available"],
+            ),
+        )
+
+        manifest = generate_worksheet_assets(
+            [ScenePlan(1, "pointing at picture cards", "pointing", "sunny")],
+            {},
+            "scene_judge_unavailable",
+            identity=CharacterIdentity(
+                base_character="ian_learning_buddy",
+                base_image_path=str(ref_path),
+                reference_image_dir=str(tmp_path),
+                canonical_reference_path=None,
+                pose_reference_path=None,
+                character_block="Ian has rainbow spiky hair.",
+                scene_guidelines="Keep Ian consistent.",
+                item_style_notes="",
+                equipped_items={},
+                identity_version="identity_v1_scene_judge_unavailable",
+            ),
+        )
+
+        assert manifest is not None
+        assert Path(manifest.scene_paths[1]).read_bytes() == b"canonical local pose bytes"
+
+    def test_rejected_scene_uses_resolved_pose_reference_without_generic_drawing(
+        self,
+        tmp_path: Path,
+        monkeypatch: MonkeyPatch,
+    ) -> None:
+        from PIL import Image
+
+        from render import asset_gen
+
+        pose_ref = tmp_path / "pose_pointing.png"
+        Image.new("RGBA", (4, 4), "#123456").save(pose_ref)
+        pose_bytes = pose_ref.read_bytes()
+        monkeypatch.setattr(asset_gen, "_CACHE_DIR", tmp_path / "cache")
+        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+
+        def fake_generate_scene(
+            prompt: str,
+            output_path: str,
+            ref_bytes: bytes | None,
+            **kwargs: object,
+        ) -> str:
+            Path(output_path).write_bytes(b"rejected ai bytes")
+            return output_path
+
+        monkeypatch.setattr(asset_gen, "_generate_scene", fake_generate_scene)
+        monkeypatch.setattr(
+            asset_gen,
+            "judge_character_consistency",
+            lambda reference_bytes, image_bytes, criteria: CharacterJudgeResult(
+                available=True,
+                approved=False,
+                score=2,
+                issues=["identity changed"],
+            ),
+        )
+
+        manifest = generate_worksheet_assets(
+            [ScenePlan(1, "pointing at picture cards", "pointing", "sunny")],
+            {},
+            "scene_pose_reference_fallback",
+            identity=CharacterIdentity(
+                base_character="ian_learning_buddy",
+                base_image_path=None,
+                reference_image_dir=str(tmp_path),
+                canonical_reference_path=None,
+                pose_reference_path=str(pose_ref),
+                character_block="Ian has rainbow spiky hair.",
+                scene_guidelines="Keep Ian consistent.",
+                item_style_notes="",
+                equipped_items={},
+                identity_version="identity_v1_scene_pose_reference_fallback",
+            ),
+        )
+
+        assert manifest is not None
+        scene_path = Path(manifest.scene_paths[1])
+        assert scene_path.read_bytes() == pose_bytes
+        assert scene_path.read_bytes() != b"rejected ai bytes"
+        assert (scene_path.parent / "scene_1_rejected.json").exists()

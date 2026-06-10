@@ -58,7 +58,9 @@ def test_evaluate_builds_report_with_aggregate_metrics(
         extraction_confidence=0.9,
         template_type="ufli_word_work",
     )
+    retrieval_calls: list[dict[str, object]] = []
 
+    monkeypatch.delenv("WORKSHEET_USE_RAG", raising=False)
     monkeypatch.setattr(
         "rag.eval._freeze_source_and_skill",
         lambda input_path, freeze_dir, extract_mode="vision_only": {
@@ -71,9 +73,10 @@ def test_evaluate_builds_report_with_aggregate_metrics(
     )
     monkeypatch.setattr("rag.eval.load_profile", lambda _path: SimpleNamespace(name="Ian"))
     monkeypatch.setattr("rag.eval.load_theme", lambda _theme: SimpleNamespace(multi_worksheet=True))
-    monkeypatch.setattr(
-        "rag.eval.retrieve_context",
-        lambda **kwargs: RAGContext(
+
+    def fake_retrieve_context(**kwargs: object) -> RAGContext:
+        retrieval_calls.append(kwargs)
+        return RAGContext(
             curated_exemplars=[
                 RetrievalResult(
                     doc_id="ex1",
@@ -96,8 +99,9 @@ def test_evaluate_builds_report_with_aggregate_metrics(
                     document="",
                 )
             ],
-        ),
-    )
+        )
+
+    monkeypatch.setattr("rag.eval.retrieve_context", fake_retrieve_context)
     monkeypatch.setattr(
         "rag.eval._run_variant_from_frozen",
         lambda variant, case_dir, **kwargs: _variant_result(variant, case_dir),
@@ -110,6 +114,7 @@ def test_evaluate_builds_report_with_aggregate_metrics(
     )
 
     assert report.case_count == 2
+    assert len(retrieval_calls) == 2
     assert report.retrieval_at_3_mean == 2 / 3
     assert report.retrieval_context_rate == 1.0
     assert report.curriculum_reference_hit_rate == 0.0

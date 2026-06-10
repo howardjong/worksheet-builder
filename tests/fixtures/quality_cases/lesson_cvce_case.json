@@ -1,0 +1,13 @@
+{
+  "case_id": "lesson_cvce_case",
+  "profile": "profiles/ian.yaml",
+  "theme_id": "roblox_obby",
+  "expected": {
+    "domain": "phonics",
+    "specific_skill": "cvce_pattern",
+    "target_words": ["grade", "slide", "quite"],
+    "must_include_activity_types": ["word_chain", "write", "read_aloud"],
+    "max_items_per_chunk_small": 3,
+    "buddy_required": true
+  }
+}

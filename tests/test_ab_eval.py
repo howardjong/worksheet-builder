@@ -2,11 +2,22 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
+
 import pytest
 
-from ab_eval import _build_pair_summary, _extract_source_model, _select_negative_control_context
+from ab_eval import (
+    _build_pair_summary,
+    _extract_source_model,
+    _run_variant_from_frozen,
+    _select_negative_control_context,
+)
 from extract.schema import PIPELINE_VERSION, OCRResult, SourceRegion, SourceWorksheetModel
 from rag.retrieval import RAGContext, RetrievalResult
+from skill.schema import LiteracySkillModel, SourceItem
+from transform import RunArtifacts
 
 
 def _source_model() -> SourceWorksheetModel:
@@ -26,6 +37,26 @@ def _source_model() -> SourceWorksheetModel:
         raw_text="grade chase",
         ocr_engine="gemini_vision",
         low_confidence_flags=[],
+    )
+
+
+def _skill_model() -> LiteracySkillModel:
+    return LiteracySkillModel(
+        grade_level="1",
+        domain="phonics",
+        specific_skill="cvce_pattern",
+        learning_objectives=["Read CVCe words"],
+        target_words=["grade", "chase"],
+        response_types=["circle", "trace"],
+        source_items=[
+            SourceItem(
+                item_type="word_list",
+                content="grade chase",
+                source_region_index=0,
+            )
+        ],
+        extraction_confidence=0.9,
+        template_type="ufli_word_work",
     )
 
 
@@ -111,6 +142,75 @@ def test_select_negative_control_context_prefers_similar_skills() -> None:
     assert debug["selected_source"] == "negative_control_similar_skills"
     assert debug["selected_count"] == 1
     assert selected[0]["_rag_doc_id"] == "skill_1"
+
+
+def test_run_variant_with_rag_does_not_require_live_rag_env(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source = _source_model()
+    skill = _skill_model()
+    captured: dict[str, Any] = {}
+    retrieval_calls: list[dict[str, object]] = []
+    monkeypatch.delenv("WORKSHEET_USE_RAG", raising=False)
+    monkeypatch.setattr("ab_eval.rag_available", lambda: True)
+
+    def fake_retrieve_context(**kwargs: object) -> RAGContext:
+        retrieval_calls.append(kwargs)
+        return RAGContext(
+            curated_exemplars=[
+                RetrievalResult(
+                    doc_id="ex1",
+                    score=0.9,
+                    metadata={"domain": "phonics"},
+                    document="",
+                )
+            ]
+        )
+
+    monkeypatch.setattr("rag.retrieval.retrieve_context", fake_retrieve_context)
+
+    def fake_single_pipeline(**kwargs: Any) -> RunArtifacts:
+        captured.update(kwargs)
+        return RunArtifacts(
+            source_image_path=str(kwargs["source_image_path"]),
+            source_image_hash=str(kwargs["source_image_hash"]),
+            extracted_text=str(kwargs["extracted_text"]),
+            template_type=str(kwargs["template_type"]),
+            ocr_engine=str(kwargs["ocr_engine"]),
+            region_count=int(kwargs["region_count"]),
+            skill_domain=skill.domain,
+            skill_name=skill.specific_skill,
+            grade_level=skill.grade_level,
+            theme_id=str(kwargs["theme_id"]),
+            worksheet_mode="single",
+            adapted_summaries=[],
+            pdf_paths=[str(Path(kwargs["output"]) / "worksheet.pdf")],
+            validation_results={"all_validators_passed": True},
+            profile_name="Ian",
+        )
+
+    monkeypatch.setattr("ab_eval._run_single_worksheet_pipeline", fake_single_pipeline)
+
+    result = _run_variant_from_frozen(
+        variant="B_with_rag",
+        case_dir=tmp_path,
+        frozen={
+            "source_model": source,
+            "skill_model": skill,
+            "source_image_hash": "hash123",
+            "preprocessed_path": str(tmp_path / "preprocessed.png"),
+        },
+        profile=SimpleNamespace(name="Ian"),
+        theme=SimpleNamespace(multi_worksheet=False),
+        theme_id="roblox_obby",
+        use_rag=True,
+        images=False,
+    )
+
+    assert len(retrieval_calls) == 1
+    assert captured["rag_prior_adaptations"] is not None
+    assert result["rag_debug"]["selected_source"] == "curated_exemplars"
 
 
 def test_build_pair_summary_includes_curriculum_and_control_deltas() -> None:

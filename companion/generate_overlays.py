@@ -20,6 +20,8 @@ from typing import Any
 from PIL import Image
 
 from companion.catalog import CATALOG
+from companion.character_identity import CharacterIdentity
+from companion.character_judge import judge_character_consistency
 from companion.schema import CharacterStyleSheet
 from theme.schema import CharacterSpec
 
@@ -106,6 +108,7 @@ def _build_variant_prompt(
 def _generate_single_variant(
     equipped_items: dict[str, str],
     style_sheet: CharacterStyleSheet | None = None,
+    reference_bytes: bytes | None = None,
 ) -> bytes | None:
     """Generate a single character variant image, returning raw PNG bytes."""
     api_key = os.environ.get("GEMINI_API_KEY", "")
@@ -119,8 +122,7 @@ def _generate_single_variant(
 
         client = genai.Client(api_key=api_key)
 
-        with open(_BASE_PATH, "rb") as f:
-            ref_bytes = f.read()
+        ref_bytes = reference_bytes or _BASE_PATH.read_bytes()
 
         prompt = _build_variant_prompt(equipped_items, style_sheet)
 
@@ -308,28 +310,49 @@ def _judge_variant(
     Returns a dict with "passed", "score", and "issues" keys.
     Falls back to auto-pass if both judges fail.
     """
-    result = _judge_with_gemini(
+    result = judge_character_consistency(
         ref_bytes,
         generated_bytes,
-        equipped_items,
-        character_spec,
+        _variant_judge_criteria(equipped_items, character_spec),
     )
-    if result and "passed" in result:
-        logger.info(f"  Judge (Gemini): score={result.get('score')}, passed={result['passed']}")
-        return result
-
-    result = _judge_with_openai(
-        ref_bytes,
-        generated_bytes,
-        equipped_items,
-        character_spec,
-    )
-    if result and "passed" in result:
-        logger.info(f"  Judge (OpenAI): score={result.get('score')}, passed={result['passed']}")
-        return result
+    if result.available:
+        logger.info(
+            "  Judge (%s): score=%s, passed=%s",
+            result.judge or "unknown",
+            result.score,
+            result.approved,
+        )
+        return {
+            "passed": result.approved,
+            "score": result.score,
+            "issues": result.issues,
+        }
 
     logger.warning("  Both judges unavailable — auto-passing")
     return {"passed": True, "score": 0, "issues": ["no judge available"]}
+
+
+def _variant_judge_criteria(
+    equipped_items: dict[str, str],
+    character_spec: CharacterSpec | None = None,
+) -> list[str]:
+    item_changes = []
+    for _, item_id in equipped_items.items():
+        item_changes.append(_ITEM_DESCRIPTIONS.get(item_id, item_id))
+    changes_text = ", and ".join(item_changes) if item_changes else "no item changes"
+    criteria = [
+        (
+            "CHARACTER CONSISTENCY: Does it look like the same character with the "
+            "same hair, body shape, face, and overall appearance?"
+        ),
+        f"ITEM ACCURACY: The generated image should show {changes_text}.",
+        "ART STYLE: Does it match the style of the reference image?",
+        "IMAGE QUALITY: Clean lines, no artifacts, no distortion, no screen effects?",
+        "BACKGROUND: Is the background clean white with no patterns, gradients, or noise?",
+    ]
+    if character_spec and character_spec.judge_criteria:
+        criteria.append("THEME FIDELITY: " + "; ".join(character_spec.judge_criteria))
+    return criteria
 
 
 def _extract_json(text: str) -> str:
@@ -356,6 +379,7 @@ def generate_variant(
     output_path: Path,
     style_sheet: CharacterStyleSheet | None = None,
     character_spec: CharacterSpec | None = None,
+    identity: CharacterIdentity | None = None,
 ) -> Path | None:
     """Generate a character variant with AI judge validation loop.
 
@@ -365,15 +389,11 @@ def generate_variant(
 
     Returns the output path on success, None on failure.
     """
-    base_path = _BASE_PATH
-    if style_sheet and style_sheet.reference_image_dir:
-        ref_pack = Path(style_sheet.reference_image_dir)
-        fallback_sprite = ref_pack / "local_fallback_sprite.png"
-        front_ref = ref_pack / "ref_front_character_crop.png"
-        if fallback_sprite.exists():
-            base_path = fallback_sprite
-        elif front_ref.exists():
-            base_path = front_ref
+    base_path = (
+        _reference_path_for_identity(identity)
+        or _reference_path_for_style_sheet(style_sheet)
+        or _BASE_PATH
+    )
 
     if not base_path.exists():
         logger.error(f"Base character not found: {base_path}")
@@ -387,7 +407,7 @@ def generate_variant(
     for attempt in range(1, MAX_JUDGE_RETRIES + 1):
         logger.info(f"Generating character variant (attempt {attempt}/{MAX_JUDGE_RETRIES})...")
 
-        generated_bytes = _generate_single_variant(equipped_items, style_sheet)
+        generated_bytes = _generate_single_variant(equipped_items, style_sheet, ref_bytes)
         if generated_bytes is None:
             logger.error(f"  Generation failed on attempt {attempt}")
             continue
@@ -433,6 +453,42 @@ def _save_variant(image_bytes: bytes, output_path: Path) -> Path:
     img.save(str(output_path), "PNG")
     logger.info(f"Saved character variant: {output_path}")
     return output_path
+
+
+def _reference_path_for_identity(identity: CharacterIdentity | None) -> Path | None:
+    if not identity:
+        return None
+    for raw_path in (
+        identity.canonical_reference_path,
+        identity.base_image_path,
+    ):
+        if raw_path:
+            path = _repo_path(raw_path)
+            if path.exists():
+                return path
+    return None
+
+
+def _reference_path_for_style_sheet(style_sheet: CharacterStyleSheet | None) -> Path | None:
+    if not style_sheet or not style_sheet.reference_image_dir:
+        return None
+    ref_pack = _repo_path(style_sheet.reference_image_dir)
+    for filename in (
+        "ref_front_character_crop.png",
+        "ref_front.png",
+        "local_fallback_sprite.png",
+    ):
+        candidate = ref_pack / filename
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _repo_path(path: str | Path) -> Path:
+    candidate = Path(path)
+    if candidate.is_absolute():
+        return candidate
+    return _ASSETS_DIR.parent / candidate
 
 
 def _remove_white_background(img: Image.Image, threshold: int = 230) -> Image.Image:

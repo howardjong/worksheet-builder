@@ -13,9 +13,7 @@ class Accommodations(BaseModel):
     """ADHD accommodation settings for a learner."""
 
     chunking_level: str = "medium"  # "small" | "medium" | "large"
-    response_format_prefs: list[str] = Field(
-        default_factory=lambda: ["write", "circle"]
-    )
+    response_format_prefs: list[str] = Field(default_factory=lambda: ["write", "circle"])
     font_size_override: int | None = None
     show_time_estimates: bool = True
     show_self_check_boxes: bool = True
@@ -31,8 +29,11 @@ class CharacterStyleSheet(BaseModel):
     character_block: str = ""  # frozen prompt replacing hardcoded _CHARACTER_DESC
     theme_id: str = ""  # which theme this was generated for
     reference_image_dir: str = ""  # path to reference image pack
+    canonical_reference_path: str | None = None  # preferred identity reference image
+    pose_references: dict[str, str] = Field(default_factory=dict)  # pose -> reference image
     scene_guidelines: str = ""  # how to compose scenes in this theme
     item_style_notes: str = ""  # how accessories should render in this style
+    identity_version: str | None = None  # optional externally versioned identity marker
     generated_at: str = ""  # ISO timestamp
 
 
@@ -58,6 +59,7 @@ class AvatarConfig(BaseModel):
                 new_equipped: dict[str, str] = {}
                 for item_id in equipped:
                     from companion.catalog import get_item
+
                     cat_item = get_item(item_id)
                     if cat_item:
                         new_equipped[cat_item.slot] = item_id

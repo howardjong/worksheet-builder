@@ -14,6 +14,7 @@ from adapt.rules import (
 from adapt.schema import AdaptedActivityModel
 from companion.schema import Accommodations, LearnerProfile, load_profile, save_profile
 from skill.schema import LiteracySkillModel, SourceItem
+from validate.content_coverage import validate_content_coverage_for_package
 
 # --- Fixtures ---
 
@@ -38,9 +39,7 @@ def _phonics_skill() -> LiteracySkillModel:
                 content="1. all → fall → mall → small",
                 source_region_index=4,
             ),
-            SourceItem(
-                item_type="sight_words", content="go*, no*, so*", source_region_index=7
-            ),
+            SourceItem(item_type="sight_words", content="go*, no*, so*", source_region_index=7),
             SourceItem(
                 item_type="sentence",
                 content="1. The bin is so full.",
@@ -98,6 +97,17 @@ def _grade_1_profile() -> LearnerProfile:
         grade_level="1",
         accommodations=Accommodations(
             chunking_level="medium",
+            response_format_prefs=["write", "circle"],
+        ),
+    )
+
+
+def _grade_1_small_profile() -> LearnerProfile:
+    return LearnerProfile(
+        name="Test G1 Small",
+        grade_level="1",
+        accommodations=Accommodations(
+            chunking_level="small",
             response_format_prefs=["write", "circle"],
         ),
     )
@@ -371,16 +381,14 @@ def _ufli_59_skill() -> LiteracySkillModel:
             SourceItem(
                 item_type="sentence",
                 content=(
-                    "1. The grade on the slide was quite nice. "
-                    "2. These froze by the chase."
+                    "1. The grade on the slide was quite nice. " "2. These froze by the chase."
                 ),
                 source_region_index=3,
             ),
             SourceItem(
                 item_type="passage",
                 content=(
-                    "A Cake for Tess. Tess had a cake. "
-                    "The cake was huge! She made it with love."
+                    "A Cake for Tess. Tess had a cake. " "The cake was huge! She made it with love."
                 ),
                 source_region_index=4,
             ),
@@ -433,8 +441,9 @@ class TestAdaptLesson:
                 for item in chunk.items:
                     all_content.append(item.content)
         # The passage about Tess should be present
-        assert any("Tess" in c or "cake" in c.lower() for c in all_content), \
-            "Decodable passage 'A Cake for Tess' was dropped"
+        assert any(
+            "Tess" in c or "cake" in c.lower() for c in all_content
+        ), "Decodable passage 'A Cake for Tess' was dropped"
 
     def test_brain_break_prompts(self) -> None:
         """Non-last worksheets should have break prompts."""
@@ -448,6 +457,7 @@ class TestAdaptLesson:
     def test_fill_blank_generation(self) -> None:
         """Fill-blank items should have correct vowel removal."""
         from adapt.engine import _generate_fill_blank
+
         blanked, vowel = _generate_fill_blank("grade")
         assert "_" in blanked
         assert vowel in "aeiou"
@@ -456,6 +466,7 @@ class TestAdaptLesson:
     def test_circle_distractors(self) -> None:
         """Distractor words should be plausible non-pattern words."""
         from adapt.engine import _generate_distractors
+
         distractors = _generate_distractors(["grade", "chase"], 4)
         assert len(distractors) == 4
         assert "grade" not in distractors
@@ -518,8 +529,7 @@ class TestAdaptLesson:
         assert len(discovery) == 1
         # Find chunk with sound_box format
         sound_box_chunks = [
-            chunk for chunk in discovery[0].chunks
-            if chunk.response_format == "sound_box"
+            chunk for chunk in discovery[0].chunks if chunk.response_format == "sound_box"
         ]
         assert len(sound_box_chunks) >= 1
 
@@ -548,8 +558,7 @@ class TestAdaptLesson:
         assert len(discovery) == 1
         # Should have NO sound_box chunks
         sound_box_chunks = [
-            chunk for chunk in discovery[0].chunks
-            if chunk.response_format == "sound_box"
+            chunk for chunk in discovery[0].chunks if chunk.response_format == "sound_box"
         ]
         assert len(sound_box_chunks) == 0
 
@@ -578,11 +587,10 @@ class TestAdaptLesson:
         assert len(builder) == 1
         # Find chunks with roll_and_read metadata or read_aloud micro_goal
         roll_chunks = [
-            chunk for chunk in builder[0].chunks
-            if any(
-                item.metadata.get("display") == "roll_and_read"
-                for item in chunk.items
-            ) or "Read" in chunk.micro_goal
+            chunk
+            for chunk in builder[0].chunks
+            if any(item.metadata.get("display") == "roll_and_read" for item in chunk.items)
+            or "Read" in chunk.micro_goal
         ]
         assert len(roll_chunks) >= 1
 
@@ -599,3 +607,194 @@ class TestAdaptLesson:
                     if m:
                         total_minutes += int(m.group(1))
         assert total_minutes <= 20
+
+    def test_respects_small_chunk_cap_for_grade_1_lesson(self) -> None:
+        """All generated practice chunks should fit the learner's small chunk cap."""
+        profile = _grade_1_small_profile()
+        rules = build_rules(profile)
+        worksheets = adapt_lesson(_ufli_59_skill(), profile, rules=rules)
+
+        oversized = [
+            (ws.worksheet_title, chunk.micro_goal, len(chunk.items))
+            for ws in worksheets
+            for chunk in ws.chunks
+            if len(chunk.items) > rules.max_items_per_chunk
+        ]
+
+        assert oversized == []
+
+        oversized_options = [
+            (ws.worksheet_title, chunk.micro_goal, item.content, len(item.options))
+            for ws in worksheets
+            for chunk in ws.chunks
+            for item in chunk.items
+            if item.response_format in {"match", "fill_blank", "circle"}
+            and item.options
+            and len(item.options) > rules.max_items_per_chunk
+        ]
+
+        assert oversized_options == []
+
+    def test_k_small_sound_box_warmup_respects_chunk_cap(self) -> None:
+        """K small profiles should not get a 3-item sound-box warmup."""
+        profile = _grade_k_profile()
+        rules = build_rules(profile)
+        skill = LiteracySkillModel(
+            grade_level="K",
+            domain="phonics",
+            specific_skill="cvc_blending",
+            learning_objectives=["Blend CVC words"],
+            target_words=["cat", "hat", "mat", "sat"],
+            response_types=["write"],
+            source_items=[
+                SourceItem(
+                    item_type="word_list",
+                    content="cat, hat, mat, sat",
+                    source_region_index=0,
+                ),
+            ],
+            extraction_confidence=0.95,
+            template_type="ufli_word_work",
+        )
+
+        worksheets = adapt_lesson(skill, profile, rules=rules)
+        sound_box_chunks = [
+            chunk
+            for ws in worksheets
+            for chunk in ws.chunks
+            if chunk.response_format == "sound_box"
+        ]
+
+        assert sound_box_chunks
+        assert all(len(chunk.items) <= rules.max_items_per_chunk for chunk in sound_box_chunks)
+
+    def test_word_list_only_small_chunks_preserve_package_coverage(self) -> None:
+        """Splitting by cap should not drop later target words from the package."""
+        profile = _grade_1_small_profile()
+        rules = build_rules(profile)
+        target_words = ["grade", "chase", "slide", "quite", "froze", "these"]
+        skill = LiteracySkillModel(
+            grade_level="1",
+            domain="phonics",
+            specific_skill="cvce_pattern",
+            learning_objectives=["Read CVCe words"],
+            target_words=target_words,
+            response_types=["write", "circle", "match"],
+            source_items=[
+                SourceItem(
+                    item_type="word_list",
+                    content=", ".join(target_words),
+                    source_region_index=0,
+                ),
+            ],
+            extraction_confidence=0.95,
+            template_type="ufli_word_work",
+        )
+
+        worksheets = adapt_lesson(skill, profile, rules=rules)
+
+        oversized_chunks = [
+            (ws.worksheet_title, chunk.micro_goal, len(chunk.items))
+            for ws in worksheets
+            for chunk in ws.chunks
+            if len(chunk.items) > rules.max_items_per_chunk
+        ]
+        assert oversized_chunks == []
+
+        oversized_options = [
+            (ws.worksheet_title, chunk.micro_goal, item.content, len(item.options))
+            for ws in worksheets
+            for chunk in ws.chunks
+            for item in chunk.items
+            if item.response_format in {"match", "fill_blank", "circle"}
+            and item.options
+            and len(item.options) > rules.max_items_per_chunk
+        ]
+        assert oversized_options == []
+
+        coverage = validate_content_coverage_for_package(skill, worksheets)
+        assert coverage.passed
+
+    def test_word_list_with_chain_small_chunks_preserve_package_coverage(self) -> None:
+        """Word chains should not prevent later word-list targets from being visible."""
+        profile = _grade_1_small_profile()
+        rules = build_rules(profile)
+        target_words = ["grade", "chase", "slide", "quite", "froze", "these"]
+        skill = LiteracySkillModel(
+            grade_level="1",
+            domain="phonics",
+            specific_skill="cvce_pattern",
+            learning_objectives=["Read CVCe words", "Build words by changing letters"],
+            target_words=target_words,
+            response_types=["write", "circle", "match"],
+            source_items=[
+                SourceItem(
+                    item_type="word_list",
+                    content=", ".join(target_words),
+                    source_region_index=0,
+                ),
+                SourceItem(
+                    item_type="word_chain",
+                    content="1. tune → tone → cone → cane",
+                    source_region_index=1,
+                ),
+            ],
+            extraction_confidence=0.95,
+            template_type="ufli_word_work",
+        )
+
+        worksheets = adapt_lesson(skill, profile, rules=rules)
+
+        oversized_chunks = [
+            (ws.worksheet_title, chunk.micro_goal, len(chunk.items))
+            for ws in worksheets
+            for chunk in ws.chunks
+            if len(chunk.items) > rules.max_items_per_chunk
+        ]
+        assert oversized_chunks == []
+
+        oversized_options = [
+            (ws.worksheet_title, chunk.micro_goal, item.content, len(item.options))
+            for ws in worksheets
+            for chunk in ws.chunks
+            for item in chunk.items
+            if item.response_format in {"match", "fill_blank", "circle"}
+            and item.options
+            and len(item.options) > rules.max_items_per_chunk
+        ]
+        assert oversized_options == []
+
+        coverage = validate_content_coverage_for_package(skill, worksheets)
+        assert coverage.passed
+
+    def test_roll_and_read_instructions_do_not_use_speed_pressure(self) -> None:
+        """Roll and Read should cue smooth repeated reading, not faster reading."""
+        skill = LiteracySkillModel(
+            grade_level="1",
+            domain="phonics",
+            specific_skill="cvc_blending",
+            learning_objectives=["Read CVC words with fluency"],
+            target_words=["cat", "hat", "mat"],
+            response_types=["write", "read_aloud"],
+            source_items=[
+                SourceItem(item_type="word_list", content="cat, hat, mat", source_region_index=0),
+                SourceItem(
+                    item_type="roll_and_read",
+                    content="sunny\nfunny\nbunny\nbuddy\nhappy",
+                    source_region_index=5,
+                ),
+            ],
+            extraction_confidence=0.95,
+            template_type="ufli_word_work",
+        )
+        worksheets = adapt_lesson(skill, _grade_1_profile())
+        roll_steps = [
+            step.text
+            for ws in worksheets
+            for chunk in ws.chunks
+            if any(item.metadata.get("display") == "roll_and_read" for item in chunk.items)
+            for step in chunk.instructions
+        ]
+
+        assert roll_steps
+        assert all("faster" not in step.lower() for step in roll_steps)

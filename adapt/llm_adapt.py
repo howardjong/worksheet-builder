@@ -367,7 +367,8 @@ def _build_items_from_activity(
     elif activity.activity_type == "match":
         from adapt.engine import _shuffled_mismatch, _word_to_picture_prompt
 
-        words = activity.words[:4]  # Layout constraint
+        # The match renderer lays out two columns cleanly up to four rows.
+        words = activity.words[: min(max_items, 4)]
         if words:
             shuffled = _shuffled_mismatch(words)
             for idx, word in enumerate(words):
@@ -395,7 +396,7 @@ def _build_items_from_activity(
             )
 
     elif activity.activity_type == "fill_blank":
-        from adapt.engine import _generate_fill_blank
+        from adapt.engine import _generate_fill_blank, _limit_options
 
         for word in activity.words[:max_items]:
             blank, answer = _generate_fill_blank(word)
@@ -407,15 +408,23 @@ def _build_items_from_activity(
                         content=blank,
                         response_format="fill_blank",
                         answer=answer,
-                        options=["a", "e", "i", "o", "u"],
+                        options=_limit_options(
+                            ["a", "e", "i", "o", "u"],
+                            required=answer,
+                            max_items=max_items,
+                        ),
                     )
                 )
 
     elif activity.activity_type == "circle":
         from adapt.engine import _generate_distractors
 
-        target_words = activity.words[:max_items]
-        distractors = _generate_distractors(target_words, min(4, len(target_words)))
+        target_limit = max(1, max_items - 1) if len(activity.words) > 1 else max_items
+        target_words = activity.words[:target_limit]
+        distractors = _generate_distractors(
+            activity.words,
+            max(0, max_items - len(target_words)),
+        )
         item_id += 1
         items.append(
             ActivityItem(
@@ -428,13 +437,17 @@ def _build_items_from_activity(
         )
 
     elif activity.activity_type == "sentence_completion":
-        from adapt.engine import _sentence_to_fill_blank
+        from adapt.engine import _limit_options, _sentence_to_fill_blank
 
         for sent in activity.words[:max_items]:  # sentences stored in words field
             item_id += 1
             blank_sent, removed = _sentence_to_fill_blank(sent, skill.target_words)
             if blank_sent and removed:
-                bank = list(set([removed] + skill.target_words[:3]))
+                bank = _limit_options(
+                    [removed, *skill.target_words],
+                    required=removed,
+                    max_items=max_items,
+                )
                 items.append(
                     ActivityItem(
                         item_id=item_id,

@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-from adapt.rules import CHUNKING_RULES, INSTRUCTION_LIMITS
+from adapt.rules import CHUNKING_RULES, INSTRUCTION_LIMITS, AccommodationRules
 from adapt.schema import AdaptedActivityModel
 from validate.schema import ValidationResult
 
 
 def validate_adhd_compliance(
     adapted: AdaptedActivityModel,
+    rules: AccommodationRules | None = None,
 ) -> ValidationResult:
     """Check adapted activity against every ADHD design rule.
 
@@ -30,8 +31,11 @@ def validate_adhd_compliance(
 
     # Check 1: Chunk size within grade limits
     result.checks_run += 1
-    grade_chunks = CHUNKING_RULES.get(grade, CHUNKING_RULES["1"])
-    max_allowed = grade_chunks.get("large", 8)
+    if rules is not None:
+        max_allowed = rules.max_items_per_chunk
+    else:
+        grade_chunks = CHUNKING_RULES.get(grade, CHUNKING_RULES["1"])
+        max_allowed = grade_chunks.get("large", 8)
     for chunk in adapted.chunks:
         if len(chunk.items) > max_allowed:
             result.add_violation(
@@ -55,8 +59,7 @@ def validate_adhd_compliance(
                 result.add_violation(
                     check="numbered_instructions",
                     message=(
-                        f"Chunk {chunk.chunk_id}: step number {step.number} "
-                        f"should be {i + 1}"
+                        f"Chunk {chunk.chunk_id}: step number {step.number} " f"should be {i + 1}"
                     ),
                 )
 
@@ -93,8 +96,7 @@ def validate_adhd_compliance(
         result.add_violation(
             check="decoration_budget",
             message=(
-                f"{len(adapted.decoration_zones)} decoration zones defined, "
-                f"max is 2 per page"
+                f"{len(adapted.decoration_zones)} decoration zones defined, " f"max is 2 per page"
             ),
         )
 

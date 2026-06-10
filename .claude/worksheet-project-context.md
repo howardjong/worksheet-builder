@@ -1904,3 +1904,51 @@ Note: index step requires GOOGLE_CLOUD_PROJECT=ws-builder-rag env var.
 **Gotchas/notes for next session:**
 - Do not paste or crop `home-instructions.jpg` into generated worksheets.
 - If the user explicitly wants cloud/API-generated illustrations, explain that it exports lesson content and Ian style/reference details and needs explicit user approval plus an environment that permits network export.
+
+### Session 39 — 2026-06-09 (Worksheet Quality Redesign Verification)
+**Branch:** `feature/worksheet-quality-redesign`
+
+**What changed in Tasks 1-8:**
+- Added deterministic content coverage quality gates and wired them into transform validation.
+- Made ADHD validation profile-aware, enforced lesson time budgets, respected small chunk caps, and softened speed framing.
+- Stopped hard-coding multi-worksheet AI review success; review, skipped-review, and pedagogical judge status are now represented in validation artifacts.
+- Made live RAG opt-in with `WORKSHEET_USE_RAG=1` while keeping eval tooling independent.
+- Added a unified Learning Buddy identity resolver and routed avatar, overlay, scene, and cover generation through shared identity inputs.
+- Added Learning Buddy scene QA with judge/fallback behavior that avoids caching rejected AI scene bytes.
+- Added the direct-context worksheet compiler behind `WORKSHEET_DIRECT_COMPILER=1` with deterministic fallback.
+- Added the fixture-backed worksheet quality report harness and documented merge quality commands.
+
+**Quality gate decisions:**
+- Content coverage errors block aggregate validation; warnings remain non-blocking.
+- UFLI word-work coverage is strict enough to catch missing target words, word chains, and student-facing source sentences.
+- ADHD validation uses supplied learner profile rules when available, including small chunk caps and lesson time budget checks.
+- Multi-worksheet AI review no longer reports success without evidence. No-API review skips are recorded distinctly from approval.
+- Pedagogical judge failures block when a judge result exists; missing judge evidence is non-blocking by default unless strict behavior is added later.
+- Live RAG is disabled by default and records the disabled reason; experiments can opt in with `WORKSHEET_USE_RAG=1`.
+- Direct compiler is opt-in only and must pass schema/content checks before replacing the deterministic path.
+
+**Verification run:**
+- `make lint` → exit 0; `.venv/bin/ruff check .`; `All checks passed!`
+- `make typecheck` → exit 0; `.venv/bin/mypy .`; `Success: no issues found in 127 source files`
+- Initial parent `make test` rerun exposed one test-isolation failure in `tests/test_transform_quality_gates.py::test_multi_worksheet_package_content_coverage_uses_combined_content`: the content-coverage test was unintentionally allowing environment-dependent AI review to influence `all_validators_passed`.
+- Fixed the test isolation only: package/content and pedagogical-judge quality-gate tests now stub `review_adapted_worksheet` by default, while dedicated AI-review tests still exercise review failure/success/no-API paths.
+- Parent-verified final `make test` → exit 0; `.venv/bin/pytest tests/ -v --ignore=tests/test_e2e.py`; `501 passed, 7 warnings in 70.18s (0:01:10)`
+- Final branch-level review then found two additional blocking integration issues:
+  - default transform runs still performed RAG indexing when credentials were present, even though retrieval was opt-in;
+  - multi-worksheet print validation checked part PDFs, not the final merged `lesson_*.pdf`.
+- Fixed both blockers: RAG indexing now uses the same `WORKSHEET_USE_RAG=1` opt-in as retrieval, and merged lesson PDFs are validated via `validation_final_print_quality.json` with the result folded into `print_quality_passed` and `all_validators_passed`.
+- Parent-verified post-fix final checks:
+  - `make lint` → exit 0; `All checks passed!`
+  - `make typecheck` → exit 0; `Success: no issues found in 127 source files`
+  - `make test` → exit 0; `505 passed, 7 warnings in 75.90s (0:01:15)`
+  - `make test-golden` → exit 0; `No golden E2E tests found; skipping.`
+
+**Smoke transform result:**
+- Skipped the preferred no-network smoke command because `samples/input/IMG_0004.JPG` is missing.
+- `samples/input/*` also returned no files in this checkout.
+- Command not run: `WORKSHEET_SKIP_ASSET_GEN=1 python transform.py --input samples/input/IMG_0004.JPG --profile profiles/ian.yaml --theme roblox_obby --output output/quality_redesign_smoke`
+
+**Known risks / follow-ups:**
+- No real transform smoke passed in this Task 9 handoff because the checked-in sample input was absent. Add or point to a stable no-network fixture image before merge if smoke coverage is required.
+- `make test-golden` currently skips because no golden E2E tests are present, so final confidence comes from unit/integration tests rather than golden PDF fixtures.
+- The branch remains uncommitted by request. No commits were created during Task 9.

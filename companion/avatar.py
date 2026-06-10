@@ -16,12 +16,14 @@ from pathlib import Path
 
 from PIL import Image
 
+from companion.character_identity import CharacterIdentity, resolve_character_identity
 from companion.schema import LearnerProfile
 
 logger = logging.getLogger(__name__)
 
 # Asset directories
 _ASSETS_DIR = Path(__file__).parent.parent / "assets"
+_REPO_ROOT = _ASSETS_DIR.parent
 _CHARACTERS_DIR = _ASSETS_DIR / "characters"
 _CACHE_DIR = _ASSETS_DIR / "cache"
 
@@ -49,15 +51,15 @@ def compose_avatar(
     if not profile.avatar:
         return None
 
-    base_char = profile.avatar.base_character
-    base_path = _CHARACTERS_DIR / f"{base_char}.png"
+    identity = resolve_character_identity(profile, theme_id)
+    base_path = _repo_path(identity.base_image_path) if identity.base_image_path else None
 
-    if not base_path.exists():
+    if not base_path or not base_path.exists():
         logger.warning(f"Base character not found: {base_path}")
         return None
 
     # Check cache
-    cache_key = _cache_key(profile, size, theme_id)
+    cache_key = _cache_key(profile, size, theme_id, identity)
     _CACHE_DIR.mkdir(parents=True, exist_ok=True)
     cached_path = _CACHE_DIR / f"avatar_{cache_key}.png"
 
@@ -68,7 +70,7 @@ def compose_avatar(
 
     if equipped:
         # Generate a new character variant with items via AI
-        variant_path = _get_or_generate_variant(equipped, profile, theme_id)
+        variant_path = _get_or_generate_variant(equipped, profile, theme_id, identity)
         if variant_path and variant_path.exists():
             img = Image.open(variant_path).convert("RGBA")
         else:
@@ -99,6 +101,7 @@ def _get_or_generate_variant(
     equipped: dict[str, str],
     profile: LearnerProfile | None = None,
     theme_id: str = "space",
+    identity: CharacterIdentity | None = None,
 ) -> Path | None:
     """Get a cached variant or generate a new one via AI."""
     from companion.generate_overlays import generate_variant
@@ -106,7 +109,7 @@ def _get_or_generate_variant(
 
     # Cache variant by equipment combo
     variants_dir = _ASSETS_DIR / "variants"
-    variant_key = _equipment_hash(equipped)
+    variant_key = identity.identity_version if identity else _equipment_hash(equipped)
     variant_path = variants_dir / f"variant_{variant_key}.png"
 
     if variant_path.exists():
@@ -124,8 +127,11 @@ def _get_or_generate_variant(
         pass
 
     return generate_variant(
-        equipped, variant_path,
-        style_sheet=style_sheet, character_spec=character_spec,
+        equipped,
+        variant_path,
+        style_sheet=style_sheet,
+        character_spec=character_spec,
+        identity=identity,
     )
 
 
@@ -174,14 +180,29 @@ def _resize_contain(img: Image.Image, target: tuple[int, int]) -> Image.Image:
     return canvas
 
 
-def _cache_key(profile: LearnerProfile, size: str, theme_id: str) -> str:
+def _repo_path(path: str | Path) -> Path:
+    candidate = Path(path)
+    if candidate.is_absolute():
+        return candidate
+    return _REPO_ROOT / candidate
+
+
+def _cache_key(
+    profile: LearnerProfile,
+    size: str,
+    theme_id: str,
+    identity: CharacterIdentity | None = None,
+) -> str:
     """Generate a cache key from profile avatar state."""
-    equipped_str = ",".join(
-        f"{k}={v}" for k, v in sorted(profile.avatar.equipped_items.items())
-    ) if profile.avatar else ""
+    equipped_str = (
+        ",".join(f"{k}={v}" for k, v in sorted(profile.avatar.equipped_items.items()))
+        if profile.avatar
+        else ""
+    )
     parts = [
         profile.avatar.base_character if profile.avatar else "none",
         equipped_str,
+        identity.identity_version if identity else "",
         size,
         theme_id,
     ]

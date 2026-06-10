@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import os
 import re
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 from adapt.rules import (
     BRAIN_BREAK_PROMPTS,
@@ -23,6 +25,9 @@ from adapt.schema import (
 )
 from companion.schema import LearnerProfile
 from skill.schema import LiteracySkillModel
+
+if TYPE_CHECKING:
+    from companion.character_identity import CharacterIdentity
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +113,7 @@ def adapt_lesson(
     rag_prior_adaptations: list[dict[str, object]] | None = None,
     rag_curriculum_references: list[dict[str, object]] | None = None,
     artifacts_dir: str | None = None,
+    character_identity: CharacterIdentity | None = None,
 ) -> list[AdaptedActivityModel]:
     """Transform a skill model into 2-3 ADHD-optimized mini-worksheets.
 
@@ -119,6 +125,21 @@ def adapt_lesson(
     """
     if rules is None:
         rules = build_rules(profile)
+
+    if os.environ.get("WORKSHEET_DIRECT_COMPILER") == "1":
+        try:
+            from adapt.direct_compiler import compile_lesson_direct
+
+            direct_result = compile_lesson_direct(
+                skill,
+                profile,
+                theme_id,
+                character_identity=character_identity,
+            )
+            if direct_result:
+                return direct_result
+        except Exception as exc:
+            logger.warning("Direct compiler failed, using fallback adaptation: %s", exc)
 
     # Try orchestrated LLM adaptation (Gemini → Judge → retry → GPT takeover)
     try:
@@ -146,15 +167,12 @@ def adapt_lesson(
     # instead of dotted tracing (trace is K-level; older learners write).
     discovery_default = ["match", "trace", "circle"]
     if "trace" not in rules.allowed_response_formats:
-        discovery_default = [
-            "write" if f == "trace" else f for f in discovery_default
-        ]
+        discovery_default = ["write" if f == "trace" else f for f in discovery_default]
     discovery_formats = _suggest_format_mix(prior_adaptations, discovery_default)
     curriculum = _build_curriculum_word_bank(rag_curriculum_references)
     if prior_adaptations:
         prior_sources = [
-            str(adapt.get("source_hash", "unknown"))
-            for adapt in prior_adaptations[:3]
+            str(adapt.get("source_hash", "unknown")) for adapt in prior_adaptations[:3]
         ]
         logger.info(
             "RAG context influencing adaptation: prior_adaptations=%s sources=%s",
@@ -173,19 +191,14 @@ def adapt_lesson(
     for si in skill.source_items:
         if si.item_type == "word_list":
             raw = si.content.replace(",", " ").split()
-            words = [
-                w.strip() for w in raw
-                if w.strip() and w.strip().isalpha()
-            ]
+            words = [w.strip() for w in raw if w.strip() and w.strip().isalpha()]
             word_items.extend(words)
         elif si.item_type == "word_chain":
             chains = _split_word_chains(si.content)
             chain_items.extend(chains)
         elif si.item_type == "sight_words":
             raw = si.content.replace(",", " ").split()
-            words = [
-                w.strip("*\u2665\u2764") for w in raw if w.strip()
-            ]
+            words = [w.strip("*\u2665\u2764") for w in raw if w.strip()]
             sight_words.extend([w for w in words if w.isalpha()])
         elif si.item_type == "sentence":
             sents = _split_sentences(si.content)
@@ -235,10 +248,13 @@ def adapt_lesson(
             format_order=discovery_formats,
             curriculum_supported_words=curriculum_supported_words,
             curriculum_lesson_ids=curriculum.lesson_ids if curriculum else (),
+            preserve_all_words=bool(word_items),
         )
         # Prepend phonemic awareness warm-up for grades K-1
         warmup = _build_warmup_chunk(
-            discovery_words, skill, rules,
+            discovery_words,
+            skill,
+            rules,
             start_chunk_id=0,
         )
         if warmup:
@@ -246,60 +262,71 @@ def adapt_lesson(
             for ch in chunks:
                 ch.chunk_id += 1
             chunks = [warmup] + chunks
-        worksheets.append(AdaptedActivityModel(
-            source_hash=base_hash,
-            skill_model_hash=skill_hash,
-            learner_profile_hash=profile_hash,
-            grade_level=skill.grade_level,
-            domain=skill.domain,
-            specific_skill=skill.specific_skill,
-            chunks=chunks,
-            scaffolding=ScaffoldConfig(
-                show_worked_example=True, fade_after_chunk=1,
-                hint_level="full" if skill.grade_level in ("K", "1") else "partial",
-            ),
-            theme_id=theme_id,
-            decoration_zones=_define_decoration_zones(),
-            self_assessment=_build_self_assessment(skill),
-            worksheet_number=1,
-            worksheet_title="Word Discovery",
-            break_prompt=BRAIN_BREAK_PROMPTS[0],
-        ))
+        worksheets.append(
+            AdaptedActivityModel(
+                source_hash=base_hash,
+                skill_model_hash=skill_hash,
+                learner_profile_hash=profile_hash,
+                grade_level=skill.grade_level,
+                domain=skill.domain,
+                specific_skill=skill.specific_skill,
+                chunks=chunks,
+                scaffolding=ScaffoldConfig(
+                    show_worked_example=True,
+                    fade_after_chunk=1,
+                    hint_level="full" if skill.grade_level in ("K", "1") else "partial",
+                ),
+                theme_id=theme_id,
+                decoration_zones=_define_decoration_zones(),
+                self_assessment=_build_self_assessment(skill),
+                worksheet_number=1,
+                worksheet_title="Word Discovery",
+                break_prompt=BRAIN_BREAK_PROMPTS[0],
+            )
+        )
 
     # Worksheet 2: Word Builder (chains + fill_blank + sight words + roll-and-read)
     if chain_items or word_items or sight_words:
         chunks = _build_builder_chunks(
-            chain_items, word_items or prioritized_targets[:6],
-            sight_words, skill, rules,
+            chain_items,
+            word_items or prioritized_targets[:6],
+            sight_words,
+            skill,
+            rules,
             curriculum_supported_words=curriculum_supported_words,
             curriculum_lesson_ids=curriculum.lesson_ids if curriculum else (),
         )
         # Append Roll and Read fluency chunk
         roll_chunk = _build_roll_and_read_chunk(
-            roll_and_read_words, skill, rules,
+            roll_and_read_words,
+            skill,
+            rules,
             start_chunk_id=len(chunks) + 1,
         )
         if roll_chunk:
             chunks.append(roll_chunk)
-        worksheets.append(AdaptedActivityModel(
-            source_hash=base_hash,
-            skill_model_hash=skill_hash,
-            learner_profile_hash=profile_hash,
-            grade_level=skill.grade_level,
-            domain=skill.domain,
-            specific_skill=skill.specific_skill,
-            chunks=chunks,
-            scaffolding=ScaffoldConfig(
-                show_worked_example=True, fade_after_chunk=1,
-                hint_level="full" if skill.grade_level in ("K", "1") else "partial",
-            ),
-            theme_id=theme_id,
-            decoration_zones=_define_decoration_zones(),
-            self_assessment=None,
-            worksheet_number=len(worksheets) + 1,
-            worksheet_title="Word Builder",
-            break_prompt=BRAIN_BREAK_PROMPTS[1 % len(BRAIN_BREAK_PROMPTS)],
-        ))
+        worksheets.append(
+            AdaptedActivityModel(
+                source_hash=base_hash,
+                skill_model_hash=skill_hash,
+                learner_profile_hash=profile_hash,
+                grade_level=skill.grade_level,
+                domain=skill.domain,
+                specific_skill=skill.specific_skill,
+                chunks=chunks,
+                scaffolding=ScaffoldConfig(
+                    show_worked_example=True,
+                    fade_after_chunk=1,
+                    hint_level="full" if skill.grade_level in ("K", "1") else "partial",
+                ),
+                theme_id=theme_id,
+                decoration_zones=_define_decoration_zones(),
+                self_assessment=None,
+                worksheet_number=len(worksheets) + 1,
+                worksheet_title="Word Builder",
+                break_prompt=BRAIN_BREAK_PROMPTS[1 % len(BRAIN_BREAK_PROMPTS)],
+            )
+        )
 
     # Worksheet 3: Story Time (sentences + passage + comprehension)
     if sentences or passages:
@@ -312,25 +339,28 @@ def adapt_lesson(
             curriculum_supported_words=curriculum_supported_words,
             curriculum_lesson_ids=curriculum.lesson_ids if curriculum else (),
         )
-        worksheets.append(AdaptedActivityModel(
-            source_hash=base_hash,
-            skill_model_hash=skill_hash,
-            learner_profile_hash=profile_hash,
-            grade_level=skill.grade_level,
-            domain=skill.domain,
-            specific_skill=skill.specific_skill,
-            chunks=chunks,
-            scaffolding=ScaffoldConfig(
-                show_worked_example=False, fade_after_chunk=0,
-                hint_level="full" if skill.grade_level in ("K", "1") else "partial",
-            ),
-            theme_id=theme_id,
-            decoration_zones=_define_decoration_zones(),
-            self_assessment=_build_self_assessment(skill),
-            worksheet_number=len(worksheets) + 1,
-            worksheet_title="Story Time",
-            break_prompt=None,  # Last worksheet — no break needed
-        ))
+        worksheets.append(
+            AdaptedActivityModel(
+                source_hash=base_hash,
+                skill_model_hash=skill_hash,
+                learner_profile_hash=profile_hash,
+                grade_level=skill.grade_level,
+                domain=skill.domain,
+                specific_skill=skill.specific_skill,
+                chunks=chunks,
+                scaffolding=ScaffoldConfig(
+                    show_worked_example=False,
+                    fade_after_chunk=0,
+                    hint_level="full" if skill.grade_level in ("K", "1") else "partial",
+                ),
+                theme_id=theme_id,
+                decoration_zones=_define_decoration_zones(),
+                self_assessment=_build_self_assessment(skill),
+                worksheet_number=len(worksheets) + 1,
+                worksheet_title="Story Time",
+                break_prompt=None,  # Last worksheet — no break needed
+            )
+        )
 
     # For UFLI word work: reorder so word chains (the core lesson activity)
     # come first, then sample word practice, then sentences. The default
@@ -394,10 +424,12 @@ def _build_discovery_chunks(
     format_order: list[str] | None = None,
     curriculum_supported_words: set[str] | None = None,
     curriculum_lesson_ids: tuple[str, ...] = (),
+    preserve_all_words: bool = False,
 ) -> list[ActivityChunk]:
     """Build Word Discovery chunks: match + trace + circle activities."""
     chunks: list[ActivityChunk] = []
     item_id = 0
+    max_items = rules.max_items_per_chunk
 
     default_order = ["match", "trace", "circle"]
     valid_formats = {"match", "trace", "circle", "write"}
@@ -417,7 +449,8 @@ def _build_discovery_chunks(
     for fmt in ordered_formats:
         chunk_id = len(chunks) + 1
         if fmt == "match":
-            match_words = words[:4]
+            # The match renderer lays out two columns cleanly up to four rows.
+            match_words = words[: min(max_items, 4)]
             if not match_words:
                 continue
             # Shuffle the picture order so words and pictures don't align
@@ -425,128 +458,149 @@ def _build_discovery_chunks(
             items: list[ActivityItem] = []
             for idx, word in enumerate(match_words):
                 item_id += 1
-                items.append(ActivityItem(
-                    item_id=item_id,
-                    content=word,
+                items.append(
+                    ActivityItem(
+                        item_id=item_id,
+                        content=word,
+                        response_format="match",
+                        metadata=_curriculum_item_metadata(
+                            word,
+                            curriculum_supported_words,
+                            curriculum_lesson_ids,
+                        ),
+                        picture_prompt=_word_to_picture_prompt(shuffled_pictures[idx]),
+                        options=[shuffled_pictures[idx]],
+                        answer=word,
+                    )
+                )
+            chunks.append(
+                ActivityChunk(
+                    chunk_id=chunk_id,
+                    micro_goal=f"Match {len(match_words)} words to their pictures",
+                    instructions=[
+                        Step(number=1, text="Look at each picture."),
+                        Step(number=2, text="Draw a line to the matching word."),
+                    ],
+                    worked_example=Example(
+                        instruction="Watch how I do the first one:",
+                        content=_match_example_content(match_words[0]),
+                    ),
+                    items=items,
                     response_format="match",
-                    metadata=_curriculum_item_metadata(
-                        word,
-                        curriculum_supported_words,
-                        curriculum_lesson_ids,
-                    ),
-                    picture_prompt=_word_to_picture_prompt(shuffled_pictures[idx]),
-                    options=[shuffled_pictures[idx]],
-                    answer=word,
-                ))
-            chunks.append(ActivityChunk(
-                chunk_id=chunk_id,
-                micro_goal=f"Match {len(match_words)} words to their pictures",
-                instructions=[
-                    Step(number=1, text="Look at each picture."),
-                    Step(number=2, text="Draw a line to the matching word."),
-                ],
-                worked_example=Example(
-                    instruction="Watch how I do the first one:",
-                    content=(
-                        f'The picture of a '
-                        f'{_word_to_picture_prompt(match_words[0]).split(",")[0].replace("a ", "")}'
-                        f' matches "{match_words[0]}"!'
-                    ),
-                ),
-                items=items,
-                response_format="match",
-                time_estimate="About 2 minutes",
-            ))
+                    time_estimate="About 2 minutes",
+                )
+            )
 
         if fmt == "trace":
-            trace_words = words[:5]
-            if not trace_words:
-                continue
-            items = []
-            for word in trace_words:
-                item_id += 1
-                items.append(ActivityItem(
-                    item_id=item_id,
-                    content=word,
-                    response_format="trace",
-                    metadata=_curriculum_item_metadata(
-                        word,
-                        curriculum_supported_words,
-                        curriculum_lesson_ids,
-                    ),
-                ))
-            chunks.append(ActivityChunk(
-                chunk_id=chunk_id,
-                micro_goal=f"Trace {len(trace_words)} words",
-                instructions=[
-                    Step(number=1, text="Say each word out loud."),
-                    Step(number=2, text="Trace the dotted letters."),
-                ],
-                worked_example=None,
-                items=items,
-                response_format="trace",
-                time_estimate="About 2 minutes",
-            ))
+            trace_batches = (
+                [words[start : start + max_items] for start in range(0, len(words), max_items)]
+                if preserve_all_words
+                else [words[:max_items]]
+            )
+            for batch_index, trace_words in enumerate(trace_batches):
+                if not trace_words:
+                    continue
+                items = []
+                for word in trace_words:
+                    item_id += 1
+                    items.append(
+                        ActivityItem(
+                            item_id=item_id,
+                            content=word,
+                            response_format="trace",
+                            metadata=_curriculum_item_metadata(
+                                word,
+                                curriculum_supported_words,
+                                curriculum_lesson_ids,
+                            ),
+                        )
+                    )
+                chunks.append(
+                    ActivityChunk(
+                        chunk_id=len(chunks) + 1,
+                        micro_goal=f"Trace {len(trace_words)} words",
+                        instructions=[
+                            Step(number=1, text="Say each word out loud."),
+                            Step(number=2, text="Trace the dotted letters."),
+                        ],
+                        worked_example=None,
+                        items=items,
+                        response_format="trace",
+                        time_estimate=("About 1 minute" if batch_index > 0 else "About 2 minutes"),
+                    )
+                )
 
         if fmt == "write":
-            write_words = words[:5]
-            if not write_words:
-                continue
-            items = []
-            for word in write_words:
-                item_id += 1
-                items.append(ActivityItem(
-                    item_id=item_id,
-                    content=word,
-                    response_format="write",
-                    metadata=_curriculum_item_metadata(
-                        word,
-                        curriculum_supported_words,
-                        curriculum_lesson_ids,
-                    ),
-                ))
-            chunks.append(ActivityChunk(
-                chunk_id=chunk_id,
-                micro_goal=f"Write {len(write_words)} words",
-                instructions=[
-                    Step(number=1, text="Say each word out loud."),
-                    Step(number=2, text="Write the word on the line."),
-                ],
-                worked_example=None,
-                items=items,
-                response_format="write",
-                time_estimate="About 2 minutes",
-            ))
+            write_batches = (
+                [words[start : start + max_items] for start in range(0, len(words), max_items)]
+                if preserve_all_words
+                else [words[:max_items]]
+            )
+            for batch_index, write_words in enumerate(write_batches):
+                if not write_words:
+                    continue
+                items = []
+                for word in write_words:
+                    item_id += 1
+                    items.append(
+                        ActivityItem(
+                            item_id=item_id,
+                            content=word,
+                            response_format="write",
+                            metadata=_curriculum_item_metadata(
+                                word,
+                                curriculum_supported_words,
+                                curriculum_lesson_ids,
+                            ),
+                        )
+                    )
+                chunks.append(
+                    ActivityChunk(
+                        chunk_id=len(chunks) + 1,
+                        micro_goal=f"Write {len(write_words)} words",
+                        instructions=[
+                            Step(number=1, text="Say each word out loud."),
+                            Step(number=2, text="Write the word on the line."),
+                        ],
+                        worked_example=None,
+                        items=items,
+                        response_format="write",
+                        time_estimate=("About 1 minute" if batch_index > 0 else "About 2 minutes"),
+                    )
+                )
 
         if fmt == "circle":
             if not words:
                 continue
+            target_options = words[: max(1, max_items - 1)]
             distractors = _generate_distractors(
                 words,
-                min(4, len(words)),
+                max(0, max_items - len(target_options)),
                 blacklist=distractor_blacklist,
             )
-            all_options = words[:6] + distractors
+            all_options = target_options + distractors
             item_id += 1
             item = ActivityItem(
                 item_id=item_id,
                 content="Circle all the words that follow the pattern.",
                 response_format="circle",
                 options=all_options,
-                answer=",".join(words[:4]),
+                answer=",".join(target_options),
             )
-            chunks.append(ActivityChunk(
-                chunk_id=chunk_id,
-                micro_goal="Find the pattern words",
-                instructions=[
-                    Step(number=1, text="Look at each word."),
-                    Step(number=2, text="Circle the words that match the pattern."),
-                ],
-                worked_example=None,
-                items=[item],
-                response_format="circle",
-                time_estimate="About 1 minute",
-            ))
+            chunks.append(
+                ActivityChunk(
+                    chunk_id=chunk_id,
+                    micro_goal="Find the pattern words",
+                    instructions=[
+                        Step(number=1, text="Look at each word."),
+                        Step(number=2, text="Circle the words that match the pattern."),
+                    ],
+                    worked_example=None,
+                    items=[item],
+                    response_format="circle",
+                    time_estimate="About 1 minute",
+                )
+            )
 
     return chunks
 
@@ -563,6 +617,7 @@ def _build_builder_chunks(
     """Build Word Builder chunks: chains + fill-blank + sight words."""
     chunks: list[ActivityChunk] = []
     item_id = 0
+    max_items = rules.max_items_per_chunk
 
     # Chunk 1: Word chains — interactive letter-change steps
     if chains:
@@ -597,111 +652,161 @@ def _build_builder_chunks(
             )
             activity_steps = []
 
-        items: list[ActivityItem] = []
         if activity_steps:
-            for step in activity_steps:
-                item_id += 1
-                items.append(ActivityItem(
-                    item_id=item_id,
-                    content=(
-                        f'Start with "{step["from_word"]}". '
-                        f'Change the "{step["old_letter"]}" '
-                        f'to "{step["new_letter"]}". '
-                        f'Write the new word.'
-                    ),
-                    response_format="write",
-                    metadata={"display": "chain_step"},
-                    answer=step["to_word"],
-                ))
+            for batch_start in range(0, len(activity_steps), max_items):
+                batch = activity_steps[batch_start : batch_start + max_items]
+                items: list[ActivityItem] = []
+                for step in batch:
+                    item_id += 1
+                    items.append(
+                        ActivityItem(
+                            item_id=item_id,
+                            content=(
+                                f'Start with "{step["from_word"]}". '
+                                f'Change the "{step["old_letter"]}" '
+                                f'to "{step["new_letter"]}". '
+                                f'Write the new word.'
+                            ),
+                            response_format="write",
+                            metadata={"display": "chain_step"},
+                            answer=step["to_word"],
+                        )
+                    )
+                chunks.append(
+                    ActivityChunk(
+                        chunk_id=len(chunks) + 1,
+                        micro_goal=f"Build {len(items)} new words",
+                        instructions=[
+                            Step(number=1, text="Read the starting word."),
+                            Step(number=2, text="Change the letter shown."),
+                            Step(number=3, text="Write the new word on the line."),
+                        ],
+                        worked_example=example if batch_start == 0 else None,
+                        items=items,
+                        response_format="write",
+                        time_estimate="About 1 minute",
+                    )
+                )
         else:
             # Fallback: plain chain items (skip first chain used in example)
-            for chain in chains:
-                item_id += 1
-                items.append(ActivityItem(
-                    item_id=item_id,
-                    content=chain,
-                    response_format="write",
-                    metadata={"display": "chain"},
-                ))
-
-        chunks.append(ActivityChunk(
-            chunk_id=1,
-            micro_goal=f"Build {len(items)} new words",
-            instructions=[
-                Step(number=1, text="Read the starting word."),
-                Step(number=2, text="Change the letter shown."),
-                Step(number=3, text="Write the new word on the line."),
-            ],
-            worked_example=example,
-            items=items,
-            response_format="write",
-            time_estimate="About 2 minutes",
-        ))
+            for batch_start in range(0, len(chains), max_items):
+                chain_batch = chains[batch_start : batch_start + max_items]
+                items = []
+                for chain in chain_batch:
+                    item_id += 1
+                    items.append(
+                        ActivityItem(
+                            item_id=item_id,
+                            content=chain,
+                            response_format="write",
+                            metadata={"display": "chain"},
+                        )
+                    )
+                chunks.append(
+                    ActivityChunk(
+                        chunk_id=len(chunks) + 1,
+                        micro_goal=f"Build {len(items)} new words",
+                        instructions=[
+                            Step(number=1, text="Read the starting word."),
+                            Step(number=2, text="Change the letter shown."),
+                            Step(number=3, text="Write the new word on the line."),
+                        ],
+                        worked_example=example if batch_start == 0 else None,
+                        items=items,
+                        response_format="write",
+                        time_estimate="About 1 minute",
+                    )
+                )
 
     # Chunk 2: Fill in the missing letter
-    fill_words = words[:5]
-    if fill_words:
+    # Word-list-only lessons rely on these chunks for full target coverage, so
+    # split all words by the learner cap instead of silently dropping later words.
+    fill_word_batches = (
+        [
+            words[batch_start : batch_start + max_items]
+            for batch_start in range(0, len(words), max_items)
+        ]
+        if not chains
+        else [words[:max_items]]
+    )
+    for fill_words in fill_word_batches:
+        if not fill_words:
+            continue
         items = []
         for w in fill_words:
             blank_content, answer_letter = _generate_fill_blank(w)
             if blank_content:
                 item_id += 1
-                items.append(ActivityItem(
-                    item_id=item_id,
-                    content=blank_content,
-                    response_format="fill_blank",
-                    metadata=_curriculum_item_metadata(
-                        w,
-                        curriculum_supported_words,
-                        curriculum_lesson_ids,
-                    ),
-                    answer=answer_letter,
-                    options=["a", "e", "i", "o", "u"],
-                ))
+                items.append(
+                    ActivityItem(
+                        item_id=item_id,
+                        content=blank_content,
+                        response_format="fill_blank",
+                        metadata=_curriculum_item_metadata(
+                            w,
+                            curriculum_supported_words,
+                            curriculum_lesson_ids,
+                        ),
+                        answer=answer_letter,
+                        options=_limit_options(
+                            ["a", "e", "i", "o", "u"],
+                            required=answer_letter,
+                            max_items=max_items,
+                        ),
+                    )
+                )
         if items:
-            chunks.append(ActivityChunk(
-                chunk_id=len(chunks) + 1,
-                micro_goal=f"Fill in {len(items)} missing letters",
-                instructions=[
-                    Step(number=1, text="Look at the word with a missing letter."),
-                    Step(number=2, text="Write the missing letter on the line."),
-                ],
-                worked_example=None,
-                items=items,
-                response_format="fill_blank",
-                time_estimate="About 2 minutes",
-            ))
+            chunks.append(
+                ActivityChunk(
+                    chunk_id=len(chunks) + 1,
+                    micro_goal=f"Fill in {len(items)} missing letters",
+                    instructions=[
+                        Step(number=1, text="Look at the word with a missing letter."),
+                        Step(number=2, text="Write the missing letter on the line."),
+                    ],
+                    worked_example=None,
+                    items=items,
+                    response_format="fill_blank",
+                    time_estimate="About 2 minutes",
+                )
+            )
 
     # Chunk 3: Sight word flash (write format)
     if sight_words_list:
-        items = []
-        for sw in sight_words_list:
-            item_id += 1
-            items.append(ActivityItem(
-                item_id=item_id,
-                content=sw,
-                response_format="write",
-                metadata={
-                    "sight_word": True,
-                    **_curriculum_item_metadata(
-                        sw,
-                        curriculum_supported_words,
-                        curriculum_lesson_ids,
-                    ),
-                },
-            ))
-        chunks.append(ActivityChunk(
-            chunk_id=len(chunks) + 1,
-            micro_goal=f"Practice {len(sight_words_list)} sight words",
-            instructions=[
-                Step(number=1, text="Read each sight word."),
-                Step(number=2, text="Write each word on the line."),
-            ],
-            worked_example=None,
-            items=items,
-            response_format="write",
-            time_estimate="About 1 minute",
-        ))
+        for batch_start in range(0, len(sight_words_list), max_items):
+            sight_word_batch = sight_words_list[batch_start : batch_start + max_items]
+            items = []
+            for sw in sight_word_batch:
+                item_id += 1
+                items.append(
+                    ActivityItem(
+                        item_id=item_id,
+                        content=sw,
+                        response_format="write",
+                        metadata={
+                            "sight_word": True,
+                            **_curriculum_item_metadata(
+                                sw,
+                                curriculum_supported_words,
+                                curriculum_lesson_ids,
+                            ),
+                        },
+                    )
+                )
+            chunks.append(
+                ActivityChunk(
+                    chunk_id=len(chunks) + 1,
+                    micro_goal=f"Practice {len(items)} sight words",
+                    instructions=[
+                        Step(number=1, text="Read each sight word."),
+                        Step(number=2, text="Write each word on the line."),
+                    ],
+                    worked_example=None,
+                    items=items,
+                    response_format="write",
+                    time_estimate="About 1 minute",
+                )
+            )
 
     return chunks
 
@@ -724,23 +829,25 @@ def _build_warmup_chunk(
     if "-le" in skill.specific_skill.lower():
         return None
 
-    # Pick up to 3 short target words for sound segmentation
+    # Pick a short sound-box set without exceeding the learner's chunk cap.
     candidates = [w.lower() for w in words if 2 <= len(w) <= 5 and w.isalpha()]
     if not candidates:
         return None
-    selected = candidates[:3]
+    selected = candidates[: min(3, rules.max_items_per_chunk)]
 
     items: list[ActivityItem] = []
     for idx, word in enumerate(selected):
         phonemes = _segment_phonemes(word)
-        items.append(ActivityItem(
-            item_id=idx + 1,
-            content=word,
-            response_format="sound_box",
-            metadata={"display": "elkonin", "phoneme_count": len(phonemes)},
-            options=phonemes,
-            answer=word,
-        ))
+        items.append(
+            ActivityItem(
+                item_id=idx + 1,
+                content=word,
+                response_format="sound_box",
+                metadata={"display": "elkonin", "phoneme_count": len(phonemes)},
+                options=phonemes,
+                answer=word,
+            )
+        )
 
     return ActivityChunk(
         chunk_id=start_chunk_id + 1,
@@ -753,7 +860,7 @@ def _build_warmup_chunk(
         worked_example=Example(
             instruction="Watch how I tap out the sounds:",
             content=f'"{selected[0]}" has {len(_segment_phonemes(selected[0]))} sounds: '
-                    + " - ".join(f'"{p}"' for p in _segment_phonemes(selected[0])),
+            + " - ".join(f'"{p}"' for p in _segment_phonemes(selected[0])),
         ),
         items=items,
         response_format="sound_box",
@@ -772,26 +879,54 @@ def _segment_phonemes(word: str) -> list[str]:
     i = 0
     # Common digraphs and trigraphs to treat as single phonemes
     multi_graphemes = [
-        "tch", "dge",
-        "sh", "ch", "th", "wh", "ph", "ck", "ng", "nk",
-        "ai", "ay", "ee", "ea", "oa", "ow", "ou", "oi", "oy",
-        "oo", "ew", "aw", "au", "igh", "eigh",
-        "ar", "er", "ir", "or", "ur",
+        "tch",
+        "dge",
+        "sh",
+        "ch",
+        "th",
+        "wh",
+        "ph",
+        "ck",
+        "ng",
+        "nk",
+        "ai",
+        "ay",
+        "ee",
+        "ea",
+        "oa",
+        "ow",
+        "ou",
+        "oi",
+        "oy",
+        "oo",
+        "ew",
+        "aw",
+        "au",
+        "igh",
+        "eigh",
+        "ar",
+        "er",
+        "ir",
+        "or",
+        "ur",
     ]
     while i < len(word):
         matched = False
         # Check longest multi-graphemes first
         for mg in multi_graphemes:
-            if word[i:i + len(mg)] == mg:
+            if word[i : i + len(mg)] == mg:
                 phonemes.append(mg)
                 i += len(mg)
                 matched = True
                 break
         if not matched:
             # Silent e at end after consonant
-            if (i == len(word) - 1 and word[i] == "e"
-                    and len(phonemes) >= 2
-                    and word[i - 1] not in "aeiou"):
+            if (
+                i == len(word) - 1
+                and word[i] == "e"
+                and len(phonemes) >= 2
+                and word[i - 1] not in "aeiou"
+            ):
                 break  # skip silent e
             phonemes.append(word[i])
             i += 1
@@ -840,17 +975,18 @@ def _build_roll_and_read_chunk(
     if not words:
         return None
 
-    # Select up to 5 words — prefer a mix of base and inflected forms
+    max_items = rules.max_items_per_chunk
+    # Prefer a mix of base and inflected forms within the learner's chunk cap.
     base_words = [w for w in words if not w.endswith("ing") and not w.endswith("ed")]
     inflected = [w for w in words if w.endswith("ing") or w.endswith("ed")]
     selected: list[str] = []
     # Alternate base and inflected
     bi, ii = 0, 0
-    while len(selected) < 5 and (bi < len(base_words) or ii < len(inflected)):
-        if bi < len(base_words) and len(selected) < 5:
+    while len(selected) < max_items and (bi < len(base_words) or ii < len(inflected)):
+        if bi < len(base_words) and len(selected) < max_items:
             selected.append(base_words[bi])
             bi += 1
-        if ii < len(inflected) and len(selected) < 5:
+        if ii < len(inflected) and len(selected) < max_items:
             selected.append(inflected[ii])
             ii += 1
 
@@ -859,19 +995,22 @@ def _build_roll_and_read_chunk(
 
     items: list[ActivityItem] = []
     for idx, word in enumerate(selected):
-        items.append(ActivityItem(
-            item_id=idx + 1,
-            content=word,
-            response_format="read_aloud",
-            metadata={"display": "roll_and_read"},
-        ))
+        items.append(
+            ActivityItem(
+                item_id=idx + 1,
+                content=word,
+                response_format="read_aloud",
+                metadata={"display": "roll_and_read"},
+            )
+        )
 
     return ActivityChunk(
         chunk_id=start_chunk_id,
-        micro_goal=f"Read {len(items)} words fast!",
+        micro_goal=f"Read {len(items)} words smoothly",
         instructions=[
-            Step(number=1, text="Read each word out loud."),
-            Step(number=2, text="Try to read them faster each time!"),
+            Step(number=1, text="Read each word smoothly."),
+            Step(number=2, text="Try the list three times."),
+            Step(number=3, text="Point to each word as you read."),
         ],
         worked_example=None,
         items=items,
@@ -892,6 +1031,7 @@ def _build_story_chunks(
     """Build Story Time chunks: sentence completion + read-aloud + comprehension."""
     chunks: list[ActivityChunk] = []
     item_id = 0
+    max_items = rules.max_items_per_chunk
 
     # Chunk 1: Sentence completion with word bank
     if sentences:
@@ -901,65 +1041,83 @@ def _build_story_chunks(
             blank_sent, removed_word = _sentence_to_fill_blank(sent, target_words)
             if blank_sent and removed_word:
                 # Create word bank from target words + the answer
-                bank = list(set([removed_word] + target_words[:3]))
-                items.append(ActivityItem(
-                    item_id=item_id,
-                    content=blank_sent,
-                    response_format="fill_blank",
-                    metadata=_curriculum_item_metadata(
-                        removed_word,
-                        curriculum_supported_words,
-                        curriculum_lesson_ids,
-                    ),
-                    answer=removed_word,
-                    options=bank,
-                ))
+                bank = _limit_options(
+                    [removed_word, *target_words],
+                    required=removed_word,
+                    max_items=max_items,
+                )
+                items.append(
+                    ActivityItem(
+                        item_id=item_id,
+                        content=blank_sent,
+                        response_format="fill_blank",
+                        metadata=_curriculum_item_metadata(
+                            removed_word,
+                            curriculum_supported_words,
+                            curriculum_lesson_ids,
+                        ),
+                        answer=removed_word,
+                        options=bank,
+                    )
+                )
             else:
-                items.append(ActivityItem(
-                    item_id=item_id,
-                    content=sent,
-                    response_format="write",
-                ))
+                items.append(
+                    ActivityItem(
+                        item_id=item_id,
+                        content=sent,
+                        response_format="write",
+                    )
+                )
         if items:
-            chunks.append(ActivityChunk(
-                chunk_id=1,
-                micro_goal=f"Complete {len(items)} sentences",
-                instructions=[
-                    Step(number=1, text="Read the sentence."),
-                    Step(number=2, text="Fill in the missing word."),
-                ],
-                worked_example=None,
-                items=items,
-                response_format=(
-                    "fill_blank"
-                    if any(i.response_format == "fill_blank" for i in items)
-                    else "write"
-                ),
-                time_estimate="About 2 minutes",
-            ))
+            for batch_start in range(0, len(items), max_items):
+                batch = items[batch_start : batch_start + max_items]
+                chunks.append(
+                    ActivityChunk(
+                        chunk_id=len(chunks) + 1,
+                        micro_goal=f"Complete {len(batch)} sentences",
+                        instructions=[
+                            Step(number=1, text="Read the sentence."),
+                            Step(number=2, text="Fill in the missing word."),
+                        ],
+                        worked_example=None,
+                        items=batch,
+                        response_format=(
+                            "fill_blank"
+                            if any(i.response_format == "fill_blank" for i in batch)
+                            else "write"
+                        ),
+                        time_estimate="About 2 minutes",
+                    )
+                )
 
     # Chunk 2: Read the story (passage)
     if passages:
-        items = []
-        for passage in passages:
-            item_id += 1
-            items.append(ActivityItem(
-                item_id=item_id,
-                content=passage,
-                response_format="read_aloud",
-            ))
-        chunks.append(ActivityChunk(
-            chunk_id=len(chunks) + 1,
-            micro_goal="Read the story",
-            instructions=[
-                Step(number=1, text="Read the story out loud."),
-                Step(number=2, text="Point to each word as you read."),
-            ],
-            worked_example=None,
-            items=items,
-            response_format="read_aloud",
-            time_estimate="About 3 minutes",
-        ))
+        for batch_start in range(0, len(passages), max_items):
+            passage_batch = passages[batch_start : batch_start + max_items]
+            items = []
+            for passage in passage_batch:
+                item_id += 1
+                items.append(
+                    ActivityItem(
+                        item_id=item_id,
+                        content=passage,
+                        response_format="read_aloud",
+                    )
+                )
+            chunks.append(
+                ActivityChunk(
+                    chunk_id=len(chunks) + 1,
+                    micro_goal="Read the story",
+                    instructions=[
+                        Step(number=1, text="Read the story out loud."),
+                        Step(number=2, text="Point to each word as you read."),
+                    ],
+                    worked_example=None,
+                    items=items,
+                    response_format="read_aloud",
+                    time_estimate="About 3 minutes",
+                )
+            )
 
     # Chunk 3: Story comprehension (circle format)
     if passages:
@@ -967,26 +1125,33 @@ def _build_story_chunks(
         if comp_questions:
             items = []
             for q, opts, ans in comp_questions:
+                limited_opts = _limit_options(opts, required=ans, max_items=max_items)
                 item_id += 1
-                items.append(ActivityItem(
-                    item_id=item_id,
-                    content=q,
-                    response_format="circle",
-                    options=opts,
-                    answer=ans,
-                ))
-            chunks.append(ActivityChunk(
-                chunk_id=len(chunks) + 1,
-                micro_goal="Check your understanding",
-                instructions=[
-                    Step(number=1, text="Think about the story."),
-                    Step(number=2, text="Circle the best answer."),
-                ],
-                worked_example=None,
-                items=items,
-                response_format="circle",
-                time_estimate="About 2 minutes",
-            ))
+                items.append(
+                    ActivityItem(
+                        item_id=item_id,
+                        content=q,
+                        response_format="circle",
+                        options=limited_opts,
+                        answer=ans,
+                    )
+                )
+            for batch_start in range(0, len(items), max_items):
+                batch = items[batch_start : batch_start + max_items]
+                chunks.append(
+                    ActivityChunk(
+                        chunk_id=len(chunks) + 1,
+                        micro_goal="Check your understanding",
+                        instructions=[
+                            Step(number=1, text="Think about the story."),
+                            Step(number=2, text="Circle the best answer."),
+                        ],
+                        worked_example=None,
+                        items=batch,
+                        response_format="circle",
+                        time_estimate="About 2 minutes",
+                    )
+                )
 
     return chunks
 
@@ -1096,18 +1261,39 @@ def _generate_fill_blank(word: str) -> tuple[str, str]:
     # Find the first vowel that's not at position 0 or last position
     for i, ch in enumerate(word):
         if ch.lower() in vowels and 0 < i < len(word) - 1:
-            blanked = word[:i] + "_" + word[i + 1:]
+            blanked = word[:i] + "_" + word[i + 1 :]
             return blanked, ch.lower()
     # Fallback: blank the first vowel
     for i, ch in enumerate(word):
         if ch.lower() in vowels:
-            blanked = word[:i] + "_" + word[i + 1:]
+            blanked = word[:i] + "_" + word[i + 1 :]
             return blanked, ch.lower()
     return "", ""
 
 
+def _limit_options(
+    options: list[str],
+    required: str | None,
+    max_items: int,
+) -> list[str]:
+    """Cap choices to the chunk size while keeping the correct answer."""
+    deduped: list[str] = []
+    for option in options:
+        if option not in deduped:
+            deduped.append(option)
+
+    limited = deduped[:max_items]
+    if required and required not in limited:
+        if len(limited) >= max_items:
+            limited[-1] = required
+        else:
+            limited.append(required)
+    return limited
+
+
 def _sentence_to_fill_blank(
-    sentence: str, target_words: list[str],
+    sentence: str,
+    target_words: list[str],
 ) -> tuple[str, str]:
     """Convert a sentence to fill-blank by removing a target word.
 
@@ -1131,7 +1317,8 @@ def _sentence_to_fill_blank(
 
 
 def _generate_comprehension_questions(
-    passages: list[str], target_words: list[str],
+    passages: list[str],
+    target_words: list[str],
 ) -> list[tuple[str, list[str], str]]:
     """Generate simple comprehension questions from passage text.
 
@@ -1146,29 +1333,40 @@ def _generate_comprehension_questions(
         correct = found_words[0]
         distractors = _generate_distractors(found_words, 2)
         options = [correct] + distractors
-        questions.append((
-            "Which word from the pattern is in the story?",
-            options,
-            correct,
-        ))
+        questions.append(
+            (
+                "Which word from the pattern is in the story?",
+                options,
+                correct,
+            )
+        )
 
     # Question 2: Simple yes/no about a word presence
     if len(target_words) >= 2:
         not_found = [w for w in target_words if w.lower() not in full_text]
         if not_found:
-            questions.append((
-                f'Is the word "{not_found[0]}" in the story?',
-                ["Yes", "No"],
-                "No",
-            ))
+            questions.append(
+                (
+                    f'Is the word "{not_found[0]}" in the story?',
+                    ["Yes", "No"],
+                    "No",
+                )
+            )
         elif found_words and len(found_words) >= 2:
-            questions.append((
-                f'Is the word "{found_words[1]}" in the story?',
-                ["Yes", "No"],
-                "Yes",
-            ))
+            questions.append(
+                (
+                    f'Is the word "{found_words[1]}" in the story?',
+                    ["Yes", "No"],
+                    "Yes",
+                )
+            )
 
     return questions[:3]  # Max 3 questions
+
+
+def _match_example_content(word: str) -> str:
+    pic = _word_to_picture_prompt(word).split(",")[0].replace("a ", "")
+    return f'The picture of a {pic} matches "{word}"!'
 
 
 def _word_to_picture_prompt(word: str) -> str:
@@ -1237,9 +1435,7 @@ def _build_chunks(
 
         # Time estimate
         time_est = (
-            f"About {rules.time_estimate_minutes} minutes"
-            if rules.require_time_estimate
-            else ""
+            f"About {rules.time_estimate_minutes} minutes" if rules.require_time_estimate else ""
         )
 
         # Determine dominant response format for this chunk
@@ -1291,9 +1487,7 @@ def _source_items_to_activity_items(
     for source_item in skill.source_items:
         # Determine response format based on item type and profile prefs
         default_format = _default_format_for_type(source_item.item_type)
-        response_format = get_substitute_format(
-            default_format, rules.allowed_response_formats
-        )
+        response_format = get_substitute_format(default_format, rules.allowed_response_formats)
 
         if source_item.item_type == "word_list":
             # Split word lists into individual items
@@ -1395,9 +1589,7 @@ def _words_to_activity_items(
     if skill.domain == "fluency":
         default_format = "read_aloud"
 
-    response_format = get_substitute_format(
-        default_format, rules.allowed_response_formats
-    )
+    response_format = get_substitute_format(default_format, rules.allowed_response_formats)
 
     target_words, supported_words = _prioritize_words_by_curriculum(
         skill.target_words,
@@ -1458,9 +1650,7 @@ def _build_curriculum_word_bank(
         lesson_id = str(ref.get("lesson_id", "")).strip()
         concept = str(ref.get("concept", "")).strip()
         document = str(
-            ref.get("_rag_document")
-            or ref.get("document")
-            or "",
+            ref.get("_rag_document") or ref.get("document") or "",
         ).strip()
 
         if lesson_id and lesson_id not in lesson_ids:
@@ -1565,12 +1755,14 @@ def _parse_chain_steps(chains: list[str]) -> list[dict[str, str]]:
             to_w = words[i + 1].lower()
             old_letter, new_letter = _find_letter_change(from_w, to_w)
             if old_letter and new_letter:
-                steps.append({
-                    "from_word": from_w,
-                    "to_word": to_w,
-                    "old_letter": old_letter,
-                    "new_letter": new_letter,
-                })
+                steps.append(
+                    {
+                        "from_word": from_w,
+                        "to_word": to_w,
+                        "old_letter": old_letter,
+                        "new_letter": new_letter,
+                    }
+                )
     return steps
 
 

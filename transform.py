@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
 from collections.abc import Sequence
 from pathlib import Path
@@ -21,6 +22,7 @@ except ImportError:
     pass
 
 from adapt.engine import adapt_activity, adapt_lesson
+from adapt.rules import build_rules
 from adapt.schema import AdaptedActivityModel
 from capture.preprocess import preprocess_page
 from capture.store import store_master
@@ -31,9 +33,14 @@ from extract.vision import extract_with_vision
 from render.pdf import render_cover_page, render_worksheet
 from skill.extractor import extract_skill
 from theme.engine import apply_theme, load_theme
-from validate.adhd_compliance import validate_adhd_compliance
+from validate.adhd_compliance import validate_adhd_compliance, validate_lesson_time_budget
 from validate.ai_review import review_adapted_worksheet
+from validate.content_coverage import (
+    validate_content_coverage,
+    validate_content_coverage_for_package,
+)
 from validate.print_checks import validate_print_quality
+from validate.schema import ValidationResult
 from validate.skill_parity import validate_age_band, validate_skill_parity
 
 logger = logging.getLogger(__name__)
@@ -182,8 +189,16 @@ def run_pipeline_collect_artifacts(
     # Stage 4b: Optional RAG retrieval (skill + content)
     rag_prior_adaptations: list[dict[str, object]] | None = None
     rag_curriculum_references: list[dict[str, object]] | None = None
-    rag_debug: dict[str, object] = {"enabled": rag_available()}
-    if rag_available():
+    use_live_rag = os.environ.get("WORKSHEET_USE_RAG") == "1"
+    rag_is_available = False
+    rag_debug: dict[str, object] = {
+        "enabled": False,
+        "reason": "WORKSHEET_USE_RAG not set",
+    }
+    if use_live_rag:
+        rag_is_available = rag_available()
+        rag_debug = {"enabled": rag_is_available}
+    if use_live_rag and rag_is_available:
         try:
             from rag.retrieval import retrieve_context
 
@@ -251,7 +266,7 @@ def run_pipeline_collect_artifacts(
         )
 
     # Stage 9: Optional RAG indexing
-    if index_results and rag_available():
+    if index_results and use_live_rag and rag_is_available:
         try:
             from rag.indexer import index_run
 
@@ -401,6 +416,7 @@ def _run_multi_worksheet_pipeline(
     rag_curriculum_references: list[dict[str, object]] | None,
 ) -> RunArtifacts:
     """Multi-worksheet pipeline — produces 2-3 mini-worksheets per lesson."""
+    from companion.character_identity import resolve_character_identity
     from companion.schema import LearnerProfile
     from render.asset_gen import compute_worksheet_hash, generate_worksheet_assets
     from render.pose_planner import plan_scenes, plan_word_pictures
@@ -410,6 +426,12 @@ def _run_multi_worksheet_pipeline(
     assert isinstance(skill_model, LiteracySkillModel)
     assert isinstance(profile, LearnerProfile)
     assert isinstance(theme, ThemeConfig)
+    char_spec = theme.character_spec if theme.character_spec.art_style else None
+    character_identity = resolve_character_identity(
+        profile,
+        theme_id,
+        character_spec=char_spec,
+    )
 
     worksheets = adapt_lesson(
         skill_model,
@@ -418,6 +440,7 @@ def _run_multi_worksheet_pipeline(
         rag_prior_adaptations=rag_prior_adaptations,
         rag_curriculum_references=rag_curriculum_references,
         artifacts_dir=str(artifacts),
+        character_identity=character_identity,
     )
     logger.info("  Generated %s mini-worksheets", len(worksheets))
 
@@ -427,9 +450,12 @@ def _run_multi_worksheet_pipeline(
     # judge as advisory-only (e.g., when the deterministic engine was used).
     judge_json = artifacts / "judge_verdict.json"
     judge_result: dict[str, object]
+    pedagogical_judge_passed: bool | None = None
     if judge_json.exists():
         judge_result = json.loads(judge_json.read_text())
         approved = judge_result.get("approved")
+        if isinstance(approved, bool):
+            pedagogical_judge_passed = approved
         score = judge_result.get("overall_score")
         if approved is True:
             logger.info("  Pedagogical judge: APPROVED (%.2f)", score)
@@ -447,6 +473,7 @@ def _run_multi_worksheet_pipeline(
             verdict = judge_adaptation(skill_model, worksheets)
             if verdict is not None:
                 judge_result = verdict.model_dump()
+                pedagogical_judge_passed = verdict.approved
                 if verdict.approved:
                     logger.info("  Pedagogical judge: APPROVED (%.2f)", verdict.overall_score)
                 else:
@@ -462,6 +489,7 @@ def _run_multi_worksheet_pipeline(
     pdf_paths: list[str] = []
     adapted_summaries: list[dict[str, str | int | float | bool]] = []
     validation_runs: list[dict[str, bool]] = []
+    ai_review_passed = True
     content_hash = hashlib.sha256(
         f"{source_image_hash}:{profile.name}:{theme_id}".encode()
     ).hexdigest()[:12]
@@ -473,15 +501,43 @@ def _run_multi_worksheet_pipeline(
         adapted_json = artifacts / f"adapted_model_{i}.json"
         adapted_json.write_text(adapted.model_dump_json(indent=2))
 
+        logger.info("  AI quality review for worksheet %s/%s...", i, len(worksheets))
+        adapted, reviews = review_adapted_worksheet(adapted)
+        review_json = artifacts / f"ai_review_{i}.json"
+        review_json.write_text(json.dumps([review.to_dict() for review in reviews], indent=2))
+        if reviews:
+            latest_review = reviews[-1]
+            ai_review_passed = ai_review_passed and latest_review.passed
+            if latest_review.passed:
+                logger.info("  AI quality review_%s: PASSED", i)
+            else:
+                logger.warning(
+                    "  AI quality review_%s: %s issues remaining after %s iterations",
+                    i,
+                    len(latest_review.issues),
+                    len(reviews),
+                )
+        adapted_json.write_text(adapted.model_dump_json(indent=2))
+        worksheets[i - 1] = adapted
+
         apply_theme(adapted, theme)
 
         asset_manifest = None
         try:
             # Pass theme character spec for theme-aware scene prompts
-            char_spec = theme.character_spec if theme.character_spec.art_style else None
+            identity = resolve_character_identity(
+                profile,
+                theme_id,
+                character_spec=char_spec,
+            )
             scenes = plan_scenes(adapted, character_spec=char_spec)
             word_prompts = plan_word_pictures(adapted)
-            ws_hash = compute_worksheet_hash(adapted.source_hash, i, theme_id)
+            ws_hash = compute_worksheet_hash(
+                adapted.source_hash,
+                i,
+                theme_id,
+                identity_version=identity.identity_version,
+            )
 
             # Pass style sheet for theme-accurate character rendering
             style_sheet = None
@@ -497,6 +553,9 @@ def _run_multi_worksheet_pipeline(
                 ),
                 style_sheet=style_sheet,
                 character_spec=char_spec,
+                profile=profile,
+                theme_id=theme_id,
+                identity=identity,
             )
         except Exception as exc:
             logger.warning("  Asset generation skipped: %s", exc)
@@ -514,6 +573,7 @@ def _run_multi_worksheet_pipeline(
             pdf_path,
             artifacts,
             suffix=f"_{i}",
+            run_content_coverage=False,
         )
         validation_runs.append(ws_validation)
         adapted_summaries.append(_build_adapted_summary(adapted))
@@ -521,10 +581,27 @@ def _run_multi_worksheet_pipeline(
     _validate_format_variety(worksheets)
 
     validation_results = _aggregate_validation_results(validation_runs)
-    validation_results["ai_review_passed"] = True
-    validation_results["all_validators_passed"] = validation_results.get(
-        "all_validators_passed",
-        False,
+    content_result = _validate_package_content_coverage(skill_model, worksheets, artifacts)
+    time_budget_result = validate_lesson_time_budget(worksheets)
+    time_budget_json = artifacts / "validation_lesson_time_budget.json"
+    time_budget_json.write_text(
+        json.dumps({"lesson_time_budget": time_budget_result.model_dump()}, indent=2)
+    )
+    for violation in time_budget_result.violations:
+        if violation.severity == "warning":
+            logger.warning("  Lesson time budget: %s", violation.message)
+
+    validation_results["content_coverage_passed"] = content_result.passed
+    validation_results["lesson_time_budget_passed"] = time_budget_result.passed
+    validation_results["ai_review_passed"] = ai_review_passed
+    if pedagogical_judge_passed is not None:
+        validation_results["pedagogical_judge_passed"] = pedagogical_judge_passed
+    validation_results["all_validators_passed"] = (
+        validation_results.get("all_validators_passed", False)
+        and content_result.passed
+        and time_budget_result.passed
+        and ai_review_passed
+        and (pedagogical_judge_passed if pedagogical_judge_passed is not None else True)
     )
 
     # Generate cover image + cover page + merge into single PDF
@@ -532,10 +609,18 @@ def _run_multi_worksheet_pipeline(
         skill_model=skill_model,
         worksheets=worksheets,
         theme=theme,
+        theme_id=theme_id,
         profile=profile,
         content_hash=content_hash,
         pdf_paths=pdf_paths,
         output=output,
+    )
+    final_print_result = _validate_final_print_quality(pdf_paths[0], artifacts)
+    validation_results["print_quality_passed"] = (
+        validation_results.get("print_quality_passed", False) and final_print_result.passed
+    )
+    validation_results["all_validators_passed"] = (
+        validation_results.get("all_validators_passed", False) and final_print_result.passed
     )
 
     logger.info(
@@ -566,6 +651,7 @@ def _merge_lesson_package(
     skill_model: object,
     worksheets: list[AdaptedActivityModel],
     theme: object,
+    theme_id: str,
     profile: object,
     content_hash: str,
     pdf_paths: list[str],
@@ -575,14 +661,23 @@ def _merge_lesson_package(
 
     Returns updated pdf_paths (single merged file).
     """
+    from companion.character_identity import resolve_character_identity
+    from companion.schema import LearnerProfile
     from render.asset_gen import generate_cover_image
     from render.merge import merge_worksheet_package
     from skill.schema import LiteracySkillModel
     from theme.schema import ThemeConfig
 
     assert isinstance(skill_model, LiteracySkillModel)
+    assert isinstance(profile, LearnerProfile)
     assert isinstance(theme, ThemeConfig)
     avatar = getattr(profile, "avatar", None)
+    identity = resolve_character_identity(
+        profile,
+        theme_id,
+        pose="celebrating",
+        character_spec=theme.character_spec if theme.character_spec.art_style else None,
+    )
 
     # Generate cover image (optional — falls back gracefully)
     cover_image_path = generate_cover_image(
@@ -592,6 +687,9 @@ def _merge_lesson_package(
         worksheet_hash=content_hash,
         character_name=avatar.base_character if avatar else "rainbow_roblox",
         style_sheet=(avatar.style_sheet if avatar and avatar.style_sheet else None),
+        profile=profile,
+        theme_id=theme_id,
+        identity=identity,
     )
 
     # Render cover page PDF
@@ -620,6 +718,7 @@ def _validate_and_report(
     pdf_path: str,
     artifacts: Path,
     suffix: str = "",
+    run_content_coverage: bool = True,
 ) -> dict[str, bool]:
     """Run validation checks, persist results, and return pass/fail flags."""
     from adapt.schema import AdaptedActivityModel
@@ -632,58 +731,95 @@ def _validate_and_report(
 
     parity_result = validate_skill_parity(skill_model, adapted)
     age_result = validate_age_band(adapted, profile.grade_level)
-    adhd_result = validate_adhd_compliance(adapted)
+    adhd_result = validate_adhd_compliance(adapted, rules=build_rules(profile))
     print_result = validate_print_quality(pdf_path)
 
-    validation = {
-        "skill_parity": parity_result.model_dump(),
-        "age_band": age_result.model_dump(),
-        "adhd_compliance": adhd_result.model_dump(),
-        "print_quality": print_result.model_dump(),
-    }
+    results = [
+        ("Skill parity", "skill_parity", parity_result),
+        ("Age band", "age_band", age_result),
+        ("ADHD compliance", "adhd_compliance", adhd_result),
+        ("Print quality", "print_quality", print_result),
+    ]
+    if run_content_coverage:
+        content_result = validate_content_coverage(skill_model, adapted)
+        results.insert(1, ("Content coverage", "content_coverage", content_result))
+
+    validation = {key: result.model_dump() for _, key, result in results}
     val_json = artifacts / f"validation{suffix}.json"
     val_json.write_text(json.dumps(validation, indent=2))
 
-    all_passed = all(
-        [
-            parity_result.passed,
-            age_result.passed,
-            adhd_result.passed,
-            print_result.passed,
-        ]
-    )
+    all_passed = all(result.passed for _, _, result in results)
 
     if all_passed:
         logger.info("  All validations passed%s!", suffix)
     else:
-        for name, result in [
-            ("Skill parity", parity_result),
-            ("Age band", age_result),
-            ("ADHD compliance", adhd_result),
-            ("Print quality", print_result),
-        ]:
+        for name, _, result in results:
             if not result.passed:
                 for violation in result.violations:
                     if violation.severity == "error":
                         logger.error("  %s%s: %s", name, suffix, violation.message)
 
-    for name, result in [
-        ("Skill parity", parity_result),
-        ("Age band", age_result),
-        ("ADHD compliance", adhd_result),
-        ("Print quality", print_result),
-    ]:
+    for name, _, result in results:
         for violation in result.violations:
             if violation.severity == "warning":
                 logger.warning("  %s%s: %s", name, suffix, violation.message)
 
-    return {
+    flags = {
         "skill_parity_passed": parity_result.passed,
         "age_band_passed": age_result.passed,
         "adhd_compliance_passed": adhd_result.passed,
         "print_quality_passed": print_result.passed,
         "all_validators_passed": all_passed,
     }
+    if run_content_coverage:
+        flags["content_coverage_passed"] = validation["content_coverage"]["passed"]
+    return flags
+
+
+def _validate_package_content_coverage(
+    skill_model: object,
+    worksheets: Sequence[AdaptedActivityModel],
+    artifacts: Path,
+) -> ValidationResult:
+    """Run package-level content coverage for multi-worksheet output."""
+    from skill.schema import LiteracySkillModel
+
+    assert isinstance(skill_model, LiteracySkillModel)
+
+    result = validate_content_coverage_for_package(skill_model, worksheets)
+    validation = {"content_coverage": result.model_dump()}
+    val_json = artifacts / "validation_content_coverage.json"
+    val_json.write_text(json.dumps(validation, indent=2))
+
+    if not result.passed:
+        for violation in result.violations:
+            if violation.severity == "error":
+                logger.error("  Content coverage package: %s", violation.message)
+
+    for violation in result.violations:
+        if violation.severity == "warning":
+            logger.warning("  Content coverage package: %s", violation.message)
+
+    return result
+
+
+def _validate_final_print_quality(pdf_path: str, artifacts: Path) -> ValidationResult:
+    """Run print checks on the final merged lesson PDF and persist diagnostics."""
+    result = validate_print_quality(pdf_path)
+    validation = {"print_quality": result.model_dump()}
+    val_json = artifacts / "validation_final_print_quality.json"
+    val_json.write_text(json.dumps(validation, indent=2))
+
+    if not result.passed:
+        for violation in result.violations:
+            if violation.severity == "error":
+                logger.error("  Print quality final package: %s", violation.message)
+
+    for violation in result.violations:
+        if violation.severity == "warning":
+            logger.warning("  Print quality final package: %s", violation.message)
+
+    return result
 
 
 def _aggregate_validation_results(
@@ -693,6 +829,7 @@ def _aggregate_validation_results(
     if not validations:
         return {
             "skill_parity_passed": False,
+            "content_coverage_passed": False,
             "age_band_passed": False,
             "adhd_compliance_passed": False,
             "print_quality_passed": False,
@@ -703,7 +840,12 @@ def _aggregate_validation_results(
     for run in validations:
         keys.update(run.keys())
 
-    return {key: all(run.get(key, False) for run in validations) for key in keys}
+    aggregated = {key: all(run.get(key, False) for run in validations) for key in keys}
+    validator_keys = [
+        key for key in aggregated if key.endswith("_passed") and key != "all_validators_passed"
+    ]
+    aggregated["all_validators_passed"] = all(aggregated[key] for key in validator_keys)
+    return aggregated
 
 
 def _build_adapted_summary(

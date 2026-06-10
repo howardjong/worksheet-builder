@@ -7,6 +7,7 @@ reference image for consistency. Falls back gracefully when no API key is availa
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 import re
@@ -14,7 +15,9 @@ import textwrap
 from pathlib import Path
 from typing import Any
 
-from companion.schema import CharacterStyleSheet
+from companion.character_identity import CharacterIdentity, resolve_character_identity
+from companion.character_judge import CharacterJudgeResult, judge_character_consistency
+from companion.schema import CharacterStyleSheet, LearnerProfile
 from render.pose_planner import ScenePlan
 from theme.schema import AssetManifest, CharacterSpec
 
@@ -41,6 +44,9 @@ def generate_worksheet_assets(
     character_name: str = "rainbow_roblox",
     style_sheet: CharacterStyleSheet | None = None,
     character_spec: CharacterSpec | None = None,
+    profile: LearnerProfile | None = None,
+    theme_id: str = "",
+    identity: CharacterIdentity | None = None,
 ) -> AssetManifest | None:
     """Generate all assets for a worksheet: scenes + word pictures.
 
@@ -53,8 +59,31 @@ def generate_worksheet_assets(
     if os.environ.get("WORKSHEET_SKIP_ASSET_GEN"):
         return None
 
+    resolved_identity = identity
+    if resolved_identity is None and profile is not None:
+        resolved_identity = resolve_character_identity(
+            profile,
+            theme_id,
+            character_spec=character_spec,
+        )
+    if resolved_identity is not None:
+        character_name = resolved_identity.base_character
+
+    scene_identities: dict[int, CharacterIdentity] = {}
+    if profile is not None:
+        for plan in scene_plans:
+            scene_identities[plan.chunk_id] = resolve_character_identity(
+                profile,
+                theme_id,
+                pose=plan.pose,
+                character_spec=character_spec,
+            )
+
     safe_character = re.sub(r"[^A-Za-z0-9_-]+", "_", character_name)
-    cache_key = f"worksheet_{worksheet_hash}_{safe_character}_{_LOCAL_ASSET_VERSION}"
+    identity_cache = _asset_identity_cache_key(resolved_identity, scene_identities)
+    cache_key = (
+        f"worksheet_{worksheet_hash}_{safe_character}_{identity_cache}_{_LOCAL_ASSET_VERSION}"
+    )
     cache_dir = _CACHE_DIR / cache_key
 
     # Check if all assets already cached
@@ -63,24 +92,16 @@ def generate_worksheet_assets(
         logger.info(f"  Asset cache hit: {cache_dir}")
         return manifest
 
-    # Load reference character
-    ref_path = _ASSETS_DIR / "characters" / f"{character_name}.png"
-    ref_bytes: bytes | None = None
-    if ref_path.exists():
-        ref_bytes = ref_path.read_bytes()
+    ref_bytes = _reference_bytes_from_identity(resolved_identity)
+    if ref_bytes is None:
+        ref_path = _ASSETS_DIR / "characters" / f"{character_name}.png"
+        if ref_path.exists():
+            ref_bytes = ref_path.read_bytes()
 
     cache_dir.mkdir(parents=True, exist_ok=True)
 
     scene_paths: dict[int, str] = {}
     word_paths: dict[str, str] = {}
-
-    # Load additional reference images from style sheet pack
-    extra_ref_bytes: bytes | None = None
-    if style_sheet and style_sheet.reference_image_dir:
-        ref_pack_dir = Path(style_sheet.reference_image_dir)
-        front_ref = ref_pack_dir / "ref_front.png"
-        if front_ref.exists():
-            extra_ref_bytes = front_ref.read_bytes()
 
     # Generate scene images
     for plan in scene_plans:
@@ -89,14 +110,28 @@ def generate_worksheet_assets(
             scene_paths[plan.chunk_id] = str(scene_file)
             continue
 
+        scene_identity = scene_identities.get(plan.chunk_id, resolved_identity)
+        scene_ref_bytes = _reference_bytes_from_identity(scene_identity) or ref_bytes
+
         if _has_api_key():
             result = _generate_scene(
                 plan.scene_prompt,
                 str(scene_file),
-                extra_ref_bytes or ref_bytes,
+                scene_ref_bytes,
                 style_sheet=style_sheet,
                 character_spec=character_spec,
+                identity=scene_identity,
             )
+            if result is not None:
+                result = _approve_or_replace_scene(
+                    plan,
+                    Path(result),
+                    scene_ref_bytes,
+                    character_spec,
+                    character_name=character_name,
+                    style_sheet=style_sheet,
+                    identity=scene_identity,
+                )
             if result is None:
                 result = _generate_local_scene(
                     plan,
@@ -184,6 +219,236 @@ def _check_cache(
     )
 
 
+def _asset_identity_cache_key(
+    identity: CharacterIdentity | None,
+    scene_identities: dict[int, CharacterIdentity],
+) -> str:
+    parts: list[str] = []
+    if identity is not None:
+        parts.append(f"base={identity.identity_version}")
+    for chunk_id, scene_identity in sorted(scene_identities.items()):
+        parts.append(f"scene_{chunk_id}={scene_identity.identity_version}")
+    if not parts:
+        return "no_identity"
+    return hashlib.sha256("|".join(parts).encode()).hexdigest()[:16]
+
+
+def _build_scene_generation_prompt(
+    prompt: str,
+    identity: CharacterIdentity,
+    character_spec: CharacterSpec | None = None,
+) -> str:
+    """Build a scene prompt from resolved identity and theme context."""
+    env_context = ""
+    if character_spec and character_spec.scene_environment:
+        env_context = f" Theme environment: {character_spec.scene_environment.strip()}"
+    item_context = _identity_items_text(identity)
+    return (
+        f"Generate a printable worksheet scene of {identity.character_block}. "
+        f"Scene action: {prompt}. "
+        f"{identity.scene_guidelines.strip()} "
+        f"{identity.item_style_notes.strip()} "
+        f"{item_context}"
+        f"{env_context} "
+        f"Keep the same character style as the reference image. "
+        f"Bright colors, child-friendly, clean white background. "
+        f"No text, no words, no letters in the image."
+    )
+
+
+def _build_cover_prompt(
+    skill_description: str,
+    target_words: list[str],
+    theme_spec: CharacterSpec | None,
+    identity: CharacterIdentity | None = None,
+) -> str:
+    """Build a cover prompt without theme-incompatible style wording."""
+    if identity:
+        character_desc = identity.character_block
+        scene_guidelines = identity.scene_guidelines
+        item_notes = identity.item_style_notes
+        item_context = _identity_items_text(identity)
+    elif theme_spec and theme_spec.style_description:
+        character_desc = theme_spec.style_description
+        scene_guidelines = ""
+        item_notes = ""
+        item_context = ""
+    else:
+        character_desc = _FALLBACK_CHARACTER_DESC
+        scene_guidelines = ""
+        item_notes = ""
+        item_context = ""
+
+    env_context = ""
+    if theme_spec and theme_spec.scene_environment:
+        env_context = f" Theme environment: {theme_spec.scene_environment.strip()}"
+    words_str = ", ".join(target_words[:6]) if target_words else ""
+    word_context = f" Target words for context: {words_str}." if words_str else ""
+
+    return (
+        "Fun colorful cartoon illustration for a children's worksheet cover page. "
+        f"Feature this Learning Buddy: {character_desc}. "
+        f"{scene_guidelines.strip()} "
+        f"{item_notes.strip()} "
+        f"{item_context}"
+        f"{env_context} "
+        f"Skill focus: {skill_description}.{word_context} "
+        "Clean composition suitable for printing. "
+        "No text, no words, no letters in the image."
+    )
+
+
+def _identity_items_text(identity: CharacterIdentity) -> str:
+    if not identity.equipped_items:
+        return ""
+    items = ", ".join(f"{slot}={item}" for slot, item in sorted(identity.equipped_items.items()))
+    return f" Equipped items: {items}. "
+
+
+def _reference_bytes_from_identity(identity: CharacterIdentity | None) -> bytes | None:
+    if not identity:
+        return None
+    for raw_path in (
+        identity.pose_reference_path,
+        identity.canonical_reference_path,
+        identity.base_image_path,
+    ):
+        if raw_path:
+            path = _repo_path(raw_path)
+            if path.exists():
+                return path.read_bytes()
+    return None
+
+
+def _repo_path(path: str | Path) -> Path:
+    candidate = Path(path)
+    if candidate.is_absolute():
+        return candidate
+    return _ASSETS_DIR.parent / candidate
+
+
+def _approve_or_replace_scene(
+    plan: ScenePlan,
+    generated_path: Path,
+    reference_bytes: bytes | None,
+    character_spec: CharacterSpec | None,
+    *,
+    character_name: str,
+    style_sheet: CharacterStyleSheet | None,
+    identity: CharacterIdentity | None,
+) -> str | None:
+    """Keep generated scene art only when a judge confirms buddy consistency."""
+    if not generated_path.exists():
+        return None
+
+    generated_bytes = generated_path.read_bytes()
+    if reference_bytes is None:
+        verdict = CharacterJudgeResult(
+            available=False,
+            approved=False,
+            issues=["missing reference image bytes"],
+        )
+    else:
+        verdict = judge_character_consistency(
+            reference_bytes,
+            generated_bytes,
+            _scene_judge_criteria(identity, character_spec),
+        )
+
+    if verdict.available and verdict.approved:
+        logger.info("  Accepted scene %s after character judge", plan.chunk_id)
+        return str(generated_path)
+
+    _write_scene_rejection_diagnostics(generated_path, plan, verdict)
+    try:
+        generated_path.unlink()
+    except FileNotFoundError:
+        pass
+    logger.info(
+        "  Scene %s was not judge-approved; using local pose fallback",
+        plan.chunk_id,
+    )
+    approved_reference = _copy_identity_scene_fallback(identity, generated_path)
+    if approved_reference is not None:
+        return approved_reference
+
+    return _generate_local_scene(
+        plan,
+        str(generated_path),
+        character_spec,
+        character_name=character_name,
+        style_sheet=style_sheet,
+    )
+
+
+def _copy_identity_scene_fallback(
+    identity: CharacterIdentity | None,
+    output_path: Path,
+) -> str | None:
+    if identity is None:
+        return None
+
+    for raw_path in (identity.pose_reference_path, identity.canonical_reference_path):
+        if not raw_path:
+            continue
+        source_path = _repo_path(raw_path)
+        if not source_path.is_file():
+            continue
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(source_path.read_bytes())
+        logger.info("  Used approved local character art fallback: %s", source_path)
+        return str(output_path)
+
+    return None
+
+
+def _scene_judge_criteria(
+    identity: CharacterIdentity | None,
+    character_spec: CharacterSpec | None,
+) -> list[str]:
+    criteria = [
+        "CHARACTER CONSISTENCY: Does it look like the same Learning Buddy as the reference image?",
+        (
+            "IDENTITY DETAILS: Hair, face, body shape, clothing colors, and overall "
+            "silhouette should stay consistent."
+        ),
+        (
+            "SCENE SAFETY: The scene should be calm, printable, child-friendly, "
+            "and free of distracting effects."
+        ),
+        "IMAGE QUALITY: Clean lines, no artifacts, no distortion, no screen effects, no text.",
+    ]
+    if identity and identity.equipped_items:
+        items = ", ".join(
+            f"{slot}={item}" for slot, item in sorted(identity.equipped_items.items())
+        )
+        criteria.append(f"EQUIPPED ITEMS: Preserve visible equipped items: {items}.")
+    if identity and identity.scene_guidelines:
+        criteria.append(f"SCENE GUIDELINES: {identity.scene_guidelines}")
+    if character_spec and character_spec.judge_criteria:
+        criteria.append("THEME FIDELITY: " + "; ".join(character_spec.judge_criteria))
+    return criteria
+
+
+def _write_scene_rejection_diagnostics(
+    generated_path: Path,
+    plan: ScenePlan,
+    verdict: CharacterJudgeResult,
+) -> None:
+    diagnostic_path = generated_path.with_name(f"scene_{plan.chunk_id}_rejected.json")
+    payload = {
+        "chunk_id": plan.chunk_id,
+        "pose": plan.pose,
+        "scene_prompt": plan.scene_prompt,
+        "judge_available": verdict.available,
+        "approved": verdict.approved,
+        "score": verdict.score,
+        "issues": verdict.issues,
+        "judge": verdict.judge,
+    }
+    diagnostic_path.write_text(json.dumps(payload, indent=2, sort_keys=True))
+
+
 def _has_api_key() -> bool:
     """Check if a Gemini API key is available."""
     return bool(os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY"))
@@ -196,6 +461,7 @@ def _generate_scene(
     *,
     style_sheet: CharacterStyleSheet | None = None,
     character_spec: CharacterSpec | None = None,
+    identity: CharacterIdentity | None = None,
 ) -> str | None:
     """Generate a character scene image using Gemini with reference character.
 
@@ -212,25 +478,24 @@ def _generate_scene(
 
         client = genai.Client(api_key=api_key)
 
-        # Use style sheet character block or fallback
-        char_desc = (
-            style_sheet.character_block
-            if style_sheet and style_sheet.character_block
-            else _FALLBACK_CHARACTER_DESC
-        )
-
-        # Build scene environment context from theme spec
-        env_context = ""
-        if character_spec and character_spec.scene_environment:
-            env_context = f" The scene is set in {character_spec.scene_environment.strip()}"
-
-        full_prompt = (
-            f"Generate an image of {char_desc}, "
-            f"{prompt}{env_context} "
-            f"Keep the same character style as the reference image. "
-            f"Bright colors, child-friendly, clean white background. "
-            f"No text, no words, no letters in the image."
-        )
+        if identity:
+            full_prompt = _build_scene_generation_prompt(prompt, identity, character_spec)
+        else:
+            char_desc = (
+                style_sheet.character_block
+                if style_sheet and style_sheet.character_block
+                else _FALLBACK_CHARACTER_DESC
+            )
+            env_context = ""
+            if character_spec and character_spec.scene_environment:
+                env_context = f" The scene is set in {character_spec.scene_environment.strip()}"
+            full_prompt = (
+                f"Generate an image of {char_desc}, "
+                f"{prompt}{env_context} "
+                f"Keep the same character style as the reference image. "
+                f"Bright colors, child-friendly, clean white background. "
+                f"No text, no words, no letters in the image."
+            )
 
         contents: list[types.Part] = [types.Part(text=full_prompt)]
         if ref_bytes:
@@ -315,6 +580,9 @@ def generate_cover_image(
     worksheet_hash: str,
     character_name: str = "rainbow_roblox",
     style_sheet: CharacterStyleSheet | None = None,
+    profile: LearnerProfile | None = None,
+    theme_id: str = "",
+    identity: CharacterIdentity | None = None,
 ) -> str | None:
     """Generate an AI cover image for a lesson package.
 
@@ -323,8 +591,22 @@ def generate_cover_image(
     if os.environ.get("WORKSHEET_SKIP_ASSET_GEN"):
         return None
 
+    resolved_identity = identity
+    if resolved_identity is None and profile is not None:
+        resolved_identity = resolve_character_identity(
+            profile,
+            theme_id,
+            pose="celebrating",
+            character_spec=theme_spec,
+        )
+    if resolved_identity is not None:
+        character_name = resolved_identity.base_character
+
     safe_character = re.sub(r"[^A-Za-z0-9_-]+", "_", character_name)
-    cache_key = f"worksheet_{worksheet_hash}_{safe_character}_{_LOCAL_ASSET_VERSION}"
+    identity_cache = resolved_identity.identity_version if resolved_identity else "no_identity"
+    cache_key = (
+        f"worksheet_{worksheet_hash}_{safe_character}_{identity_cache}_{_LOCAL_ASSET_VERSION}"
+    )
     cache_dir = _CACHE_DIR / cache_key
     cache_dir.mkdir(parents=True, exist_ok=True)
     cover_file = cache_dir / "cover.png"
@@ -344,25 +626,11 @@ def generate_cover_image(
             style_sheet=style_sheet,
         )
 
-    # Build theme-aware prompt
-    char_desc = ""
-    env_desc = ""
-    if theme_spec:
-        if theme_spec.style_description:
-            char_desc = f" featuring {theme_spec.style_description}"
-        if theme_spec.scene_environment:
-            env_desc = f" set in {theme_spec.scene_environment.strip()}"
-
-    words_str = ", ".join(target_words[:6]) if target_words else ""
-    word_context = f" surrounded by the words '{words_str}'." if words_str else "."
-
-    prompt = (
-        f"Fun colorful cartoon illustration for a children's worksheet cover page. "
-        f"Scene: an exciting adventure{char_desc}{env_desc}{word_context} "
-        f"Skill focus: {skill_description}. "
-        f"Style: bright vibrant colors, Pixar-like, playful, child-friendly. "
-        f"Clean composition suitable for printing. "
-        f"No text, no words, no letters in the image."
+    prompt = _build_cover_prompt(
+        skill_description,
+        target_words,
+        theme_spec,
+        resolved_identity,
     )
 
     result = _generate_word_picture(prompt, str(cover_file))
@@ -1101,7 +1369,8 @@ def compute_worksheet_hash(
     source_hash: str,
     worksheet_number: int,
     theme_id: str,
+    identity_version: str | None = None,
 ) -> str:
     """Compute a deterministic hash for caching worksheet assets."""
-    data = f"{source_hash}:{worksheet_number}:{theme_id}"
+    data = f"{source_hash}:{worksheet_number}:{theme_id}:{identity_version or ''}"
     return hashlib.sha256(data.encode()).hexdigest()[:16]

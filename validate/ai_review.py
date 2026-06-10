@@ -32,17 +32,22 @@ class ReviewResult:
         passed: bool,
         issues: list[dict[str, str]],
         suggestions: list[dict[str, str]],
+        skipped_no_api_key: bool = False,
     ) -> None:
         self.passed = passed
         self.issues = issues  # [{"criterion": ..., "description": ...}]
         self.suggestions = suggestions  # [{"chunk_id": ..., "item_id": ..., "fix": ...}]
+        self.skipped_no_api_key = skipped_no_api_key
 
     def to_dict(self) -> dict[str, object]:
-        return {
+        data: dict[str, object] = {
             "passed": self.passed,
             "issues": self.issues,
             "suggestions": self.suggestions,
         }
+        if self.skipped_no_api_key:
+            data["skipped_no_api_key"] = True
+        return data
 
 
 def review_adapted_worksheet(
@@ -69,8 +74,7 @@ def review_adapted_worksheet(
             return adapted, reviews
 
         logger.info(
-            f"  Found {len(result.issues)} issues, "
-            f"{len(result.suggestions)} suggestions"
+            f"  Found {len(result.issues)} issues, " f"{len(result.suggestions)} suggestions"
         )
 
         # Apply suggestions
@@ -102,7 +106,7 @@ def _run_review(adapted: AdaptedActivityModel) -> ReviewResult:
 
     # No AI available — pass through
     logger.info("  No AI API key available — skipping quality review")
-    return ReviewResult(passed=True, issues=[], suggestions=[])
+    return ReviewResult(passed=True, issues=[], suggestions=[], skipped_no_api_key=True)
 
 
 def _build_review_prompt(adapted: AdaptedActivityModel) -> str:
@@ -113,21 +117,18 @@ def _build_review_prompt(adapted: AdaptedActivityModel) -> str:
         items_desc = []
         for item in chunk.items:
             items_desc.append(
-                f"    - Item {item.item_id}: \"{item.content}\" "
-                f"(format: {item.response_format})"
+                f'    - Item {item.item_id}: "{item.content}" ' f"(format: {item.response_format})"
             )
         chunks_desc.append(
             f"  Chunk {chunk.chunk_id}: {chunk.micro_goal}\n"
-            f"    Instructions: {[s.text for s in chunk.instructions]}\n"
-            + "\n".join(items_desc)
+            f"    Instructions: {[s.text for s in chunk.instructions]}\n" + "\n".join(items_desc)
         )
 
     worksheet_text = (
         f"Grade: {adapted.grade_level}\n"
         f"Domain: {adapted.domain}\n"
         f"Skill: {adapted.specific_skill}\n"
-        f"Theme: {adapted.theme_id}\n\n"
-        + "\n\n".join(chunks_desc)
+        f"Theme: {adapted.theme_id}\n\n" + "\n\n".join(chunks_desc)
     )
 
     if adapted.self_assessment:
@@ -205,9 +206,7 @@ def _parse_review_response(text: str) -> ReviewResult | None:
         return None
 
 
-def _review_with_gemini(
-    adapted: AdaptedActivityModel, api_key: str
-) -> ReviewResult | None:
+def _review_with_gemini(adapted: AdaptedActivityModel, api_key: str) -> ReviewResult | None:
     """Run quality review using Gemini."""
     try:
         from google import genai
@@ -227,9 +226,7 @@ def _review_with_gemini(
         return None
 
 
-def _review_with_openai(
-    adapted: AdaptedActivityModel, api_key: str
-) -> ReviewResult | None:
+def _review_with_openai(adapted: AdaptedActivityModel, api_key: str) -> ReviewResult | None:
     """Run quality review using OpenAI GPT-5.4."""
     try:
         from openai import OpenAI
@@ -281,7 +278,7 @@ def _apply_suggestions(
         return adapted
 
     # Rebuild chunks with fixes applied
-    from adapt.schema import ActivityChunk, ActivityItem
+    from adapt.schema import ActivityChunk
 
     new_chunks = []
     for chunk in adapted.chunks:
@@ -297,16 +294,9 @@ def _apply_suggestions(
                 fixed = fixes[key].get("fixed_content", item.content)
                 logger.info(
                     f"  Fixing chunk {chunk.chunk_id} item {item.item_id}: "
-                    f"\"{item.content[:30]}\" -> \"{fixed[:30]}\""
+                    f'"{item.content[:30]}" -> "{fixed[:30]}"'
                 )
-                new_items.append(
-                    ActivityItem(
-                        item_id=item.item_id,
-                        content=str(fixed),
-                        response_format=item.response_format,
-                        metadata=item.metadata,
-                    )
-                )
+                new_items.append(item.model_copy(update={"content": str(fixed)}))
             else:
                 new_items.append(item)
 

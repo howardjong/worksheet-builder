@@ -36,6 +36,9 @@ python transform.py --input photo.jpg --profile profiles/ian.yaml --theme space 
 # Transform into multi-worksheet set (3 mini-worksheets with varied activities)
 python transform.py --input photo.jpg --profile profiles/ian.yaml --theme roblox_obby --output ./output/
 
+# Optional live RAG experiment; default transforms do not retrieve vector context
+WORKSHEET_USE_RAG=1 python transform.py --input photo.jpg --profile profiles/ian.yaml --theme roblox_obby --output ./output-rag/
+
 # Batch process a folder of worksheets
 python batch.py --input-dir ./photos/ --profile profiles/ian.yaml --theme space --output ./output/
 
@@ -261,9 +264,21 @@ Outputs include:
 - Per-variant `artifacts/rag_context.json` showing retrieval provenance
 - Frozen `source_model.json` + `skill_model.json` for reproducible reruns
 
-### RAG backfill and evaluation
+### Optional RAG memory and evaluation
 
-Phase 7 adds two maintenance/evaluation commands on top of the live RAG path:
+The default transform path does not retrieve vector curriculum context. It relies
+on direct worksheet extraction plus corpus lookup enrichment from the skill and
+adaptation stages. Live RAG retrieval is available only for experiments:
+
+```bash
+WORKSHEET_USE_RAG=1 python transform.py \
+  --input photo.jpg \
+  --profile profiles/ian.yaml \
+  --theme roblox_obby \
+  --output ./output-rag/
+```
+
+RAG remains useful as optional memory and eval tooling:
 
 ```bash
 # Backfill previously generated outputs into the vector store
@@ -287,14 +302,16 @@ python -m rag.eval \
 PDFs, then reconstructs indexing payloads using the same `index_run()` path as
 live pipeline runs.
 
-`rag.eval` freezes extraction and skill inference per input, measures
+`rag.eval` and `ab_eval.py` call `retrieve_context()` directly and do not depend
+on `WORKSHEET_USE_RAG`. `rag.eval` freezes extraction and skill inference per input, measures
 `retrieval@3`, compares baseline vs RAG validator pass rate, tracks whether the
 RAG variant changes response-format sets, and estimates distractor novelty from
 retrieved prior adaptations.
 
 Current RAG operational notes:
 - The curriculum store is already populated with 148 indexed UFLI lessons.
-- Live embedding currently works via API-key auto-selection from `.env`.
+- Live transform retrieval requires `WORKSHEET_USE_RAG=1`.
+- Eval/backfill embedding currently works via API-key auto-selection from `.env`.
 - Vertex fallback remains supported through `RAG_GEMINI_BACKEND=vertex`.
 
 ## Companion layer
@@ -418,6 +435,21 @@ make test        # pytest (418 tests)
 make format      # ruff format .
 make clean       # rm -rf artifacts/ __pycache__ .mypy_cache
 ```
+
+### Quality gates
+
+Before merging worksheet quality changes, run:
+
+```bash
+make lint
+make typecheck
+make test
+make test-golden
+```
+
+Fixture-backed quality cases must report no blocking issues: content coverage,
+ADHD compliance, skill parity, Learning Buddy identity checks when required,
+and print quality all need to pass.
 
 ### Project layout
 

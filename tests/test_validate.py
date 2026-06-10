@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import pytest
+
 from adapt.engine import adapt_activity
+from adapt.rules import build_rules
 from adapt.schema import (
     ActivityChunk,
     ActivityItem,
@@ -13,6 +16,7 @@ from adapt.schema import (
 from companion.schema import Accommodations, LearnerProfile
 from skill.schema import LiteracySkillModel, SourceItem
 from validate.adhd_compliance import validate_adhd_compliance
+from validate.ai_review import _apply_suggestions, review_adapted_worksheet
 from validate.schema import ValidationResult
 from validate.skill_parity import validate_age_band, validate_skill_parity
 
@@ -225,6 +229,21 @@ class TestAdhdCompliance:
         violations = [v for v in result.violations if v.check == "chunk_size_limit"]
         assert len(violations) == 1
 
+    def test_chunk_size_uses_supplied_small_profile_rules(self) -> None:
+        adapted = _make_adapted(grade_level="1", items_per_chunk=4)
+        profile = LearnerProfile(
+            name="Small chunks",
+            grade_level="1",
+            accommodations=Accommodations(chunking_level="small"),
+        )
+        rules = build_rules(profile)
+
+        result = validate_adhd_compliance(adapted, rules=rules)
+
+        violations = [v for v in result.violations if v.check == "chunk_size_limit"]
+        assert len(violations) == 1
+        assert violations[0].details["max"] == rules.max_items_per_chunk
+
     def test_numbered_instructions_violation(self) -> None:
         adapted = _make_adapted()
         # Corrupt instruction numbering
@@ -259,9 +278,7 @@ class TestAdhdCompliance:
         assert len(violations) == 1
 
     def test_valid_decoration_zones(self) -> None:
-        adapted = _make_adapted(
-            decoration_zones=[(0.85, 0.0, 1.0, 0.12), (0.0, 0.88, 0.15, 1.0)]
-        )
+        adapted = _make_adapted(decoration_zones=[(0.85, 0.0, 1.0, 0.12), (0.0, 0.88, 0.15, 1.0)])
         result = validate_adhd_compliance(adapted)
         zone_violations = [v for v in result.violations if v.check == "decoration_zone_valid"]
         assert len(zone_violations) == 0
@@ -292,6 +309,55 @@ class TestAdhdCompliance:
         result = validate_adhd_compliance(adapted)
         violations = [v for v in result.violations if v.check == "no_accuracy_scoring"]
         assert len(violations) == 0
+
+
+class TestAiReview:
+    def test_no_api_key_review_records_skipped_pass_through(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+        monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+        original = _make_adapted()
+
+        adapted, reviews = review_adapted_worksheet(original)
+
+        assert adapted == original
+        assert reviews[-1].passed is True
+        assert reviews[-1].to_dict()["skipped_no_api_key"] is True
+
+    def test_fix_content_preserves_activity_item_fields(self) -> None:
+        original_item = ActivityItem(
+            item_id=1,
+            content="The slde is tall.",
+            response_format="fill_blank",
+            metadata={"display": "sentence_completion", "difficulty": 2},
+            options=["slide", "slid", "side"],
+            answer="slide",
+            picture_prompt="A child going down a playground slide",
+        )
+        adapted = _make_adapted()
+        adapted.chunks[0].items = [original_item]
+
+        fixed = _apply_suggestions(
+            adapted,
+            [
+                {
+                    "chunk_id": "1",
+                    "item_id": "1",
+                    "action": "fix_content",
+                    "fixed_content": "The slide is tall.",
+                }
+            ],
+        )
+
+        fixed_item = fixed.chunks[0].items[0]
+        assert fixed_item.content == "The slide is tall."
+        assert fixed_item.answer == original_item.answer
+        assert fixed_item.options == original_item.options
+        assert fixed_item.picture_prompt == original_item.picture_prompt
+        assert fixed_item.response_format == original_item.response_format
+        assert fixed_item.metadata == original_item.metadata
 
 
 # --- ValidationResult Schema Tests ---
