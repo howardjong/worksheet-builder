@@ -161,3 +161,28 @@ def test_hybrid_shell_strategy_is_experimental_pdf_renderer(
     assert strategy.produces_pdf is True
     assert strategy.experimental is True
     assert result.pdf_path == str(output_path)
+
+
+def test_aggregate_renderer_id_reports_fallbacks() -> None:
+    from render.strategies import RenderResult
+    from transform import _aggregate_renderer_id
+
+    def _result(renderer_id: str) -> RenderResult:
+        return RenderResult(
+            renderer_id=renderer_id,
+            pdf_path=None,
+            artifact_paths=[],
+            produces_pdf=True,
+            experimental=False,
+        )
+
+    assert _aggregate_renderer_id([], "image_gen") == "image_gen"
+    assert (
+        _aggregate_renderer_id([_result("image_gen"), _result("image_gen")], "image_gen")
+        == "image_gen"
+    )
+    assert (
+        _aggregate_renderer_id([_result("image_gen"), _result("pdf_classic")], "image_gen")
+        == "pdf_classic"
+    )
+    assert _aggregate_renderer_id([_result("pdf_classic")], "pdf_classic") == "pdf_classic"

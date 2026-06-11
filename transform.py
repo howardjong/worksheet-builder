@@ -557,6 +557,7 @@ def _run_multi_worksheet_pipeline(
     ).hexdigest()[:12]
     strategy = resolve_render_strategy(render_mode)
     renderer_artifact_paths: list[str] = []
+    render_results: list[RenderResult] = []
     last_design_spec = None
     last_render_result = None
 
@@ -648,6 +649,7 @@ def _run_multi_worksheet_pipeline(
             )
         )
         last_render_result = render_result
+        render_results.append(render_result)
         renderer_artifact_paths.extend(render_result.artifact_paths)
         if render_result.pdf_path:
             pdf_paths.append(render_result.pdf_path)
@@ -751,7 +753,7 @@ def _run_multi_worksheet_pipeline(
         validation_results=validation_results,
         profile_name=profile.name,
         render_mode=render_mode,
-        renderer_id=strategy.renderer_id,
+        renderer_id=_aggregate_renderer_id(render_results, strategy.renderer_id),
         renderer_experimental=strategy.experimental,
         renderer_artifact_paths=renderer_artifact_paths,
     )
@@ -925,6 +927,18 @@ def _write_renderer_manifest(
     )
     manifest_path.write_text(json.dumps(manifest, indent=2))
     return str(manifest_path)
+
+
+def _aggregate_renderer_id(results: list[RenderResult], requested: str) -> str:
+    """Report the requested renderer only if every worksheet actually used it.
+
+    Any per-worksheet fallback (e.g., image_gen -> pdf_classic) surfaces the
+    fallback id so downstream consumers (render battery, RAG metadata) see it.
+    """
+    for result in results:
+        if result.renderer_id != requested:
+            return result.renderer_id
+    return requested
 
 
 def _merge_artifact_paths(primary: list[str], extra: list[str]) -> list[str]:
