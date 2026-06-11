@@ -102,7 +102,7 @@ class SectionSpec(BaseModel):
     instructions: list[str] = Field(default_factory=list)
     worked_example_instruction: str | None = None
     worked_example_content: str | None = None
-    time_estimate: str | None = None
+    time_estimate: str | None = Field(default=None, description="Soft time cue text.")
     response_format: str = Field(description="Dominant response format.")
     items: list[SectionItemSpec] = Field(default_factory=list)
 

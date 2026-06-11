@@ -146,3 +146,21 @@ def test_design_spec_preserves_section_grouping() -> None:
     assert section.items[1].answer == "ay"
     assert spec.self_assessment == []
     assert spec.break_prompt is None
+
+
+def test_design_spec_sections_normalize_missing_example_and_options() -> None:
+    from render.design_spec import compile_worksheet_design_spec
+
+    adapted = _adapted()
+    adapted.chunks[0].worked_example = None
+    adapted.chunks[0].items[0].options = None
+
+    theme = ThemeConfig(name="Geometry Dash Calm")
+    profile = LearnerProfile(name="Ian", grade_level="1")
+
+    spec = compile_worksheet_design_spec(adapted, theme, profile, render_mode="image_gen")
+
+    section = spec.sections[0]
+    assert section.worked_example_instruction is None
+    assert section.worked_example_content is None
+    assert section.items[0].options == []
