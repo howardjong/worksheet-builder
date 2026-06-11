@@ -211,3 +211,79 @@ def test_resolve_render_strategy_knows_image_gen() -> None:
     assert strategy.renderer_id == "image_gen"
     assert strategy.produces_pdf is True
     assert strategy.experimental is True
+
+
+def test_theme_art_change_busts_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import render.image_gen as image_gen
+    from render.strategies import RenderContext
+    from theme.schema import CharacterSpec, ThemeConfig
+
+    provider = _StubProvider("stub", [_png_bytes(), _png_bytes()])
+    monkeypatch.setattr(image_gen, "evaluate_page", lambda *args, **kwargs: _gate_report(True))
+    renderer = _renderer([provider], tmp_path / "cache", monkeypatch)
+
+    def _ctx(art_style: str) -> RenderContext:
+        return RenderContext(
+            design_spec=_spec(),
+            adapted=object(),
+            theme=ThemeConfig(
+                name="Roblox Obby Quest",
+                character_spec=CharacterSpec(art_style=art_style),
+            ),
+            output_path=tmp_path / "worksheet.pdf",
+            artifacts_dir=tmp_path / "artifacts",
+        )
+
+    renderer.render(_ctx("roblox_2d_comic_avatar"))
+    assert provider.calls == 1
+
+    renderer.render(_ctx("pixel_art"))
+    assert provider.calls == 2  # different art style must not hit the old cache
+
+
+def test_cache_hit_requires_gate_report(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import render.image_gen as image_gen
+
+    provider = _StubProvider("stub", [_png_bytes(), _png_bytes()])
+    monkeypatch.setattr(image_gen, "evaluate_page", lambda *args, **kwargs: _gate_report(True))
+    renderer = _renderer([provider], tmp_path / "cache", monkeypatch)
+
+    renderer.render(_context(tmp_path))
+    assert provider.calls == 1
+
+    # Simulate a torn cache entry: page.png present, gate report missing.
+    cache_entries = list((tmp_path / "cache").glob("page_*/gate_report.json"))
+    assert cache_entries, "expected a gate report in the cache"
+    cache_entries[0].unlink()
+
+    renderer.render(_context(tmp_path))
+    assert provider.calls == 2  # torn entry must not be served as a cache hit
+
+
+def test_cache_not_written_on_gate_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import render.image_gen as image_gen
+    from render.strategies import RenderResult
+
+    provider = _StubProvider("stub", [_png_bytes()] * 3)
+    monkeypatch.setattr(image_gen, "evaluate_page", lambda *args, **kwargs: _gate_report(False))
+
+    class _StubClassic:
+        renderer_id = "pdf_classic"
+        produces_pdf = True
+        experimental = False
+
+        def render(self, context):
+            return RenderResult(
+                renderer_id="pdf_classic",
+                pdf_path=str(context.output_path),
+                artifact_paths=[str(context.output_path)],
+                produces_pdf=True,
+                experimental=False,
+            )
+
+    monkeypatch.setattr(image_gen, "PdfClassicRenderer", _StubClassic)
+    renderer = _renderer([provider], tmp_path / "cache", monkeypatch)
+
+    renderer.render(_context(tmp_path))
+
+    assert not list((tmp_path / "cache").glob("page_*/page.png"))
