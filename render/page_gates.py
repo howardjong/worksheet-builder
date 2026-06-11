@@ -8,7 +8,6 @@ vacuously satisfied (there is no buddy identity to verify).
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 from collections.abc import Mapping
@@ -18,7 +17,7 @@ from pydantic import BaseModel, Field
 
 from companion.character_judge import (
     CharacterJudgeResult,
-    _extract_json,  # noqa: PLC2701  # accepted repo idiom: mirrors character_judge structure
+    _parse_json_response,  # noqa: PLC2701  # accepted repo idiom: mirrors character_judge structure
     judge_character_consistency,
 )
 
@@ -66,6 +65,9 @@ def evaluate_page(
             approved=False,
             issues=["no reference image; character gate skipped"],
         )
+        # Vacuously satisfied: no reference image means no buddy identity to
+        # verify. Do NOT change this to track character_report.approved — that
+        # would block every reference-less page (see vacuous-pass test).
         character_ok = True
 
     passed = text_report.available and text_report.passed and character_ok
@@ -131,10 +133,7 @@ def _text_gate_with_gemini(page_png: bytes, required_text: list[str]) -> TextGat
                 ),
             ],  # type: ignore[arg-type]
         )
-        raw = json.loads(_extract_json(response.text or ""))
-        if not isinstance(raw, dict):
-            raise ValueError("text gate response must be a JSON object")
-        return _coerce_text_report(raw, judge="gemini")
+        return _coerce_text_report(_parse_json_response(response.text or ""), judge="gemini")
     except Exception as exc:
         logger.warning("Gemini text gate failed: %s", exc)
         return None
@@ -168,10 +167,7 @@ def _text_gate_with_openai(page_png: bytes, required_text: list[str]) -> TextGat
             ],
         )
         text = response.choices[0].message.content or ""
-        raw = json.loads(_extract_json(text))
-        if not isinstance(raw, dict):
-            raise ValueError("text gate response must be a JSON object")
-        return _coerce_text_report(raw, judge="openai")
+        return _coerce_text_report(_parse_json_response(text), judge="openai")
     except Exception as exc:
         logger.warning("OpenAI text gate failed: %s", exc)
         return None
