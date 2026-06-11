@@ -162,7 +162,7 @@ def compile_worksheet_design_spec(
         learner_name=profile.name,
         learner_grade_level=profile.grade_level,
         learner_theme_preferences=_theme_preferences(profile),
-        worksheet_title=adapted.worksheet_title or adapted.specific_skill,
+        worksheet_title=_worksheet_title(adapted),
         worksheet_number=adapted.worksheet_number,
         worksheet_count=adapted.worksheet_count,
         domain=adapted.domain,
@@ -198,10 +198,15 @@ def _intensity_for_style(style: str) -> VisualIntensity:
     return "medium"
 
 
+def _worksheet_title(adapted: AdaptedActivityModel) -> str:
+    if adapted.worksheet_title:
+        return adapted.worksheet_title
+    return adapted.specific_skill.replace("_", " ").title()
+
+
 def _required_text(adapted: AdaptedActivityModel) -> list[str]:
     text: list[str] = [
-        adapted.worksheet_title or adapted.specific_skill,
-        adapted.specific_skill,
+        _worksheet_title(adapted),
     ]
     for chunk in adapted.chunks:
         text.append(chunk.micro_goal)

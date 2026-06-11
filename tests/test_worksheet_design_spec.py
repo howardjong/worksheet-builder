@@ -148,6 +148,39 @@ def test_design_spec_preserves_section_grouping() -> None:
     assert spec.break_prompt is None
 
 
+def test_required_text_excludes_raw_skill_slug() -> None:
+    from render.design_spec import compile_worksheet_design_spec
+
+    adapted = _adapted()
+    adapted.specific_skill = "decodable_text_cvce"
+
+    theme = ThemeConfig(name="Geometry Dash Calm")
+    profile = LearnerProfile(name="Ian", grade_level="1")
+
+    spec = compile_worksheet_design_spec(adapted, theme, profile, render_mode="image_gen")
+
+    assert "decodable_text_cvce" not in spec.required_text
+    assert spec.worksheet_title == "Vowel Team Adventure"
+    assert "Vowel Team Adventure" in spec.required_text
+
+
+def test_worksheet_title_fallback_is_humanized() -> None:
+    from render.design_spec import compile_worksheet_design_spec
+
+    adapted = _adapted()
+    adapted.worksheet_title = None
+    adapted.specific_skill = "decodable_text_cvce"
+
+    theme = ThemeConfig(name="Geometry Dash Calm")
+    profile = LearnerProfile(name="Ian", grade_level="1")
+
+    spec = compile_worksheet_design_spec(adapted, theme, profile, render_mode="image_gen")
+
+    assert spec.worksheet_title == "Decodable Text Cvce"
+    assert "Decodable Text Cvce" in spec.required_text
+    assert "decodable_text_cvce" not in spec.required_text
+
+
 def test_design_spec_sections_normalize_missing_example_and_options() -> None:
     from render.design_spec import compile_worksheet_design_spec
 
