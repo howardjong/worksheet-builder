@@ -190,7 +190,7 @@ class TestLessonTimeBudget:
             return ValidationResult(validator="print_quality", passed=True, checks_run=1)
 
         monkeypatch.setattr(transform_module, "adapt_lesson", fake_adapt_lesson)
-        monkeypatch.setattr(transform_module, "render_worksheet", fake_render_worksheet)
+        monkeypatch.setattr("render.strategies.render_worksheet", fake_render_worksheet)
         monkeypatch.setattr(transform_module, "apply_theme", fake_apply_theme)
         monkeypatch.setattr(transform_module, "_merge_lesson_package", fake_merge_lesson_package)
         monkeypatch.setattr(transform_module, "validate_print_quality", fake_validate_print_quality)

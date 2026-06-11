@@ -36,11 +36,17 @@ python transform.py --input photo.jpg --profile profiles/ian.yaml --theme space 
 # Transform into multi-worksheet set (3 mini-worksheets with varied activities)
 python transform.py --input photo.jpg --profile profiles/ian.yaml --theme roblox_obby --output ./output/
 
+# Optional renderer modes; default is production-safe pdf_classic
+python transform.py --input photo.jpg --profile profiles/ian.yaml --theme roblox_obby --output ./output/ --render-mode pdf_classic
+python transform.py --input photo.jpg --profile profiles/ian.yaml --theme roblox_obby --output ./output-hybrid/ --render-mode hybrid_shell
+python transform.py --input photo.jpg --profile profiles/ian.yaml --theme roblox_obby --output ./output-prompts/ --render-mode image_prompt
+
 # Optional live RAG experiment; default transforms do not retrieve vector context
 WORKSHEET_USE_RAG=1 python transform.py --input photo.jpg --profile profiles/ian.yaml --theme roblox_obby --output ./output-rag/
 
 # Batch process a folder of worksheets
 python batch.py --input-dir ./photos/ --profile profiles/ian.yaml --theme space --output ./output/
+python batch.py --input-dir ./photos/ --profile profiles/ian.yaml --theme roblox_obby --output ./output-prompts/ --render-mode image_prompt
 
 # Mark completion and award tokens
 python complete.py --profile profiles/ian.yaml --lesson 5
@@ -144,6 +150,33 @@ Paper → [1] Capture → [2] Store → [3] Extract (AI vision / OCR) → [4] Sk
 
 All pipeline stages communicate through strict Pydantic contracts. The pipeline is idempotent: same inputs always produce the same outputs.
 
+### Renderer modes and image-model readiness
+
+The production default renderer is `pdf_classic`. It uses deterministic
+ReportLab vector text, existing scene assets, and PDF validation. This remains
+the safe path for instructional output.
+
+Two opt-in renderer modes keep the pipeline ready for improving image models:
+
+- `hybrid_shell` — experimental PDF mode that keeps deterministic text/layout
+  while routing through the renderer strategy interface for future visual-shell
+  work.
+- `image_prompt` — offline prompt-only mode. It writes provider-ready
+  `worksheet_image_prompt.md` and `renderer_manifest.json` artifacts, but does
+  not call an image-generation API and does not claim to produce a print-ready
+  PDF.
+
+All renderers consume the same `WorksheetDesignSpec`, which preserves exact
+required text, answer zones, page geometry, learner theme preferences, and the
+ADHD visual budget. Future full-page image renderers can plug into the same
+interface without changing extraction, skill modeling, adaptation, or validation.
+
+Experimental image renderers must pass the renderer benchmark promotion gates
+before they can become production defaults: exact required text present, answer
+zones represented, ADHD visual budget respected, and print-ready output
+produced. Prompt-only `image_prompt` is useful for model trials but intentionally
+fails the print-ready promotion gate until a real provider output is validated.
+
 ### AI assist boundary
 
 All AI calls go through `extract/adapter.py` behind a `ModelAdapter` protocol. Three providers included:
@@ -214,6 +247,9 @@ python batch.py --input-dir ./photos/ --profile profiles/ian.yaml --theme space 
 # Without AI images (fast bulk run, avoids 35 RPD image gen limit)
 python batch.py --input-dir ./photos/ --profile profiles/ian.yaml --theme roblox_obby --output ./output/ --no-images
 
+# Prompt-only image model trial artifacts
+python batch.py --input-dir ./photos/ --profile profiles/ian.yaml --theme roblox_obby --output ./output-prompts/ --render-mode image_prompt
+
 # Dry run — list files without processing
 python batch.py --input-dir ./photos/ --profile profiles/ian.yaml --theme space --dry-run
 
@@ -229,6 +265,7 @@ python batch.py --input-dir ./photos/ --profile profiles/ian.yaml --theme space 
 | `--workers` | 2 | Concurrent pipeline workers |
 | `--max-retries` | 2 | Retries per file on failure (exponential backoff) |
 | `--rpm` | 4 | Rate limit: max pipeline runs per minute |
+| `--render-mode` | pdf_classic | Renderer mode: `pdf_classic`, `hybrid_shell`, or `image_prompt` |
 | `--force` | off | Reprocess even if output exists |
 | `--dry-run` | off | List files without processing |
 | `--no-images` | off | Skip AI image generation (text-only PDFs) |
@@ -450,6 +487,11 @@ make test-golden
 Fixture-backed quality cases must report no blocking issues: content coverage,
 ADHD compliance, skill parity, Learning Buddy identity checks when required,
 and print quality all need to pass.
+
+Renderer benchmark reports must also pass before promoting an experimental
+renderer. The promotion gates are intentionally stricter for full-page image
+models: they must preserve exact worksheet text and answer affordances while
+meeting ADHD visual-budget and print-readiness requirements.
 
 ### Project layout
 

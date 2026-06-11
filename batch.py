@@ -66,6 +66,8 @@ def _process_single_file(
     rate_limiter: RateLimiter,
     shutdown_event: threading.Event,
     skip_images: bool,
+    *,
+    render_mode: str = "pdf_classic",
     pipeline_fn: PipelineFn | None = None,
 ) -> FileResult:
     """Process one file with retry + rate limiting. Called per worker thread."""
@@ -101,9 +103,7 @@ def _process_single_file(
                 os.environ["WORKSHEET_SKIP_ASSET_GEN"] = "1"
 
             try:
-                artifacts_dir = str(
-                    Path(output_dir) / "artifacts" / input_path.stem
-                )
+                artifacts_dir = str(Path(output_dir) / "artifacts" / input_path.stem)
                 Path(artifacts_dir).mkdir(parents=True, exist_ok=True)
 
                 pdf_path = pipeline_fn(
@@ -113,6 +113,7 @@ def _process_single_file(
                     output_dir=output_dir,
                     artifacts_dir=artifacts_dir,
                     index_results=False,
+                    render_mode=render_mode,
                 )
 
                 output_path: str | None = None
@@ -128,8 +129,7 @@ def _process_single_file(
                             output_path = first_path
                 else:
                     raise TypeError(
-                        "Pipeline returned unsupported result type: "
-                        f"{type(pdf_path).__name__}"
+                        "Pipeline returned unsupported result type: " f"{type(pdf_path).__name__}"
                     )
 
                 return FileResult(
@@ -151,10 +151,9 @@ def _process_single_file(
         except Exception as e:
             if attempt < max_retries:
                 # Exponential backoff: 5s, 10s, 20s + jitter
-                backoff = min(5 * (2 ** attempt), 60) + random.uniform(0, 1)
+                backoff = min(5 * (2**attempt), 60) + random.uniform(0, 1)
                 logger.warning(
-                    f"  Retry {attempt + 1}/{max_retries} for "
-                    f"{input_path.name}: {e}"
+                    f"  Retry {attempt + 1}/{max_retries} for " f"{input_path.name}: {e}"
                 )
                 # Sleep in 1s increments to check shutdown
                 end_sleep = time.monotonic() + backoff
@@ -188,15 +187,15 @@ def _process_single_file(
 
 
 @click.command()
-@click.option(
-    "--input-dir", required=True, help="Directory containing worksheet images"
-)
-@click.option(
-    "--profile", "profile_path", required=True, help="Path to learner profile YAML"
-)
+@click.option("--input-dir", required=True, help="Directory containing worksheet images")
+@click.option("--profile", "profile_path", required=True, help="Path to learner profile YAML")
 @click.option("--theme", "theme_id", default="space", help="Theme name")
+@click.option("--output", "output_dir", default="./output", help="Output directory")
 @click.option(
-    "--output", "output_dir", default="./output", help="Output directory"
+    "--render-mode",
+    default="pdf_classic",
+    type=click.Choice(["pdf_classic", "hybrid_shell", "image_prompt"]),
+    help="Renderer mode. Defaults to production-safe pdf_classic.",
 )
 @click.option(
     "--workers",
@@ -210,12 +209,8 @@ def _process_single_file(
     type=int,
     help="Max retries per file on failure (default: 2)",
 )
-@click.option(
-    "--force", is_flag=True, help="Reprocess even if output already exists"
-)
-@click.option(
-    "--dry-run", is_flag=True, help="List files without processing"
-)
+@click.option("--force", is_flag=True, help="Reprocess even if output already exists")
+@click.option("--dry-run", is_flag=True, help="List files without processing")
 @click.option(
     "--no-images",
     is_flag=True,
@@ -237,6 +232,7 @@ def batch(
     profile_path: str,
     theme_id: str,
     output_dir: str,
+    render_mode: str,
     workers: int,
     max_retries: int,
     force: bool,
@@ -287,12 +283,11 @@ def batch(
         sys.exit(0)
 
     # 4. Process files
-    click.echo(
-        f"\nProcessing {len(files)} file(s) with {workers} worker(s), "
-        f"RPM limit: {rpm}"
-    )
+    click.echo(f"\nProcessing {len(files)} file(s) with {workers} worker(s), " f"RPM limit: {rpm}")
     if no_images:
         click.echo("  Image generation disabled (--no-images)")
+    if render_mode != "pdf_classic":
+        click.echo(f"  Render mode: {render_mode}")
 
     rate_limiter = RateLimiter(rpm=rpm)
     shutdown_event = threading.Event()
@@ -325,6 +320,7 @@ def batch(
                     rate_limiter,
                     shutdown_event,
                     no_images,
+                    render_mode=render_mode,
                 ): f
                 for f in files
             }
@@ -359,8 +355,10 @@ def batch(
                 # Print progress
                 progress = tracker.record(result)
                 status_icon = (
-                    "ok" if result.status == "success"
-                    else "FAIL" if result.status == "failed"
+                    "ok"
+                    if result.status == "success"
+                    else "FAIL"
+                    if result.status == "failed"
                     else "skip"
                 )
                 click.echo(
@@ -400,6 +398,7 @@ def batch(
             data = {}
         data["profile"] = profile_path
         data["theme"] = theme_id
+        data["render_mode"] = render_mode
         data["last_run"] = datetime.now(UTC).isoformat()
         manifest_path.write_text(json.dumps(data, indent=2))
 

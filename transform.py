@@ -9,6 +9,7 @@ import os
 import re
 from collections.abc import Sequence
 from pathlib import Path
+from typing import cast
 
 import click
 from pydantic import BaseModel
@@ -30,7 +31,9 @@ from companion.schema import load_profile
 from extract.heuristics import map_to_source_model
 from extract.ocr import extract_text_with_fallback
 from extract.vision import extract_with_vision
-from render.pdf import render_cover_page, render_worksheet
+from render.design_spec import RenderMode, WorksheetDesignSpec, compile_worksheet_design_spec
+from render.pdf import render_cover_page
+from render.strategies import RenderContext, RenderResult, resolve_render_strategy
 from skill.extractor import extract_skill
 from theme.engine import apply_theme, load_theme
 from validate.adhd_compliance import validate_adhd_compliance, validate_lesson_time_budget
@@ -64,6 +67,10 @@ class RunArtifacts(BaseModel):
     pdf_paths: list[str]
     validation_results: dict[str, bool]
     profile_name: str | None = None
+    render_mode: str = "pdf_classic"
+    renderer_id: str = "pdf_classic"
+    renderer_experimental: bool = False
+    renderer_artifact_paths: list[str] = []
 
 
 @click.command()
@@ -71,11 +78,18 @@ class RunArtifacts(BaseModel):
 @click.option("--profile", "profile_path", required=True, help="Path to learner profile YAML")
 @click.option("--theme", "theme_id", default="space", help="Theme name")
 @click.option("--output", "output_dir", default="./output", help="Output directory")
+@click.option(
+    "--render-mode",
+    default="pdf_classic",
+    type=click.Choice(["pdf_classic", "hybrid_shell", "image_prompt"]),
+    help="Renderer mode. Defaults to production-safe pdf_classic.",
+)
 def transform(
     input_path: str,
     profile_path: str,
     theme_id: str,
     output_dir: str,
+    render_mode: str,
 ) -> None:
     """Transform a worksheet photo into an ADHD-adapted, themed, print-ready PDF."""
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
@@ -90,6 +104,7 @@ def transform(
         theme_id=theme_id,
         output_dir=str(output),
         artifacts_dir=str(artifacts),
+        render_mode=render_mode,
     )
 
 
@@ -108,6 +123,7 @@ def run_pipeline(
     theme_id: str,
     output_dir: str,
     artifacts_dir: str,
+    render_mode: str | None = None,
 ) -> str:
     """Run the full transformation pipeline. Returns path to the output PDF."""
     run_artifacts = run_pipeline_collect_artifacts(
@@ -117,6 +133,7 @@ def run_pipeline(
         output_dir=output_dir,
         artifacts_dir=artifacts_dir,
         index_results=True,
+        render_mode=render_mode,
     )
     return run_artifacts.pdf_paths[0] if run_artifacts.pdf_paths else ""
 
@@ -129,12 +146,15 @@ def run_pipeline_collect_artifacts(
     artifacts_dir: str,
     *,
     index_results: bool,
+    render_mode: str | None = None,
 ) -> RunArtifacts:
     """Run the full pipeline and return RunArtifacts, optionally indexing them."""
     output = Path(output_dir)
     artifacts = Path(artifacts_dir)
     output.mkdir(parents=True, exist_ok=True)
     artifacts.mkdir(parents=True, exist_ok=True)
+    selected_strategy = resolve_render_strategy(render_mode)
+    selected_render_mode = cast(RenderMode, selected_strategy.renderer_id)
 
     # Stage 1: Preprocess
     logger.info("Stage 1: Preprocessing image...")
@@ -246,6 +266,7 @@ def run_pipeline_collect_artifacts(
             artifacts=artifacts,
             rag_prior_adaptations=rag_prior_adaptations,
             rag_curriculum_references=rag_curriculum_references,
+            render_mode=selected_render_mode,
         )
     else:
         run_artifacts = _run_single_worksheet_pipeline(
@@ -263,6 +284,7 @@ def run_pipeline_collect_artifacts(
             artifacts=artifacts,
             rag_prior_adaptations=rag_prior_adaptations,
             rag_curriculum_references=rag_curriculum_references,
+            render_mode=selected_render_mode,
         )
 
     # Stage 9: Optional RAG indexing
@@ -309,6 +331,7 @@ def _run_single_worksheet_pipeline(
     artifacts: Path,
     rag_prior_adaptations: list[dict[str, object]] | None,
     rag_curriculum_references: list[dict[str, object]] | None,
+    render_mode: RenderMode = "pdf_classic",
 ) -> RunArtifacts:
     """Single-worksheet pipeline."""
     from companion.avatar import compose_avatar
@@ -369,17 +392,51 @@ def _run_single_worksheet_pipeline(
     ).hexdigest()[:12]
     pdf_filename = f"worksheet_{content_hash}.pdf"
     pdf_path = str(output / pdf_filename)
-    render_worksheet(adapted, theme, pdf_path, avatar_image=avatar_path)
-    logger.info("  Output: %s", pdf_path)
+    strategy = resolve_render_strategy(render_mode)
+    design_spec = compile_worksheet_design_spec(adapted, theme, profile, render_mode=render_mode)
+    render_result = strategy.render(
+        RenderContext(
+            design_spec=design_spec,
+            adapted=adapted,
+            theme=theme,
+            output_path=Path(pdf_path),
+            artifacts_dir=artifacts,
+            avatar_image=avatar_path,
+        )
+    )
+    manifest_path = _write_renderer_manifest(artifacts, render_result, design_spec)
+    renderer_artifact_paths = _merge_artifact_paths(
+        render_result.artifact_paths,
+        [manifest_path],
+    )
+    if render_result.pdf_path:
+        logger.info("  Output: %s", render_result.pdf_path)
+    else:
+        logger.info("  Output: prompt artifacts only")
 
     logger.info("Stage 8: Running validation...")
-    validation_results = _validate_and_report(skill_model, adapted, profile, pdf_path, artifacts)
+    if render_result.pdf_path:
+        validation_results = _validate_and_report(
+            skill_model,
+            adapted,
+            profile,
+            render_result.pdf_path,
+            artifacts,
+        )
+        pdf_paths = [render_result.pdf_path]
+    else:
+        validation_results = _validate_non_pdf_and_report(skill_model, adapted, profile, artifacts)
+        pdf_paths = []
     validation_results["ai_review_passed"] = ai_review_passed
+    validation_results["renderer_produces_pdf"] = render_result.produces_pdf
+    validation_results["renderer_experimental"] = render_result.experimental
     validation_results["all_validators_passed"] = (
-        validation_results.get("all_validators_passed", False) and ai_review_passed
+        validation_results.get("all_validators_passed", False)
+        and ai_review_passed
+        and render_result.produces_pdf
     )
 
-    logger.info("Done! PDF saved to: %s", pdf_path)
+    logger.info("Done! Render mode %s complete", render_result.renderer_id)
     return RunArtifacts(
         source_image_path=source_image_path,
         source_image_hash=source_image_hash,
@@ -393,9 +450,13 @@ def _run_single_worksheet_pipeline(
         theme_id=theme_id,
         worksheet_mode="single",
         adapted_summaries=[_build_adapted_summary(adapted)],
-        pdf_paths=[pdf_path],
+        pdf_paths=pdf_paths,
         validation_results=validation_results,
         profile_name=profile.name,
+        render_mode=render_mode,
+        renderer_id=render_result.renderer_id,
+        renderer_experimental=render_result.experimental,
+        renderer_artifact_paths=renderer_artifact_paths,
     )
 
 
@@ -414,6 +475,7 @@ def _run_multi_worksheet_pipeline(
     artifacts: Path,
     rag_prior_adaptations: list[dict[str, object]] | None,
     rag_curriculum_references: list[dict[str, object]] | None,
+    render_mode: RenderMode = "pdf_classic",
 ) -> RunArtifacts:
     """Multi-worksheet pipeline — produces 2-3 mini-worksheets per lesson."""
     from companion.character_identity import resolve_character_identity
@@ -493,6 +555,10 @@ def _run_multi_worksheet_pipeline(
     content_hash = hashlib.sha256(
         f"{source_image_hash}:{profile.name}:{theme_id}".encode()
     ).hexdigest()[:12]
+    strategy = resolve_render_strategy(render_mode)
+    renderer_artifact_paths: list[str] = []
+    last_design_spec = None
+    last_render_result = None
 
     for i, adapted in enumerate(worksheets, start=1):
         ws_title = adapted.worksheet_title or "Untitled"
@@ -562,19 +628,47 @@ def _run_multi_worksheet_pipeline(
 
         pdf_filename = f"worksheet_{content_hash}_{i}of{len(worksheets)}.pdf"
         pdf_path = str(output / pdf_filename)
-        render_worksheet(adapted, theme, pdf_path, asset_manifest=asset_manifest)
-        pdf_paths.append(pdf_path)
-        logger.info("  Output: %s", pdf_path)
-
-        ws_validation = _validate_and_report(
-            skill_model,
+        render_artifacts_dir = artifacts / f"render_{i}" if not strategy.produces_pdf else artifacts
+        design_spec = compile_worksheet_design_spec(
             adapted,
+            theme,
             profile,
-            pdf_path,
-            artifacts,
-            suffix=f"_{i}",
-            run_content_coverage=False,
+            render_mode=render_mode,
         )
+        last_design_spec = design_spec
+        render_result = strategy.render(
+            RenderContext(
+                design_spec=design_spec,
+                adapted=adapted,
+                theme=theme,
+                output_path=Path(pdf_path),
+                artifacts_dir=render_artifacts_dir,
+                asset_manifest=asset_manifest,
+            )
+        )
+        last_render_result = render_result
+        renderer_artifact_paths.extend(render_result.artifact_paths)
+        if render_result.pdf_path:
+            pdf_paths.append(render_result.pdf_path)
+            logger.info("  Output: %s", render_result.pdf_path)
+            ws_validation = _validate_and_report(
+                skill_model,
+                adapted,
+                profile,
+                render_result.pdf_path,
+                artifacts,
+                suffix=f"_{i}",
+                run_content_coverage=False,
+            )
+        else:
+            logger.info("  Output: prompt artifacts only")
+            ws_validation = _validate_non_pdf_and_report(
+                skill_model,
+                adapted,
+                profile,
+                artifacts,
+                suffix=f"_{i}",
+            )
         validation_runs.append(ws_validation)
         adapted_summaries.append(_build_adapted_summary(adapted))
 
@@ -594,6 +688,8 @@ def _run_multi_worksheet_pipeline(
     validation_results["content_coverage_passed"] = content_result.passed
     validation_results["lesson_time_budget_passed"] = time_budget_result.passed
     validation_results["ai_review_passed"] = ai_review_passed
+    validation_results["renderer_produces_pdf"] = strategy.produces_pdf
+    validation_results["renderer_experimental"] = strategy.experimental
     if pedagogical_judge_passed is not None:
         validation_results["pedagogical_judge_passed"] = pedagogical_judge_passed
     validation_results["all_validators_passed"] = (
@@ -602,30 +698,39 @@ def _run_multi_worksheet_pipeline(
         and time_budget_result.passed
         and ai_review_passed
         and (pedagogical_judge_passed if pedagogical_judge_passed is not None else True)
+        and strategy.produces_pdf
     )
 
     # Generate cover image + cover page + merge into single PDF
-    pdf_paths = _merge_lesson_package(
-        skill_model=skill_model,
-        worksheets=worksheets,
-        theme=theme,
-        theme_id=theme_id,
-        profile=profile,
-        content_hash=content_hash,
-        pdf_paths=pdf_paths,
-        output=output,
-    )
-    final_print_result = _validate_final_print_quality(pdf_paths[0], artifacts)
-    validation_results["print_quality_passed"] = (
-        validation_results.get("print_quality_passed", False) and final_print_result.passed
-    )
-    validation_results["all_validators_passed"] = (
-        validation_results.get("all_validators_passed", False) and final_print_result.passed
-    )
+    if strategy.produces_pdf:
+        pdf_paths = _merge_lesson_package(
+            skill_model=skill_model,
+            worksheets=worksheets,
+            theme=theme,
+            theme_id=theme_id,
+            profile=profile,
+            content_hash=content_hash,
+            pdf_paths=pdf_paths,
+            output=output,
+        )
+        renderer_artifact_paths = pdf_paths
+        final_print_result = _validate_final_print_quality(pdf_paths[0], artifacts)
+        validation_results["print_quality_passed"] = (
+            validation_results.get("print_quality_passed", False) and final_print_result.passed
+        )
+        validation_results["all_validators_passed"] = (
+            validation_results.get("all_validators_passed", False) and final_print_result.passed
+        )
+
+    if last_design_spec is not None and last_render_result is not None:
+        renderer_artifact_paths = _merge_artifact_paths(
+            renderer_artifact_paths,
+            [_write_renderer_manifest(artifacts, last_render_result, last_design_spec)],
+        )
 
     logger.info(
-        "Done! Lesson package saved to: %s (cover + %s worksheets)",
-        pdf_paths[0],
+        "Done! Render mode %s complete (%s worksheets)",
+        strategy.renderer_id,
         len(worksheets),
     )
     return RunArtifacts(
@@ -644,6 +749,10 @@ def _run_multi_worksheet_pipeline(
         pdf_paths=pdf_paths,
         validation_results=validation_results,
         profile_name=profile.name,
+        render_mode=render_mode,
+        renderer_id=strategy.renderer_id,
+        renderer_experimental=strategy.experimental,
+        renderer_artifact_paths=renderer_artifact_paths,
     )
 
 
@@ -774,6 +883,108 @@ def _validate_and_report(
     if run_content_coverage:
         flags["content_coverage_passed"] = validation["content_coverage"]["passed"]
     return flags
+
+
+def _write_renderer_manifest(
+    artifacts: Path,
+    render_result: RenderResult,
+    design_spec: WorksheetDesignSpec,
+) -> str:
+    """Persist renderer provenance for the current render run."""
+    manifest_path = artifacts / "renderer_manifest.json"
+    manifest: dict[str, object] = {}
+    if manifest_path.exists():
+        try:
+            loaded = json.loads(manifest_path.read_text())
+            if isinstance(loaded, dict):
+                manifest.update(loaded)
+        except json.JSONDecodeError:
+            manifest = {}
+
+    if render_result.renderer_id == "image_prompt":
+        manifest.setdefault("provider", "offline_prompt_only")
+
+    manifest.update(
+        {
+            "renderer_id": render_result.renderer_id,
+            "render_mode": design_spec.render_mode,
+            "experimental": render_result.experimental,
+            "produces_pdf": render_result.produces_pdf,
+            "pdf_path": render_result.pdf_path,
+            "artifact_paths": render_result.artifact_paths,
+            "spec_version": design_spec.spec_version,
+            "source_hash": design_spec.source_hash,
+            "skill_model_hash": design_spec.skill_model_hash,
+            "learner_profile_hash": design_spec.learner_profile_hash,
+            "theme_id": design_spec.theme_id,
+            "worksheet_number": design_spec.worksheet_number,
+            "worksheet_count": design_spec.worksheet_count,
+            "required_text_count": len(design_spec.required_text),
+        }
+    )
+    manifest_path.write_text(json.dumps(manifest, indent=2))
+    return str(manifest_path)
+
+
+def _merge_artifact_paths(primary: list[str], extra: list[str]) -> list[str]:
+    merged: list[str] = []
+    for path in [*primary, *extra]:
+        if path not in merged:
+            merged.append(path)
+    return merged
+
+
+def _validate_non_pdf_and_report(
+    skill_model: object,
+    adapted: object,
+    profile: object,
+    artifacts: Path,
+    suffix: str = "",
+) -> dict[str, bool]:
+    """Run non-PDF validations for prompt-only experimental renderers."""
+    from adapt.schema import AdaptedActivityModel
+    from companion.schema import LearnerProfile
+    from skill.schema import LiteracySkillModel
+
+    assert isinstance(skill_model, LiteracySkillModel)
+    assert isinstance(adapted, AdaptedActivityModel)
+    assert isinstance(profile, LearnerProfile)
+
+    parity_result = validate_skill_parity(skill_model, adapted)
+    content_result = validate_content_coverage(skill_model, adapted)
+    age_result = validate_age_band(adapted, profile.grade_level)
+    adhd_result = validate_adhd_compliance(adapted, rules=build_rules(profile))
+
+    validation = {
+        "skill_parity": parity_result.model_dump(),
+        "content_coverage": content_result.model_dump(),
+        "age_band": age_result.model_dump(),
+        "adhd_compliance": adhd_result.model_dump(),
+        "print_quality": {
+            "validator": "print_quality",
+            "passed": False,
+            "checks_run": 0,
+            "violations": [
+                {
+                    "check": "pdf_not_produced",
+                    "message": "Prompt-only renderer did not produce a print-ready PDF.",
+                    "severity": "error",
+                    "details": {},
+                }
+            ],
+        },
+    }
+    val_json = artifacts / f"validation{suffix}.json"
+    val_json.write_text(json.dumps(validation, indent=2))
+
+    return {
+        "skill_parity_passed": parity_result.passed,
+        "content_coverage_passed": content_result.passed,
+        "age_band_passed": age_result.passed,
+        "adhd_compliance_passed": adhd_result.passed,
+        "print_quality_passed": False,
+        "all_validators_passed": False,
+    }
 
 
 def _validate_package_content_coverage(

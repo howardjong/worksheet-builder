@@ -192,11 +192,7 @@ class TestManifest:
         assert result == {}
 
     def test_load_manifest_with_data(self, tmp_path: Path) -> None:
-        manifest = {
-            "files": {
-                "a.jpg": {"output": "out.pdf", "timestamp": "2026-01-01"}
-            }
-        }
+        manifest = {"files": {"a.jpg": {"output": "out.pdf", "timestamp": "2026-01-01"}}}
         (tmp_path / "batch_manifest.json").write_text(json.dumps(manifest))
         result = load_manifest(str(tmp_path))
         assert "a.jpg" in result
@@ -231,11 +227,7 @@ class TestManifest:
         pdf_path = tmp_path / "out.pdf"
         pdf_path.touch()
 
-        manifest = {
-            "files": {
-                "a.jpg": {"output": str(pdf_path), "timestamp": "2026-01-01"}
-            }
-        }
+        manifest = {"files": {"a.jpg": {"output": str(pdf_path), "timestamp": "2026-01-01"}}}
         (tmp_path / "batch_manifest.json").write_text(json.dumps(manifest))
 
         existing = load_manifest(str(tmp_path))
@@ -408,6 +400,33 @@ class TestProcessSingleFile:
             "pdf_paths": ["/tmp/out.pdf"],
         }
 
+    def test_forwards_render_mode(self, tmp_path: Path) -> None:
+        from batch import _process_single_file
+
+        input_file = tmp_path / "test.jpg"
+        input_file.touch()
+        captured_kwargs: dict[str, object] = {}
+
+        def mock_pipeline(**kwargs: object) -> str:
+            captured_kwargs.update(kwargs)
+            return "/tmp/out.pdf"
+
+        result = _process_single_file(
+            input_path=input_file,
+            profile_path="profiles/test.yaml",
+            theme_id="space",
+            output_dir=str(tmp_path),
+            render_mode="image_prompt",
+            max_retries=0,
+            rate_limiter=RateLimiter(rpm=60),
+            shutdown_event=threading.Event(),
+            skip_images=False,
+            pipeline_fn=mock_pipeline,
+        )
+
+        assert result.status == "success"
+        assert captured_kwargs["render_mode"] == "image_prompt"
+
 
 class TestBatchIndexing:
     def test_indexes_successful_runs_from_main_thread(
@@ -459,9 +478,12 @@ class TestBatchCLI:
         result = runner.invoke(
             batch,
             [
-                "--input-dir", str(tmp_path),
-                "--profile", "profiles/test.yaml",
-                "--theme", "space",
+                "--input-dir",
+                str(tmp_path),
+                "--profile",
+                "profiles/test.yaml",
+                "--theme",
+                "space",
                 "--dry-run",
             ],
         )
