@@ -122,3 +122,27 @@ def test_design_spec_rejects_non_print_page_size() -> None:
 
     with pytest.raises(ValidationError):
         PageSpec(width_pt=500, height_pt=500, margin_pt=54)
+
+
+def test_design_spec_preserves_section_grouping() -> None:
+    from render.design_spec import compile_worksheet_design_spec
+
+    theme = ThemeConfig(name="Geometry Dash Calm")
+    profile = LearnerProfile(name="Ian", grade_level="1")
+
+    spec = compile_worksheet_design_spec(_adapted(), theme, profile, render_mode="image_gen")
+
+    assert spec.render_mode == "image_gen"
+    assert len(spec.sections) == 1
+    section = spec.sections[0]
+    assert section.chunk_id == 1
+    assert section.micro_goal == "Read vowel team words"
+    assert section.instructions == ["Read each word.", "Circle the vowel team."]
+    assert section.worked_example_instruction == "Try this first:"
+    assert section.worked_example_content == "rain has ai"
+    assert section.time_estimate == "About 3 minutes"
+    assert [item.content for item in section.items] == ["rain", "play", "tree"]
+    assert section.items[1].response_format == "fill_blank"
+    assert section.items[1].answer == "ay"
+    assert spec.self_assessment == []
+    assert spec.break_prompt is None

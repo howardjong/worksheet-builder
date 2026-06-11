@@ -14,7 +14,7 @@ from adapt.schema import ActivityItem, AdaptedActivityModel
 from companion.schema import LearnerProfile
 from theme.schema import ThemeConfig
 
-RenderMode = Literal["pdf_classic", "hybrid_shell", "image_prompt"]
+RenderMode = Literal["pdf_classic", "hybrid_shell", "image_prompt", "image_gen"]
 VisualIntensity = Literal["low", "medium", "high"]
 
 LETTER_WIDTH_PT = 612
@@ -84,6 +84,29 @@ class AnswerZoneSpec(BaseModel):
         return self
 
 
+class SectionItemSpec(BaseModel):
+    """One practice item inside a worksheet section."""
+
+    item_id: int = Field(description="Activity item identifier.")
+    content: str = Field(description="Student-facing item text.")
+    response_format: str = Field(description="Expected response format.")
+    options: list[str] = Field(default_factory=list)
+    answer: str | None = Field(default=None, description="Answer when known.")
+
+
+class SectionSpec(BaseModel):
+    """One activity section, preserving chunk grouping for renderers."""
+
+    chunk_id: int = Field(description="Activity chunk identifier.")
+    micro_goal: str = Field(description="Section header text.")
+    instructions: list[str] = Field(default_factory=list)
+    worked_example_instruction: str | None = None
+    worked_example_content: str | None = None
+    time_estimate: str | None = None
+    response_format: str = Field(description="Dominant response format.")
+    items: list[SectionItemSpec] = Field(default_factory=list)
+
+
 class WorksheetDesignSpec(BaseModel):
     """Renderer-neutral worksheet contract."""
 
@@ -106,6 +129,9 @@ class WorksheetDesignSpec(BaseModel):
     visual_budget: VisualBudget
     required_text: list[str] = Field(description="Exact text renderers must preserve.")
     answer_zones: list[AnswerZoneSpec] = Field(default_factory=list)
+    sections: list[SectionSpec] = Field(default_factory=list)
+    self_assessment: list[str] = Field(default_factory=list)
+    break_prompt: str | None = None
 
     @field_validator("required_text")
     @classmethod
@@ -154,6 +180,9 @@ def compile_worksheet_design_spec(
         ),
         required_text=_required_text(adapted),
         answer_zones=_answer_zones(adapted),
+        sections=_sections(adapted),
+        self_assessment=list(adapted.self_assessment or []),
+        break_prompt=adapted.break_prompt,
     )
 
 
@@ -212,6 +241,37 @@ def _answer_zones(adapted: AdaptedActivityModel) -> list[AnswerZoneSpec]:
                 )
             )
     return zones
+
+
+def _sections(adapted: AdaptedActivityModel) -> list[SectionSpec]:
+    sections: list[SectionSpec] = []
+    for chunk in adapted.chunks:
+        sections.append(
+            SectionSpec(
+                chunk_id=chunk.chunk_id,
+                micro_goal=chunk.micro_goal,
+                instructions=[step.text for step in chunk.instructions],
+                worked_example_instruction=(
+                    chunk.worked_example.instruction if chunk.worked_example else None
+                ),
+                worked_example_content=(
+                    chunk.worked_example.content if chunk.worked_example else None
+                ),
+                time_estimate=chunk.time_estimate,
+                response_format=chunk.response_format,
+                items=[
+                    SectionItemSpec(
+                        item_id=item.item_id,
+                        content=item.content,
+                        response_format=item.response_format,
+                        options=list(item.options or []),
+                        answer=item.answer,
+                    )
+                    for item in chunk.items
+                ],
+            )
+        )
+    return sections
 
 
 def _needs_answer_zone(item: ActivityItem) -> bool:
