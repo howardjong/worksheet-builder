@@ -36,6 +36,7 @@ class RenderContext:
     artifacts_dir: Path
     avatar_image: str | None = None
     asset_manifest: AssetManifest | None = None
+    character_identity: object | None = None
     extra_artifacts: dict[str, str] = field(default_factory=dict)
 
 
@@ -126,6 +127,10 @@ def resolve_render_strategy(mode: str | None) -> RenderStrategy:
     """Resolve a render strategy by mode."""
 
     selected = mode or default_render_mode()
+    if selected == "image_gen":
+        from render.image_gen import ImageGenRenderer
+
+        return ImageGenRenderer()
     strategies: dict[str, RenderStrategy] = {
         "hybrid_shell": HybridShellRenderer(),
         "image_prompt": ImagePromptRenderer(),
@@ -133,7 +138,7 @@ def resolve_render_strategy(mode: str | None) -> RenderStrategy:
     }
     strategy = strategies.get(selected)
     if strategy is None:
-        known = ", ".join(sorted(strategies))
+        known = ", ".join(sorted([*strategies, "image_gen"]))
         raise ValueError(f"Unknown render mode '{selected}'. Expected one of: {known}")
     return strategy
 
