@@ -81,7 +81,7 @@ class RunArtifacts(BaseModel):
 @click.option(
     "--render-mode",
     default="pdf_classic",
-    type=click.Choice(["pdf_classic", "hybrid_shell", "image_prompt"]),
+    type=click.Choice(["pdf_classic", "hybrid_shell", "image_prompt", "image_gen"]),
     help="Renderer mode. Defaults to production-safe pdf_classic.",
 )
 def transform(
@@ -588,14 +588,14 @@ def _run_multi_worksheet_pipeline(
 
         apply_theme(adapted, theme)
 
+        # Pass theme character spec for theme-aware scene prompts
+        identity = resolve_character_identity(
+            profile,
+            theme_id,
+            character_spec=char_spec,
+        )
         asset_manifest = None
         try:
-            # Pass theme character spec for theme-aware scene prompts
-            identity = resolve_character_identity(
-                profile,
-                theme_id,
-                character_spec=char_spec,
-            )
             scenes = plan_scenes(adapted, character_spec=char_spec)
             word_prompts = plan_word_pictures(adapted)
             ws_hash = compute_worksheet_hash(
@@ -644,6 +644,7 @@ def _run_multi_worksheet_pipeline(
                 output_path=Path(pdf_path),
                 artifacts_dir=render_artifacts_dir,
                 asset_manifest=asset_manifest,
+                character_identity=identity,
             )
         )
         last_render_result = render_result

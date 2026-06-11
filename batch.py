@@ -194,7 +194,7 @@ def _process_single_file(
 @click.option(
     "--render-mode",
     default="pdf_classic",
-    type=click.Choice(["pdf_classic", "hybrid_shell", "image_prompt"]),
+    type=click.Choice(["pdf_classic", "hybrid_shell", "image_prompt", "image_gen"]),
     help="Renderer mode. Defaults to production-safe pdf_classic.",
 )
 @click.option(
