@@ -26,7 +26,7 @@
 - **Print validation:** `validate/print_checks.py` hard-fails PDFs with no extractable text ("vector_text" check). The PDF wrap step therefore embeds an invisible text layer (`render_mode=3`), which also makes the PDF searchable.
 - **Env conventions:** `.env` is auto-loaded by `transform.py`. Keys: `GEMINI_API_KEY`/`GOOGLE_API_KEY`, `OPENAI_API_KEY`. `WORKSHEET_SKIP_ASSET_GEN=1` disables all image generation (tests/CI rely on this).
 - **Commands:** `make lint` (ruff), `make typecheck` (mypy), `make test` (pytest). Use `.venv/bin/...` binaries. Tests must pass offline with no API keys.
-- **Commit trailer:** end every commit message with `Co-Authored-By: Claude Fable 5 <noreply@anthropic.com>`.
+- **Commits:** a pre-commit hook BLOCKS `Co-Authored-By: Claude` trailers — do not add them. Hooks also run ruff, ruff-format, and whitespace fixers on commit.
 
 ## File structure
 
