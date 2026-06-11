@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from render.design_spec import (
     PageSpec,
     SectionItemSpec,
@@ -12,7 +14,7 @@ from render.design_spec import (
 
 
 def _spec(**overrides: object) -> WorksheetDesignSpec:
-    base: dict = {
+    base: dict[str, Any] = {  # Any required: **-unpacking into typed Pydantic constructor
         "render_mode": "image_gen",
         "source_hash": "src",
         "skill_model_hash": "skill",

@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 import pytest
 
 from companion.character_judge import CharacterJudgeResult
+from render.page_gates import TextGateReport
 
 
-def _text_report(**overrides: object):
-    from render.page_gates import TextGateReport
-
-    base: dict = {
+def _text_report(**overrides: object) -> TextGateReport:
+    base: dict[str, Any] = {  # Any required: **-unpacking into typed Pydantic constructor
         "available": True,
         "passed": True,
         "missing_text": [],

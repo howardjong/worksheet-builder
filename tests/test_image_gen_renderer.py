@@ -16,6 +16,10 @@ from render.design_spec import (
     VisualBudget,
     WorksheetDesignSpec,
 )
+from render.image_gen import ImageGenRenderer
+from render.image_providers import ImageProvider
+from render.page_gates import PageGateReport, TextGateReport
+from render.strategies import RenderContext, RenderResult
 
 
 def _png_bytes() -> bytes:
@@ -76,9 +80,7 @@ class _StubProvider:
         return self._results.pop(0)
 
 
-def _gate_report(passed: bool):
-    from render.page_gates import PageGateReport, TextGateReport
-
+def _gate_report(passed: bool) -> PageGateReport:
     return PageGateReport(
         passed=passed,
         text=TextGateReport(available=True, passed=passed),
@@ -86,8 +88,7 @@ def _gate_report(passed: bool):
     )
 
 
-def _context(tmp_path: Path):
-    from render.strategies import RenderContext
+def _context(tmp_path: Path) -> RenderContext:
     from theme.schema import ThemeConfig
 
     return RenderContext(
@@ -99,11 +100,13 @@ def _context(tmp_path: Path):
     )
 
 
-def _renderer(providers, cache_dir: Path, monkeypatch: pytest.MonkeyPatch):
+def _renderer(
+    providers: list[ImageProvider], cache_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> ImageGenRenderer:
     import render.image_gen as image_gen
 
     monkeypatch.setattr(image_gen, "_CACHE_DIR", cache_dir)
-    return image_gen.ImageGenRenderer(providers=providers)
+    return ImageGenRenderer(providers=providers)
 
 
 def test_accepts_first_gate_passing_page(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -159,7 +162,6 @@ def test_falls_back_to_pdf_classic_when_all_attempts_fail(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import render.image_gen as image_gen
-    from render.strategies import RenderResult
 
     provider = _StubProvider("stub", [_png_bytes()] * 3)
     monkeypatch.setattr(image_gen, "evaluate_page", lambda *args, **kwargs: _gate_report(False))
@@ -169,7 +171,7 @@ def test_falls_back_to_pdf_classic_when_all_attempts_fail(
         produces_pdf = True
         experimental = False
 
-        def render(self, context):
+        def render(self, context: RenderContext) -> RenderResult:
             return RenderResult(
                 renderer_id="pdf_classic",
                 pdf_path=str(context.output_path),
@@ -262,7 +264,6 @@ def test_cache_hit_requires_gate_report(tmp_path: Path, monkeypatch: pytest.Monk
 
 def test_cache_not_written_on_gate_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import render.image_gen as image_gen
-    from render.strategies import RenderResult
 
     provider = _StubProvider("stub", [_png_bytes()] * 3)
     monkeypatch.setattr(image_gen, "evaluate_page", lambda *args, **kwargs: _gate_report(False))
@@ -272,7 +273,7 @@ def test_cache_not_written_on_gate_failure(tmp_path: Path, monkeypatch: pytest.M
         produces_pdf = True
         experimental = False
 
-        def render(self, context):
+        def render(self, context: RenderContext) -> RenderResult:
             return RenderResult(
                 renderer_id="pdf_classic",
                 pdf_path=str(context.output_path),
