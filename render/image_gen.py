@@ -54,10 +54,7 @@ class ImageGenRenderer:
 
     def render(self, context: RenderContext) -> RenderResult:
         from companion.character_identity import CharacterIdentity
-        from render.asset_gen import (
-            _reference_bytes_from_identity,
-            _scene_judge_criteria,
-        )
+        from render.asset_gen import _reference_bytes_from_identity
 
         if os.environ.get("WORKSHEET_SKIP_ASSET_GEN"):
             return self._fallback(context, reason="WORKSHEET_SKIP_ASSET_GEN set")
@@ -79,7 +76,7 @@ class ImageGenRenderer:
             theme_palette=character_spec.color_palette if character_spec else "",
             art_style=character_spec.art_style if character_spec else "",
         )
-        criteria = _scene_judge_criteria(identity, character_spec)
+        criteria = _page_judge_criteria(identity, character_spec)
 
         context.artifacts_dir.mkdir(parents=True, exist_ok=True)
         (context.artifacts_dir / "page_prompt.md").write_text(prompt)
@@ -178,6 +175,43 @@ class ImageGenRenderer:
             json.dumps({"fallback": True, "reason": reason}, indent=2)
         )
         return PdfClassicRenderer().render(context)
+
+
+def _page_judge_criteria(
+    identity: object | None,
+    character_spec: object | None,
+) -> list[str]:
+    """Judge criteria for FULL worksheet pages.
+
+    Unlike render.asset_gen._scene_judge_criteria (written for small scene
+    images), a full page is supposed to contain instructional text, answer
+    lines, and section banners — so the criteria must not penalize them.
+    Equipped items are not required: the style sheet treats accessories as
+    scene-optional.
+    """
+    criteria = [
+        (
+            "CHARACTER CONSISTENCY: Does the Learning Buddy on the page look "
+            "like the same character as the reference image?"
+        ),
+        (
+            "IDENTITY DETAILS: Hair, face, body shape, clothing colors, and "
+            "overall silhouette should stay consistent."
+        ),
+        (
+            "PAGE SAFETY: The page should be calm, printable, child-friendly, "
+            "and free of distracting effects."
+        ),
+        (
+            "IMAGE QUALITY: Clean rendering, no artifacts or distortion. This "
+            "is a full worksheet page: instructional text, answer lines, and "
+            "section banners are EXPECTED and correct — do not penalize them."
+        ),
+    ]
+    theme_criteria = getattr(character_spec, "judge_criteria", None)
+    if theme_criteria:
+        criteria.extend(f"THEME FIDELITY: {item}" for item in theme_criteria)
+    return criteria
 
 
 def _write_page_pdf(png_bytes: bytes, output_path: Path, required_text: list[str]) -> None:

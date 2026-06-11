@@ -33,7 +33,7 @@ from extract.ocr import extract_text_with_fallback
 from extract.vision import extract_with_vision
 from render.design_spec import RenderMode, WorksheetDesignSpec, compile_worksheet_design_spec
 from render.pdf import render_cover_page
-from render.strategies import RenderContext, RenderResult, resolve_render_strategy
+from render.strategies import RenderContext, RenderResult, RenderStrategy, resolve_render_strategy
 from skill.extractor import extract_skill
 from theme.engine import apply_theme, load_theme
 from validate.adhd_compliance import validate_adhd_compliance, validate_lesson_time_budget
@@ -629,7 +629,7 @@ def _run_multi_worksheet_pipeline(
 
         pdf_filename = f"worksheet_{content_hash}_{i}of{len(worksheets)}.pdf"
         pdf_path = str(output / pdf_filename)
-        render_artifacts_dir = artifacts / f"render_{i}" if not strategy.produces_pdf else artifacts
+        render_artifacts_dir = _render_artifacts_dir(artifacts, strategy, i)
         design_spec = compile_worksheet_design_spec(
             adapted,
             theme,
@@ -757,6 +757,13 @@ def _run_multi_worksheet_pipeline(
         renderer_experimental=strategy.experimental,
         renderer_artifact_paths=renderer_artifact_paths,
     )
+
+
+def _render_artifacts_dir(artifacts: Path, strategy: RenderStrategy, worksheet_number: int) -> Path:
+    """Per-worksheet artifact isolation for renderers that emit diagnostics."""
+    if strategy.produces_pdf and not strategy.experimental:
+        return artifacts
+    return artifacts / f"render_{worksheet_number}"
 
 
 def _merge_lesson_package(

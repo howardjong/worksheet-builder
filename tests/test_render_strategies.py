@@ -163,6 +163,19 @@ def test_hybrid_shell_strategy_is_experimental_pdf_renderer(
     assert result.pdf_path == str(output_path)
 
 
+def test_render_artifacts_dir_isolates_experimental_renderers(tmp_path: Path) -> None:
+    from render.strategies import resolve_render_strategy
+    from transform import _render_artifacts_dir
+
+    image_gen = resolve_render_strategy("image_gen")
+    classic = resolve_render_strategy("pdf_classic")
+    prompt_only = resolve_render_strategy("image_prompt")
+
+    assert _render_artifacts_dir(tmp_path, image_gen, 2) == tmp_path / "render_2"
+    assert _render_artifacts_dir(tmp_path, classic, 2) == tmp_path
+    assert _render_artifacts_dir(tmp_path, prompt_only, 2) == tmp_path / "render_2"
+
+
 def test_aggregate_renderer_id_reports_fallbacks() -> None:
     from render.strategies import RenderResult
     from transform import _aggregate_renderer_id

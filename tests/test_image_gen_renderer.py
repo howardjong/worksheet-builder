@@ -288,3 +288,17 @@ def test_cache_not_written_on_gate_failure(tmp_path: Path, monkeypatch: pytest.M
     renderer.render(_context(tmp_path))
 
     assert not list((tmp_path / "cache").glob("page_*/page.png"))
+
+
+def test_page_judge_criteria_expect_instructional_text() -> None:
+    from render.image_gen import _page_judge_criteria
+    from theme.schema import CharacterSpec
+
+    spec = CharacterSpec(judge_criteria=["Rainbow hair preserved"])
+    criteria = _page_judge_criteria(None, spec)
+
+    joined = " ".join(criteria)
+    assert "EXPECTED" in joined  # instructional text is expected on a full page
+    assert "no text" not in joined.lower()
+    assert "THEME FIDELITY: Rainbow hair preserved" in criteria
+    assert not any("EQUIPPED ITEMS" in criterion for criterion in criteria)
