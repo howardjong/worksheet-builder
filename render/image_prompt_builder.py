@@ -120,6 +120,7 @@ def _section_text(section: SectionSpec) -> str:
             item.response_format, "clear space for the child's answer"
         )
         item_line = f'Item {item.item_id}: "{item.content}" with {affordance}'
+        # Only these formats present options for the child to choose among.
         if item.options and item.response_format in {"circle", "fill_blank", "match"}:
             item_line += f" (options, exact text: {', '.join(item.options)})"
         lines.append(item_line)
@@ -170,5 +171,10 @@ def _damping_block(spec: WorksheetDesignSpec, *, has_character: bool = False) ->
     elif budget.intensity == "medium":
         rules.append(
             "Overall mood: lively but tidy; banners may be bolder, backgrounds " "stay quiet."
+        )
+    elif budget.intensity == "high":
+        rules.append(
+            "Overall mood: bold and energetic chrome, but text areas and answer "
+            "spaces stay plain, white, and uncluttered."
         )
     return "\n".join(f"- {rule}" for rule in rules)

@@ -125,3 +125,16 @@ def test_prompt_omits_character_section_without_character_block() -> None:
     prompt = build_page_prompt(_spec())
 
     assert "Learning Buddy" not in prompt
+
+
+def test_prompt_high_intensity_branch() -> None:
+    from render.image_prompt_builder import build_page_prompt
+
+    spec = _spec(
+        visual_budget=VisualBudget(
+            style="energetic", intensity="high", max_decorative_elements=2, max_colors=4
+        )
+    )
+    prompt = build_page_prompt(spec)
+
+    assert "bold and energetic chrome" in prompt
