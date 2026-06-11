@@ -31,3 +31,5 @@ def test_scorecard_table_includes_rows_and_verdicts() -> None:
     assert "IMG_0007.JPG" in scorecard
     assert "| input | classic all-pass | image_gen all-pass | fell back |" in scorecard
     assert "image_gen fallbacks: 1/2" in scorecard
+    assert "out/a/worksheet_1.pdf" in scorecard
+    assert "out/b/worksheet_1.pdf" in scorecard

@@ -48,6 +48,16 @@ def build_scorecard(rows: list[BatteryRow]) -> str:
     lines.append("")
     lines.append(f"image_gen fallbacks: {fallbacks}/{len(rows)}")
     lines.append("")
+    lines.append("## PDFs to compare")
+    for row in rows:
+        lines.append(f"### {row.input_name}")
+        for path in row.classic_pdf_paths:
+            lines.append(f"- classic: {path}")
+        for path in row.image_pdf_paths:
+            lines.append(f"- image_gen: {path}")
+        if not row.image_pdf_paths:
+            lines.append("- image_gen: (fell back / no PDF)")
+    lines.append("")
     lines.append("## Review checklist (owner)")
     lines.append("- Compare each image_gen PDF against the classic PDF side by side.")
     lines.append("- Compare against samples/output/ian-worksheet-geo-dash-1.png for richness.")
