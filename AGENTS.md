@@ -45,7 +45,7 @@ Paper → Capture → Normalize → Source Extract → Skill Model → ADHD Adap
 - **Skill-preserving, not page-faithful.** Output may differ from source in layout/wording, but must preserve the literacy skill.
 - **ADHD-safe.** Calm themes, limited decorations, chunked content, predictable rewards. **No loot boxes, streak punishment, or leaderboards.**
 - **Print-first.** Primary output is printed paper. Digital companion is secondary.
-- **No AI in critical path.** AI assist is always behind the `extract/adapter.py` interface and is optional.
+- **AI in the production path, with provider redundancy.** The default render/adapt path may call AI APIs. Reliability comes from provider fallback chains (Gemini → OpenAI → future providers) ending in the deterministic `pdf_classic` renderer — not from removing AI. Offline runs still work via deterministic fallbacks. (Supersedes the old "No AI in critical path" rule; see decision D26.)
 - **Idempotent.** Same inputs → same outputs. Keyed by `hash(image) + profile + theme + pipeline_version`.
 - **Schema validation.** All stage outputs must validate against Pydantic schemas before influencing the pipeline.
 

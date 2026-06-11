@@ -929,6 +929,9 @@ All 344 tests pass. PDF validation (skill parity, age band, ADHD compliance, pri
 | D23 | UFLI corpus as 5th ChromaDB collection (`curriculum`) | Gives RAG system canonical lesson content (concepts, target words, teaching sequences) for retrieval during worksheet generation | 2026-03-13 |
 | D24 | Playwright for UFLI crawl, not HTTP fetch | UFLI Toolbox is JS-rendered (Divi/WordPress); static fetch returns only framework code | 2026-03-13 |
 | D25 | Incremental manifest writes in crawler | Write after each page, not batched at end — crash on page 14 preserves pages 1-13 | 2026-03-13 |
+| D26 | AI is allowed in the production path; reliability via provider fallback chains | Image rendering chain: gemini-3.1-flash-image-preview → gpt-image-2-2026-04-21 → (Seedream later) → deterministic pdf_classic. Supersedes D2's "no AI in critical path" for rendering and adaptation. Offline runs still work via deterministic fallbacks. | 2026-06-11 |
+| D27 | RAG retrieval removed from the default worksheet path | Direct UFLI lesson input is already well-scoped; corpus + deterministic lesson-number lookup retained (hallucination check, enrichment). Embedding retrieval reserved for a future "describe an objective → find representative UFLI content" entry point. | 2026-06-11 |
+| D28 | Audio companion frozen, not deleted | Pilot not ready (pilot_ready=False); orthogonal to the worksheet quality push. Code, data, and evals retained untouched. | 2026-06-11 |
 
 ---
 
