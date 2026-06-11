@@ -17,9 +17,12 @@ make format       # ruff format .
 
 # Transform
 python transform.py --input photo.jpg --profile profiles/ian.yaml --theme space --output ./output/
+python transform.py ... --render-mode pdf_classic    # default deterministic PDF renderer
+python transform.py ... --render-mode image_prompt   # offline prompt artifacts for image-model trials
 
 # Batch
 python batch.py --input-dir ./photos/ --profile profiles/ian.yaml --theme space --output ./output/
+python batch.py ... --render-mode image_prompt  # batch prompt-only image-model trial artifacts
 python batch.py ... --no-images    # skip AI images (avoids 35 RPD limit)
 python batch.py ... --dry-run      # list only
 
@@ -48,7 +51,7 @@ Paper → Capture → Normalize → Source Extract → Skill Model → ADHD Adap
 
 ### Data contracts (Pydantic)
 
-`SourceWorksheetModel` → `LiteracySkillModel` → `AdaptedActivityModel`. Plus `LearnerProfile` and `RewardEventModel`.
+`SourceWorksheetModel` → `LiteracySkillModel` → `AdaptedActivityModel` → `WorksheetDesignSpec`. Plus `LearnerProfile` and `RewardEventModel`.
 
 ### Module layout
 
@@ -58,7 +61,7 @@ Paper → Capture → Normalize → Source Extract → Skill Model → ADHD Adap
 - `adapt/` — ADHD activity adaptation + accommodation rules
 - `theme/` — calm theme engine + curated assets
 - `companion/` — learner profile, avatar, rewards, caregiver controls
-- `render/` — ReportLab PDF + preview
+- `render/` — ReportLab PDF, renderer strategies, image-model prompt artifacts, preview
 - `validate/` — skill-parity, print, ADHD compliance
 - `rag/` — embeddings, store, retrieval, indexer, backfill, eval
 - `corpus/` — UFLI crawl/acquire/extract/ingest

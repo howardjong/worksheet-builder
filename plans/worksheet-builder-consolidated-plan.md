@@ -1486,7 +1486,8 @@ def validated_tag_regions(adapter: ModelAdapter, image: str) -> List[RegionTag]:
 3. **Tiered extraction:** deterministic OCR (free, offline) → specialized OCR-VLMs → frontier multimodal models.
 4. **Prompt versioning:** extraction/tagging prompts versioned separately. New model → update prompt → pipeline benefits.
 5. **Evaluation harness:** golden test set measures quality improvements before switching models.
-6. **Graceful expansion:** today (single-page, one family, curated assets) → better models unlock (multi-page, diverse layouts, handwriting, generative assets).
+6. **Renderer strategy boundary:** renderers consume `WorksheetDesignSpec`, so deterministic PDF, hybrid shell, and full-image experiments preserve the same text, answer zones, print geometry, and ADHD visual budget.
+7. **Graceful expansion:** today (single-page, one family, curated assets) → better models unlock (multi-page, diverse layouts, handwriting, generative assets).
 
 ---
 
@@ -1506,3 +1507,4 @@ def validated_tag_regions(adapter: ModelAdapter, image: str) -> List[RegionTag]:
 | 1.2.0 | 2026-03-07 | Evidence-consistent ADHD design overhaul: rewrote Visual Design Rules, Content Restructuring, and Engagement Elements sections citing PMC10453933, PMC5280087, Longwood/BCH ADHD tools; established "game-themed structure, visually calm execution" principle; added decoration budget, chunking targets, effort-based rewards, self-assessment, bounded choice, avatar placement rules; identified UFLI Foundations as primary input family |
 | 1.3.0 | 2026-03-07 | Split UFLI into two known templates (word work + decodable story) with distinct heuristics; added UFLI rights boundary (private input only, not repo fixtures); restrained game framing (labels visually subordinate, no extra mechanics to learn); softened research language throughout to "evidence-consistent" where claims are inferred |
 | 1.4.0 | 2026-03-07 | Accuracy pass for clean build: added template_type to SourceWorksheetModel and Pydantic schema; added UFLI-specific region types to SourceRegion enum; split skill extractor logic by template type; made companion-dependent fields Optional (reward_event, avatar_prompts, avatar_image, reward_state) so MVP builds without companion; separated LearnerProfile into MVP-required vs companion-optional fields; noted golden test fixtures must be synthetic (not UFLI); added self_assessment field to AdaptedActivityModel; updated acceptance criteria for both UFLI templates; noted Checkpoint 4.4 is in Milestone 3 |
+| 1.5.0 | 2026-06-11 | Added renderer strategy future-proofing: `WorksheetDesignSpec`, production `pdf_classic` default, experimental `hybrid_shell`, offline `image_prompt` artifacts, and benchmark gates for text, answer zones, ADHD visual budget, and print-ready promotion |

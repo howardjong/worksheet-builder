@@ -1955,7 +1955,7 @@ Note: index step requires GOOGLE_CLOUD_PROJECT=ws-builder-rag env var.
 - Added `render/benchmark.py` with promotion gates for experimental renderers: required text preserved, answer zones represented, ADHD visual budget respected, and print-ready PDF produced.
 - Wired `transform.py` through the strategy registry and added `--render-mode` to the single-image CLI. Non-PDF renderers now return prompt artifacts, write renderer provenance, skip PDF validation, and fail print-readiness by design.
 - Wired `batch.py` through the same `--render-mode` option so prompt-only image-model trials can run over folders without changing core pipeline behavior.
-- Documented renderer modes, batch usage, and promotion gates in `README.md`.
+- Documented renderer modes, batch usage, and promotion gates in `README.md`, `AGENTS.md`, `docs/superpowers/plans/2026-06-09-worksheet-quality-redesign.md`, and `plans/worksheet-builder-consolidated-plan.md`.
 
 **TDD / gate evidence:**
 - Red tests were added first for missing design-spec module, missing strategy registry, missing transform render-mode plumbing, missing docs, missing answer-zone benchmark behavior, and missing batch render-mode forwarding.

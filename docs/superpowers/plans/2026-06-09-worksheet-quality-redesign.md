@@ -4,7 +4,7 @@
 
 **Goal:** Improve worksheet quality, learner personalization, Learning Buddy consistency, and merge safety while keeping `main` stable.
 
-**Architecture:** Build this on a new feature branch with small, testable checkpoints. Start with quality gates that expose current failures, then fix live pipeline gaps, then simplify RAG, then route all buddy art through one identity path, then add a direct-context worksheet compiler behind a feature flag.
+**Architecture:** Build this on a new feature branch with small, testable checkpoints. Start with quality gates that expose current failures, then fix live pipeline gaps, then simplify RAG, then route all buddy art through one identity path, then add a direct-context worksheet compiler behind a feature flag, then keep future image-model pivots behind a renderer strategy boundary.
 
 **Tech Stack:** Python 3.11+, Pydantic v2, pytest, ruff, mypy, ReportLab, ChromaDB/RAG retained as optional experiment tooling, Gemini/OpenAI calls behind existing adapters and environment flags.
 
@@ -144,6 +144,21 @@ Merge criteria:
   - Clarify default MVP path, RAG role, quality gates, and character asset model.
 - Modify: `.claude/worksheet-project-context.md`
   - Record decisions, exact verification commands, and known follow-ups.
+
+### Renderer strategy and image-model readiness addendum
+
+- Create: `render/design_spec.py`
+  - Compile adapted worksheets into `WorksheetDesignSpec` with exact required text, answer zones, print geometry, learner/theme metadata, and ADHD visual budget.
+- Create: `render/strategies.py`
+  - Keep `pdf_classic` as the default deterministic ReportLab renderer.
+  - Add opt-in `hybrid_shell` for future deterministic-text visual shell experiments.
+  - Add opt-in `image_prompt` for offline full-page image-model prompt artifacts.
+- Create: `render/benchmark.py`
+  - Gate experimental renderer promotion on required text, answer zones, ADHD visual budget, and print-ready output.
+- Modify: `transform.py` and `batch.py`
+  - Add `--render-mode` while preserving `pdf_classic` defaults.
+- Modify: `README.md`, `AGENTS.md`, and `.claude/worksheet-project-context.md`
+  - Document renderer modes, prompt-only trials, promotion gates, and handoff decisions.
 
 ---
 
