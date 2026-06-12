@@ -178,7 +178,7 @@ Respond with ONLY this JSON (no markdown fences):
 # --- Gemini call ---
 
 
-def _call_gemini(prompt: str) -> str | None:
+def _call_gemini(prompt: str, model: str = "gemini-3-flash-preview") -> str | None:
     """Call Gemini and return the response text."""
     api_key = os.environ.get("GEMINI_API_KEY")
     if not api_key:
@@ -189,7 +189,7 @@ def _call_gemini(prompt: str) -> str | None:
 
         client = genai.Client(api_key=api_key)
         response = client.models.generate_content(
-            model="gemini-3-flash-preview",
+            model=model,
             contents=prompt,
         )
         return str(response.text)

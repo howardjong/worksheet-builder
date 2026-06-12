@@ -84,3 +84,73 @@ def test_corpus_block_injects_lesson_ground_truth(monkeypatch: pytest.MonkeyPatc
 
 def test_corpus_block_empty_without_lesson_number() -> None:
     assert _corpus_block(_skill(lesson_number=None)) == ""
+
+
+def test_planner_chain_prefers_openai(monkeypatch: pytest.MonkeyPatch) -> None:
+    from adapt import llm_planner
+
+    monkeypatch.setenv("OPENAI_API_KEY", "fake")
+    monkeypatch.setenv("GEMINI_API_KEY", "fake")
+    monkeypatch.delenv("WORKSHEET_PLANNER_PROVIDERS", raising=False)
+    calls: list[str] = []
+
+    def _fake_openai(prompt: str, max_completion_tokens: int = 1024) -> str:
+        calls.append(f"openai:{max_completion_tokens}")
+        return "{}"
+
+    monkeypatch.setattr(llm_planner, "_call_openai", _fake_openai)
+
+    text, model = llm_planner._call_planner("prompt")
+
+    assert text == "{}"
+    assert model == "gpt-5.4"
+    assert calls == ["openai:8192"]
+
+
+def test_planner_chain_falls_back_to_gemini(monkeypatch: pytest.MonkeyPatch) -> None:
+    from adapt import llm_planner
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("GEMINI_API_KEY", "fake")
+    monkeypatch.delenv("WORKSHEET_PLANNER_PROVIDERS", raising=False)
+    monkeypatch.delenv("WORKSHEET_PLANNER_GEMINI_MODEL", raising=False)
+    seen: list[str] = []
+
+    def _fake_gemini(prompt: str, model: str = "gemini-3-flash-preview") -> str:
+        seen.append(model)
+        return "{}"
+
+    monkeypatch.setattr(llm_planner, "_call_gemini", _fake_gemini)
+
+    text, model = llm_planner._call_planner("prompt")
+
+    assert text == "{}"
+    assert model == "gemini-3.5-flash"
+    assert seen == ["gemini-3.5-flash"]
+
+
+def test_planner_chain_respects_env_order(monkeypatch: pytest.MonkeyPatch) -> None:
+    from adapt import llm_planner
+
+    monkeypatch.setenv("OPENAI_API_KEY", "fake")
+    monkeypatch.setenv("GEMINI_API_KEY", "fake")
+    monkeypatch.setenv("WORKSHEET_PLANNER_PROVIDERS", "gemini,openai")
+
+    monkeypatch.setattr(llm_planner, "_call_gemini", lambda p, model="": "from-gemini")
+
+    text, model = llm_planner._call_planner("prompt")
+
+    assert text == "from-gemini"
+    assert model == "gemini-3.5-flash"
+
+
+def test_planner_chain_no_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    from adapt import llm_planner
+
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+    text, model = llm_planner._call_planner("prompt")
+
+    assert text is None
+    assert model == "none"

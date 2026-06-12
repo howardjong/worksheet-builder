@@ -12,7 +12,10 @@ a judge verdict.
 from __future__ import annotations
 
 import logging
+import os
 
+from adapt.llm_adapt import _call_gemini
+from adapt.llm_judge import _call_openai
 from adapt.rules import AccommodationRules
 from companion.schema import LearnerProfile
 from corpus.ufli.lookup import lookup_lesson
@@ -45,6 +48,26 @@ def _corpus_block(skill: LiteracySkillModel) -> str:
         if cleaned:
             parts.append(f"{label}:\n{cleaned[:_CORPUS_FIELD_CHAR_CAP]}")
     return "\n\n".join(parts)
+
+
+def _planner_providers() -> list[str]:
+    order = os.environ.get("WORKSHEET_PLANNER_PROVIDERS", DEFAULT_PLANNER_PROVIDERS)
+    return [p.strip() for p in order.split(",") if p.strip()]
+
+
+def _call_planner(prompt: str) -> tuple[str | None, str]:
+    """Walk the provider chain; return (response_text, model_label)."""
+    for provider in _planner_providers():
+        if provider == "openai" and os.environ.get("OPENAI_API_KEY"):
+            text = _call_openai(prompt, max_completion_tokens=PLANNER_MAX_COMPLETION_TOKENS)
+            if text:
+                return text, "gpt-5.4"
+        elif provider == "gemini" and os.environ.get("GEMINI_API_KEY"):
+            model = os.environ.get("WORKSHEET_PLANNER_GEMINI_MODEL", DEFAULT_PLANNER_GEMINI_MODEL)
+            text = _call_gemini(prompt, model=model)
+            if text:
+                return text, model
+    return None, "none"
 
 
 def _build_planner_prompt(
