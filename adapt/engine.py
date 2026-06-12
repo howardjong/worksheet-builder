@@ -142,22 +142,41 @@ def adapt_lesson(
         except Exception as exc:
             logger.warning("Direct compiler failed, using fallback adaptation: %s", exc)
 
-    # Try orchestrated LLM adaptation (Gemini → Judge → retry → GPT takeover)
-    try:
-        from adapt.llm_orchestrator import orchestrate_llm_adaptation
+    if os.environ.get("WORKSHEET_PLANNER_V2") == "1":
+        # New single-call planner (A/B flag; becomes the only LLM path after
+        # the battery gate — see plans/2026-06-12-planner-simplification-plan.md)
+        try:
+            from adapt.llm_planner import plan_lesson_llm
 
-        llm_result = orchestrate_llm_adaptation(
-            skill,
-            profile,
-            theme_id=theme_id,
-            rules=rules,
-            rag_curriculum_references=rag_curriculum_references,
-            artifacts_dir=artifacts_dir,
-        )
-        if llm_result:
-            return enforce_section_cap(llm_result, rules)
-    except Exception as exc:
-        logger.warning("LLM orchestration failed, using deterministic engine: %s", exc)
+            planned = plan_lesson_llm(
+                skill,
+                profile,
+                theme_id=theme_id,
+                rules=rules,
+                rag_curriculum_references=rag_curriculum_references,
+                artifacts_dir=artifacts_dir,
+            )
+            if planned:
+                return enforce_section_cap(planned, rules)
+        except Exception as exc:
+            logger.warning("LLM planner failed, using deterministic engine: %s", exc)
+    else:
+        # Legacy loop (Gemini → Judge → retry → GPT takeover)
+        try:
+            from adapt.llm_orchestrator import orchestrate_llm_adaptation
+
+            llm_result = orchestrate_llm_adaptation(
+                skill,
+                profile,
+                theme_id=theme_id,
+                rules=rules,
+                rag_curriculum_references=rag_curriculum_references,
+                artifacts_dir=artifacts_dir,
+            )
+            if llm_result:
+                return enforce_section_cap(llm_result, rules)
+        except Exception as exc:
+            logger.warning("LLM orchestration failed, using deterministic engine: %s", exc)
 
     # Deterministic fallback
 

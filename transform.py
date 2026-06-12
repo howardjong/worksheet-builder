@@ -552,6 +552,8 @@ def _run_multi_worksheet_pipeline(
             logger.warning("  Pedagogical judge skipped: %s", exc)
         judge_json.write_text(json.dumps(judge_result, indent=2))
 
+    skip_review = _skip_ai_review(judge_result)
+
     pdf_paths: list[str] = []
     adapted_summaries: list[dict[str, str | int | float | bool]] = []
     validation_runs: list[dict[str, bool]] = []
@@ -572,24 +574,31 @@ def _run_multi_worksheet_pipeline(
         adapted_json = artifacts / f"adapted_model_{i}.json"
         adapted_json.write_text(adapted.model_dump_json(indent=2))
 
-        logger.info("  AI quality review for worksheet %s/%s...", i, len(worksheets))
-        adapted, reviews = review_adapted_worksheet(adapted)
-        review_json = artifacts / f"ai_review_{i}.json"
-        review_json.write_text(json.dumps([review.to_dict() for review in reviews], indent=2))
-        if reviews:
-            latest_review = reviews[-1]
-            ai_review_passed = ai_review_passed and latest_review.passed
-            if latest_review.passed:
-                logger.info("  AI quality review_%s: PASSED", i)
-            else:
-                logger.warning(
-                    "  AI quality review_%s: %s issues remaining after %s iterations",
-                    i,
-                    len(latest_review.issues),
-                    len(reviews),
-                )
-        adapted_json.write_text(adapted.model_dump_json(indent=2))
-        worksheets[i - 1] = adapted
+        if skip_review:
+            logger.info(
+                "  AI quality review skipped for worksheet %s/%s (planner-v2 already judged)",
+                i,
+                len(worksheets),
+            )
+        else:
+            logger.info("  AI quality review for worksheet %s/%s...", i, len(worksheets))
+            adapted, reviews = review_adapted_worksheet(adapted)
+            review_json = artifacts / f"ai_review_{i}.json"
+            review_json.write_text(json.dumps([review.to_dict() for review in reviews], indent=2))
+            if reviews:
+                latest_review = reviews[-1]
+                ai_review_passed = ai_review_passed and latest_review.passed
+                if latest_review.passed:
+                    logger.info("  AI quality review_%s: PASSED", i)
+                else:
+                    logger.warning(
+                        "  AI quality review_%s: %s issues remaining after %s iterations",
+                        i,
+                        len(latest_review.issues),
+                        len(reviews),
+                    )
+            adapted_json.write_text(adapted.model_dump_json(indent=2))
+            worksheets[i - 1] = adapted
 
         apply_theme(adapted, theme)
 
@@ -832,6 +841,16 @@ def _merge_lesson_package(
     merge_worksheet_package(cover_path, pdf_paths, merged_path, cleanup=True)
 
     return [merged_path]
+
+
+def _skip_ai_review(judge_result: dict[str, object]) -> bool:
+    """Planner-v2 output was already judged on full item text.
+
+    The legacy ai_review loop (up to 3 LLM calls per worksheet) only adds
+    value for deterministic/legacy output, where OCR artifacts are real and
+    no full-text judge gated the content.
+    """
+    return judge_result.get("planner_version") == 2
 
 
 def _validate_and_report(
