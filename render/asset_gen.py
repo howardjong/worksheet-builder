@@ -18,6 +18,7 @@ from typing import Any
 from companion.character_identity import CharacterIdentity, resolve_character_identity
 from companion.character_judge import CharacterJudgeResult, judge_character_consistency
 from companion.schema import CharacterStyleSheet, LearnerProfile
+from render.image_providers import ImageProvider, resolve_provider_chain
 from render.pose_planner import ScenePlan
 from theme.schema import AssetManifest, CharacterSpec
 
@@ -615,27 +616,20 @@ def generate_cover_image(
         logger.info(f"  Cover image cache hit: {cover_file}")
         return str(cover_file)
 
-    if not _has_api_key():
-        logger.info("  No AI API key -- using local cover image fallback")
-        return _generate_local_cover_image(
-            skill_description,
-            target_words,
-            theme_spec,
-            str(cover_file),
-            character_name=character_name,
-            style_sheet=style_sheet,
-        )
-
     prompt = _build_cover_prompt(
         skill_description,
         target_words,
         theme_spec,
         resolved_identity,
     )
+    ref_bytes = _reference_bytes_from_identity(resolved_identity)
+    criteria = _scene_judge_criteria(resolved_identity, theme_spec)
 
-    result = _generate_word_picture(prompt, str(cover_file))
-    if result:
-        return result
+    approved = _generate_cover_with_chain(prompt, ref_bytes, criteria, cache_dir, cover_file)
+    if approved is not None:
+        return approved
+
+    logger.info("  No judge-approved AI cover -- using local cover image fallback")
     return _generate_local_cover_image(
         skill_description,
         target_words,
@@ -644,6 +638,103 @@ def generate_cover_image(
         character_name=character_name,
         style_sheet=style_sheet,
     )
+
+
+# Owner decision 2026-06-11: quality-first regen budget (matches image_gen pages).
+_COVER_MAX_ATTEMPTS = 3
+
+
+def _generate_cover_with_chain(
+    prompt: str,
+    ref_bytes: bytes | None,
+    criteria: list[str],
+    cache_dir: Path,
+    cover_file: Path,
+) -> str | None:
+    """Generate the cover via the provider chain, gated by the character judge.
+
+    Mirrors render/image_gen.py's loop: reference-conditioned generation, up to
+    ``_COVER_MAX_ATTEMPTS`` attempts per provider, fail-closed character judging,
+    and provider fall-through. Returns the cached cover path on the first
+    judge-approved image, or None when every attempt fails (the caller then uses
+    the deterministic local cover). Rejected AI bytes are never cached.
+    """
+    if not ref_bytes:
+        # No reference to condition on or judge against; the deterministic local
+        # cover (canonical Ian art) is the consistent choice.
+        return None
+
+    providers: list[ImageProvider] = resolve_provider_chain()
+    if not providers:
+        return None
+
+    for provider in providers:
+        for attempt in range(1, _COVER_MAX_ATTEMPTS + 1):
+            logger.info(
+                "  Cover gen: provider=%s model=%s attempt=%d/%d",
+                provider.provider_id,
+                provider.model_id,
+                attempt,
+                _COVER_MAX_ATTEMPTS,
+            )
+            cover_bytes = provider.generate(prompt, ref_bytes)
+            if cover_bytes is None:
+                logger.warning(
+                    "  Cover provider %s returned no image; trying next provider",
+                    provider.provider_id,
+                )
+                break
+
+            verdict = judge_character_consistency(ref_bytes, cover_bytes, criteria)
+            if verdict.available and verdict.approved:
+                # Write the gate report BEFORE the image so a torn write never
+                # leaves a cached cover without its verdict.
+                cache_dir.mkdir(parents=True, exist_ok=True)
+                _write_cover_gate_report(
+                    cache_dir / "cover_gates.json",
+                    provider.provider_id,
+                    attempt,
+                    verdict,
+                )
+                cover_file.write_bytes(cover_bytes)
+                logger.info(
+                    "  Accepted cover after character judge (provider=%s)",
+                    provider.provider_id,
+                )
+                return str(cover_file)
+
+            _write_cover_gate_report(
+                cache_dir / f"cover_rejected_{provider.provider_id}_{attempt}.json",
+                provider.provider_id,
+                attempt,
+                verdict,
+            )
+            logger.warning(
+                "  Cover rejected (provider=%s attempt=%d): score=%s issues=%s",
+                provider.provider_id,
+                attempt,
+                verdict.score,
+                verdict.issues,
+            )
+    return None
+
+
+def _write_cover_gate_report(
+    path: Path,
+    provider_id: str,
+    attempt: int,
+    verdict: CharacterJudgeResult,
+) -> None:
+    payload = {
+        "provider_id": provider_id,
+        "attempt": attempt,
+        "judge_available": verdict.available,
+        "approved": verdict.approved,
+        "score": verdict.score,
+        "issues": verdict.issues,
+        "judge": verdict.judge,
+    }
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True))
 
 
 def _generate_local_scene(
