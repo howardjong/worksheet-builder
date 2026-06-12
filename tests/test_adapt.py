@@ -798,3 +798,13 @@ class TestAdaptLesson:
 
         assert roll_steps
         assert all("faster" not in step.lower() for step in roll_steps)
+
+
+def test_rules_include_grade_scaled_section_cap() -> None:
+    from adapt.rules import MAX_SECTIONS_PER_WORKSHEET, build_rules
+    from companion.schema import Accommodations, LearnerProfile
+
+    assert MAX_SECTIONS_PER_WORKSHEET == {"K": 2, "1": 3, "2": 4, "3": 4}
+    for grade, cap in MAX_SECTIONS_PER_WORKSHEET.items():
+        profile = LearnerProfile(name="t", grade_level=grade, accommodations=Accommodations())
+        assert build_rules(profile).max_sections_per_worksheet == cap

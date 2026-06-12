@@ -67,6 +67,12 @@ TIME_ESTIMATE_MINUTES: dict[str, int] = {
     "3": 7,
 }
 
+# Hard cap on activity sections (chunks) per mini-worksheet by grade.
+# "One main task per page" is the design rule; a page with 9 sections is an
+# ADHD anti-pattern. Over-cap packages are SPLIT into more mini-worksheets,
+# never trimmed (see adapt/section_cap.py).
+MAX_SECTIONS_PER_WORKSHEET: dict[str, int] = {"K": 2, "1": 3, "2": 4, "3": 4}
+
 # Color system — consistent across all worksheets
 COLOR_SYSTEM: dict[str, str] = {
     "directions": "#2563EB",  # Blue
@@ -91,6 +97,7 @@ class AccommodationRules(BaseModel):
     max_decorative_elements: int = 2
     color_system: dict[str, str]
     time_estimate_minutes: int
+    max_sections_per_worksheet: int = 4
 
 
 def build_rules(profile: LearnerProfile) -> AccommodationRules:
@@ -119,6 +126,9 @@ def build_rules(profile: LearnerProfile) -> AccommodationRules:
     # Time estimates
     time_est = TIME_ESTIMATE_MINUTES.get(grade, 5)
 
+    # Section cap
+    max_sections = MAX_SECTIONS_PER_WORKSHEET.get(grade, 4)
+
     return AccommodationRules(
         max_items_per_chunk=max_items,
         instruction_max_words=grade_limits["max_words"],
@@ -131,6 +141,7 @@ def build_rules(profile: LearnerProfile) -> AccommodationRules:
         max_decorative_elements=2,
         color_system=dict(COLOR_SYSTEM),
         time_estimate_minutes=time_est,
+        max_sections_per_worksheet=max_sections,
     )
 
 
