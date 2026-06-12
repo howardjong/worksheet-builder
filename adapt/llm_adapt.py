@@ -38,12 +38,23 @@ logger = logging.getLogger(__name__)
 # --- Intermediate plan schema (simpler than AdaptedActivityModel) ---
 
 
+class PlannedItem(BaseModel):
+    """A single practice item authored directly by the LLM."""
+
+    content: str
+    response_format: str = ""
+    options: list[str] = Field(default_factory=list)
+    answer: str | None = None
+    picture_prompt: str | None = None
+
+
 class ActivityPlan(BaseModel):
     """A single activity within a worksheet, as planned by the LLM."""
 
     activity_type: str  # word_chain, match, write, fill_blank, etc.
     micro_goal: str  # e.g. "Build 5 new words by changing one letter"
     words: list[str] = Field(default_factory=list)
+    items: list[PlannedItem] = Field(default_factory=list)
     instructions: list[str] = Field(default_factory=list)
     worked_example: str | None = None
     response_format: str = "write"
@@ -261,7 +272,7 @@ def _translate_plan(
                 )
 
             # Build items based on activity type
-            items = _build_items_from_activity(
+            items = _items_for_activity(
                 activity,
                 skill,
                 rules,
@@ -328,6 +339,67 @@ _BRAIN_BREAKS = [
     "Do 5 jumping jacks!",
     "Get a drink of water!",
 ]
+
+
+# Formats whose renderer contracts (shuffled picture options, phoneme boxes)
+# must stay mechanically constructed even when the model authors items.
+_MECHANICAL_FORMATS = {"match", "sound_box"}
+
+
+def _items_for_activity(
+    activity: ActivityPlan,
+    skill: LiteracySkillModel,
+    rules: AccommodationRules,
+    item_start: int,
+) -> list[ActivityItem]:
+    """Prefer model-authored items; degrade to template expansion."""
+    if activity.items and activity.activity_type not in _MECHANICAL_FORMATS:
+        authored = _items_from_planned(activity, rules, item_start)
+        if authored:
+            return authored
+    if activity.items and not activity.words:
+        # Salvage authored content as inputs for the mechanical builders.
+        activity = activity.model_copy(
+            update={"words": [planned.content for planned in activity.items]}
+        )
+    return _build_items_from_activity(activity, skill, rules, item_start)
+
+
+def _items_from_planned(
+    activity: ActivityPlan,
+    rules: AccommodationRules,
+    item_start: int,
+) -> list[ActivityItem]:
+    """Clamp model-authored items to ADHD rules; mechanics stay deterministic."""
+    from adapt.engine import _limit_options
+
+    items: list[ActivityItem] = []
+    item_id = item_start
+    for planned in activity.items[: rules.max_items_per_chunk]:
+        content = planned.content.strip()
+        if not content:
+            continue
+        options = [opt.strip() for opt in planned.options if opt.strip()]
+        if options and planned.answer:
+            options = _limit_options(
+                options,
+                required=planned.answer,
+                max_items=rules.max_items_per_chunk,
+            )
+        else:
+            options = options[: rules.max_items_per_chunk]
+        item_id += 1
+        items.append(
+            ActivityItem(
+                item_id=item_id,
+                content=content,
+                response_format=planned.response_format or activity.response_format,
+                options=options or None,
+                answer=planned.answer,
+                picture_prompt=planned.picture_prompt,
+            )
+        )
+    return items
 
 
 def _build_items_from_activity(
