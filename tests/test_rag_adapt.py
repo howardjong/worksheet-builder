@@ -70,11 +70,18 @@ def test_distractor_blacklist_from_rag() -> None:
     ]
 
     worksheets = adapt_lesson(_skill(), _profile(), rag_prior_adaptations=prior)
-    discovery = [ws for ws in worksheets if ws.worksheet_title == "Word Practice"][0]
+    # Section cap enforcement may split into multiple parts
+    discovery_parts = [
+        ws
+        for ws in worksheets
+        if ws.worksheet_title and ws.worksheet_title.startswith("Word Practice")
+    ]
+    assert discovery_parts, "Expected at least one Word Practice worksheet"
 
     circle_items = [
         item
-        for chunk in discovery.chunks
+        for ws in discovery_parts
+        for chunk in ws.chunks
         for item in chunk.items
         if item.response_format == "circle"
     ]
@@ -103,9 +110,15 @@ def test_format_mix_rotation_from_rag() -> None:
     ]
 
     worksheets = adapt_lesson(_skill(), _profile(), rag_prior_adaptations=prior)
-    discovery = [ws for ws in worksheets if ws.worksheet_title == "Word Practice"][0]
+    # Section cap enforcement may split into multiple parts
+    discovery_parts = [
+        ws
+        for ws in worksheets
+        if ws.worksheet_title and ws.worksheet_title.startswith("Word Practice")
+    ]
+    assert discovery_parts, "Expected at least one Word Practice worksheet"
 
-    chunk_formats = [chunk.response_format for chunk in discovery.chunks]
+    chunk_formats = [chunk.response_format for ws in discovery_parts for chunk in ws.chunks]
     # Warmup (sound_box) may be prepended for grades K-1
     non_warmup = [f for f in chunk_formats if f != "sound_box"]
     # Profile prefs are [write, circle, match] — no "trace", so trace is
@@ -136,17 +149,26 @@ def test_curriculum_prioritizes_supported_target_words() -> None:
         ),
     )
     # No chains in source_items, so no reorder — title stays "Word Discovery"
-    discovery = [ws for ws in worksheets if ws.worksheet_title == "Word Discovery"][0]
+    # Section cap enforcement may split into multiple parts
+    discovery_parts = [
+        ws
+        for ws in worksheets
+        if ws.worksheet_title and ws.worksheet_title.startswith("Word Discovery")
+    ]
+    assert discovery_parts, "Expected at least one Word Discovery worksheet"
     match_words = [
         item.content
-        for chunk in discovery.chunks
+        for ws in discovery_parts
+        for chunk in ws.chunks
         for item in chunk.items
         if item.response_format == "match"
     ]
 
     assert match_words[:3] == ["grade", "slide", "quite"]
     # Find the match chunk (skip optional warmup chunk)
-    match_chunk = next(ch for ch in discovery.chunks if ch.response_format == "match")
+    match_chunk = next(
+        ch for ws in discovery_parts for ch in ws.chunks if ch.response_format == "match"
+    )
     assert match_chunk.items[0].metadata["curriculum_supported"] is True
 
 

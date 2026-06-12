@@ -405,7 +405,8 @@ class TestAdaptLesson:
     def test_produces_multiple_worksheets(self) -> None:
         worksheets = adapt_lesson(_ufli_59_skill(), _grade_1_profile())
         assert len(worksheets) >= 2
-        assert len(worksheets) <= 3
+        # Section cap enforcement may split worksheets beyond the base 3
+        assert len(worksheets) <= 6
 
     def test_worksheet_numbers_correct(self) -> None:
         worksheets = adapt_lesson(_ufli_59_skill(), _grade_1_profile())
@@ -417,8 +418,9 @@ class TestAdaptLesson:
         worksheets = adapt_lesson(_ufli_59_skill(), _grade_1_profile())
         titles = [ws.worksheet_title for ws in worksheets]
         # UFLI word work with chains: reordered to Word Work / Word Practice
-        assert "Word Work" in titles
-        assert "Word Practice" in titles
+        # Section cap enforcement may append "(Part N)" to split worksheets
+        assert any(t and t.startswith("Word Work") for t in titles)
+        assert any(t and t.startswith("Word Practice") for t in titles)
 
     def test_activity_format_variety(self) -> None:
         """Not all response formats should be 'write' across all worksheets."""
@@ -484,11 +486,17 @@ class TestAdaptLesson:
         """Word practice worksheet should have match-format items."""
         worksheets = adapt_lesson(_ufli_59_skill(), _grade_1_profile())
         # UFLI word work with chains: Discovery is renamed to Word Practice
-        discovery = [ws for ws in worksheets if ws.worksheet_title == "Word Practice"]
-        assert len(discovery) == 1
+        # Section cap enforcement may split into multiple parts
+        discovery = [
+            ws
+            for ws in worksheets
+            if ws.worksheet_title and ws.worksheet_title.startswith("Word Practice")
+        ]
+        assert len(discovery) >= 1
         match_items = [
             item
-            for chunk in discovery[0].chunks
+            for ws in discovery
+            for chunk in ws.chunks
             for item in chunk.items
             if item.response_format == "match"
         ]
@@ -525,11 +533,16 @@ class TestAdaptLesson:
         """Grade 1 profiles should have sound_box warmup chunk in Word Practice."""
         worksheets = adapt_lesson(_ufli_59_skill(), _grade_1_profile())
         # UFLI word work with chains: Discovery is renamed to Word Practice
-        discovery = [ws for ws in worksheets if ws.worksheet_title == "Word Practice"]
-        assert len(discovery) == 1
-        # Find chunk with sound_box format
+        # Section cap enforcement may split into multiple parts
+        discovery = [
+            ws
+            for ws in worksheets
+            if ws.worksheet_title and ws.worksheet_title.startswith("Word Practice")
+        ]
+        assert len(discovery) >= 1
+        # Find chunk with sound_box format (may be in any of the parts)
         sound_box_chunks = [
-            chunk for chunk in discovery[0].chunks if chunk.response_format == "sound_box"
+            chunk for ws in discovery for chunk in ws.chunks if chunk.response_format == "sound_box"
         ]
         assert len(sound_box_chunks) >= 1
 

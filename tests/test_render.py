@@ -325,8 +325,13 @@ class TestMultiWorksheetRender:
     def test_render_match_items(self) -> None:
         """Word-picture matching items should render without error."""
         worksheets = adapt_lesson(_ufli_59_skill(), _profile())
-        discovery = [ws for ws in worksheets if ws.worksheet_title == "Word Practice"]
-        assert len(discovery) == 1
+        # Section cap enforcement may split into multiple parts
+        discovery = [
+            ws
+            for ws in worksheets
+            if ws.worksheet_title and ws.worksheet_title.startswith("Word Practice")
+        ]
+        assert len(discovery) >= 1
         theme = load_theme("space")
         with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
             pdf_path = f.name
@@ -345,12 +350,18 @@ class TestMultiWorksheetRender:
             ),
         )
         worksheets = adapt_lesson(_ufli_59_skill(), profile)
-        discovery = [ws for ws in worksheets if ws.worksheet_title == "Word Practice"]
-        assert len(discovery) == 1
+        # Section cap enforcement may split into multiple parts
+        discovery = [
+            ws
+            for ws in worksheets
+            if ws.worksheet_title and ws.worksheet_title.startswith("Word Practice")
+        ]
+        assert len(discovery) >= 1
         # Verify trace items exist
         trace_items = [
             item
-            for chunk in discovery[0].chunks
+            for ws in discovery
+            for chunk in ws.chunks
             for item in chunk.items
             if item.response_format == "trace"
         ]
@@ -437,8 +448,13 @@ class TestMultiWorksheetRender:
     def test_chunk_starts_on_new_page_before_bottom_clip(self) -> None:
         """Integrated-scene layouts should move the next chunk to a new page before clipping."""
         worksheets = adapt_lesson(_lesson74_home_skill(), _profile(), theme_id="roblox_obby")
-        discovery = [ws for ws in worksheets if ws.worksheet_title == "Word Practice"]
-        assert len(discovery) == 1
+        # Section cap enforcement may split into multiple parts
+        discovery = [
+            ws
+            for ws in worksheets
+            if ws.worksheet_title and ws.worksheet_title.startswith("Word Practice")
+        ]
+        assert len(discovery) >= 1
 
         theme = load_theme("roblox_obby")
         scene_path = str(Path("assets/characters/rainbow_roblox.png"))
@@ -469,7 +485,14 @@ class TestMultiWorksheetRender:
     def test_word_picture_prompts_key_shuffled_picture_word(self) -> None:
         """Match pictures are looked up by the shuffled picture word."""
         worksheets = adapt_lesson(_lesson74_home_skill(), _profile(), theme_id="roblox_obby")
-        word_practice = [ws for ws in worksheets if ws.worksheet_title == "Word Practice"][0]
+        # Section cap enforcement may split into multiple parts
+        word_practice_parts = [
+            ws
+            for ws in worksheets
+            if ws.worksheet_title and ws.worksheet_title.startswith("Word Practice")
+        ]
+        assert word_practice_parts, "Expected at least one Word Practice worksheet"
+        word_practice = word_practice_parts[0]
 
         prompts = plan_word_pictures(word_practice)
         match_items = [
@@ -492,7 +515,14 @@ class TestMultiWorksheetRender:
         monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
 
         worksheets = adapt_lesson(_lesson74_home_skill(), _profile(), theme_id="roblox_obby")
-        word_practice = [ws for ws in worksheets if ws.worksheet_title == "Word Practice"][0]
+        # Section cap enforcement may split into multiple parts
+        word_practice_parts = [
+            ws
+            for ws in worksheets
+            if ws.worksheet_title and ws.worksheet_title.startswith("Word Practice")
+        ]
+        assert word_practice_parts, "Expected at least one Word Practice worksheet"
+        word_practice = word_practice_parts[0]
         theme = load_theme("roblox_obby")
         manifest = generate_worksheet_assets(
             plan_scenes(word_practice, character_spec=theme.character_spec),

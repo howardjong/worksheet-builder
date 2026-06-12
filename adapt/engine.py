@@ -23,6 +23,7 @@ from adapt.schema import (
     ScaffoldConfig,
     Step,
 )
+from adapt.section_cap import enforce_section_cap
 from companion.schema import LearnerProfile
 from skill.schema import LiteracySkillModel
 
@@ -137,7 +138,7 @@ def adapt_lesson(
                 character_identity=character_identity,
             )
             if direct_result:
-                return direct_result
+                return enforce_section_cap(direct_result, rules)
         except Exception as exc:
             logger.warning("Direct compiler failed, using fallback adaptation: %s", exc)
 
@@ -154,7 +155,7 @@ def adapt_lesson(
             artifacts_dir=artifacts_dir,
         )
         if llm_result:
-            return llm_result
+            return enforce_section_cap(llm_result, rules)
     except Exception as exc:
         logger.warning("LLM orchestration failed, using deterministic engine: %s", exc)
 
@@ -411,9 +412,9 @@ def adapt_lesson(
             rag_prior_adaptations=rag_prior_adaptations,
             rag_curriculum_references=rag_curriculum_references,
         )
-        return [single]
+        return enforce_section_cap([single], rules)
 
-    return worksheets
+    return enforce_section_cap(worksheets, rules)
 
 
 def _build_discovery_chunks(
