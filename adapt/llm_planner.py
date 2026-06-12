@@ -140,8 +140,20 @@ Response format preferences: {profile.accommodations.response_format_prefs}
 Design 2-3 mini-worksheets that teach "{skill.specific_skill}" effectively.
 
 CRITICAL RULES:
-1. Preserve ALL source content — every word chain, sample word, sight word,
-   and sentence from the source MUST appear somewhere in your output items.
+1. Preserve ALL source content as INDIVIDUAL practice. Every source word, every
+   word-chain step, and every source sentence MUST appear as its OWN separate
+   item that the child actually works (read, write, build, or circle). Coverage
+   is judged on individual practice, not mere presence:
+   - Do NOT bundle multiple source words into one item, and do NOT dump a long
+     word list into a single item's "content" or as one giant "option" — use
+     one item per word.
+   - A word chain (e.g. "mule -> mute -> cute") MUST be its own build/word-work
+     activity with each step as an item, not only as a worked example.
+   - Preserve each source sentence's full text in at least one item (a read item,
+     or if you remove one letter/word keep the rest of the sentence intact).
+   - For circle/fill_blank items, each item targets ONE answer with 2-4 short,
+     real, single-word options; never use a phrase or a list of words as one
+     option.
 2. YOU author the actual practice items: write the exact student-facing text,
    the "answer" options, and the correct answer for each item. Use real,
    correctly spelled, grade-appropriate words. Never truncate a sentence.

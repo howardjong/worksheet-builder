@@ -321,3 +321,15 @@ def test_planner_never_writes_global_log_under_pytest(
 
     # PYTEST_CURRENT_TEST is set by pytest itself; the global log must not appear
     assert not (tmp_path / "logs").exists()
+
+
+def test_prompt_demands_individual_coverage_not_bundling() -> None:
+    prompt = _build_planner_prompt(_skill(), _profile(), build_rules(_profile()), "default", None)
+
+    # Each source word/chain-step/sentence must be practiced as its own item,
+    # not crammed into one dense list item (the coverage limiter the judge flags).
+    assert "INDIVIDUAL practice" in prompt
+    assert "Do NOT bundle" in prompt
+    assert "one item per word" in prompt
+    # Word chains must be student activities, not just worked examples.
+    assert "not only as a worked example" in prompt

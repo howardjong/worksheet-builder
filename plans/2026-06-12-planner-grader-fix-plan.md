@@ -59,6 +59,14 @@ git commit -m "fix: judge prompt surfaces time estimates, numbered steps, brain 
 
 ---
 
+### Task 12c: Planner prompt forces individual coverage (no bundling)
+
+Owner-selected fix after the threshold research: coverage is the binding limiter (16/27 rejects), so push planner coverage rather than lower the 0.70 bar.
+
+- [x] **Step 1 (RED):** `tests/test_llm_planner.py::test_prompt_demands_individual_coverage_not_bundling` — assert the prompt requires INDIVIDUAL practice, forbids bundling ("Do NOT bundle", "one item per word"), and requires chains as activities ("not only as a worked example"). Saw it fail.
+- [x] **Step 2 (GREEN):** Rewrote CRITICAL RULE 1 in `_build_planner_prompt`: every source word/chain-step/sentence as its own worked item; no bundling / no giant-list options; chains as build activities; full sentences preserved; circle/fill_blank items target one answer with 2-4 single-word options. 605 green; lint + typecheck clean.
+- [x] **Step 3:** Commit `fix: planner prompt forces individual source coverage (no bundling)`.
+
 ### Task 12b: Re-run the live A/B battery + re-evaluate the gate
 
 - [ ] Re-run the battery on IMG_0003/4/5 (sandbox off, `SSL_CERT_FILE` = venv certifi, `WORKSHEET_LLM_ADAPT=1`).
