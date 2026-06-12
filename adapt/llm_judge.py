@@ -47,13 +47,20 @@ def _build_judge_prompt(
         source_sections.append(f"  - [{si.item_type}]: {si.content}")
     source_text = "\n".join(source_sections) if source_sections else "  (none)"
 
-    # Adapted worksheets — FULL text, the judge gates what ships
+    # Adapted worksheets — FULL text, the judge gates what ships. Render the
+    # ADHD supports (numbered steps, time estimates, brain breaks, self-check)
+    # so the adhd_compliance score reflects what the worksheet actually carries.
     ws_sections = []
     for ws in worksheets:
         chunks_desc = []
         for chunk in ws.chunks:
             lines = [f"    Section {chunk.chunk_id}: {chunk.micro_goal}"]
-            lines.append("      Instructions: " + " | ".join(s.text for s in chunk.instructions))
+            lines.append(
+                "      Instructions: "
+                + " | ".join(f"{s.number}. {s.text}" for s in chunk.instructions)
+            )
+            if chunk.time_estimate:
+                lines.append(f"      Time estimate: {chunk.time_estimate}")
             if chunk.worked_example is not None:
                 lines.append(f"      Worked example: {chunk.worked_example.content}")
             for item in chunk.items:
@@ -64,9 +71,15 @@ def _build_judge_prompt(
                     item_line += f" answer={item.answer!r}"
                 lines.append(item_line)
             chunks_desc.append("\n".join(lines))
-        ws_sections.append(
-            f"  Worksheet {ws.worksheet_number}: {ws.worksheet_title}\n" + "\n".join(chunks_desc)
-        )
+        ws_lines = [
+            f"  Worksheet {ws.worksheet_number}: {ws.worksheet_title}",
+            "\n".join(chunks_desc),
+        ]
+        if ws.break_prompt:
+            ws_lines.append(f"    Brain break: {ws.break_prompt}")
+        if ws.self_assessment:
+            ws_lines.append("    Self-check: " + ", ".join(ws.self_assessment))
+        ws_sections.append("\n".join(ws_lines))
     adapted_text = "\n\n".join(ws_sections)
 
     return f"""You are a pediatric literacy specialist and ADHD learning expert reviewing adapted worksheets for a child ages 5-8.

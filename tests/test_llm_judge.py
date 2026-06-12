@@ -89,3 +89,21 @@ def test_judge_prompt_includes_structural_criteria() -> None:
 
     assert "truncated" in prompt
     assert "garbled" in prompt
+
+
+def _worksheet_with_supports() -> AdaptedActivityModel:
+    return _worksheet().model_copy(
+        update={
+            "break_prompt": "Stand up and stretch!",
+            "self_assessment": ["I can read CVCe words"],
+        }
+    )
+
+
+def test_judge_prompt_shows_adhd_supports() -> None:
+    prompt = _build_judge_prompt(_skill(), [_worksheet_with_supports()])
+
+    assert "About 2 minutes" in prompt  # time estimate per section
+    assert "1. Read it aloud." in prompt  # numbered instruction steps
+    assert "Stand up and stretch!" in prompt  # brain break between worksheets
+    assert "I can read CVCe words" in prompt  # self-check list
