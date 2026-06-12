@@ -66,3 +66,11 @@ def test_engine_routes_to_planner_v2(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert called == ["planner"]
     assert result[0].chunks[0].items[0].content == "cat"
+
+
+def test_chunk_assets_skipped_for_image_gen() -> None:
+    from transform import _should_generate_chunk_assets
+
+    assert _should_generate_chunk_assets("pdf_classic") is True
+    assert _should_generate_chunk_assets("image_prompt") is True
+    assert _should_generate_chunk_assets("image_gen") is False

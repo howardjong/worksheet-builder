@@ -609,36 +609,39 @@ def _run_multi_worksheet_pipeline(
             character_spec=char_spec,
         )
         asset_manifest = None
-        try:
-            scenes = plan_scenes(adapted, character_spec=char_spec)
-            word_prompts = plan_word_pictures(adapted)
-            ws_hash = compute_worksheet_hash(
-                adapted.source_hash,
-                i,
-                theme_id,
-                identity_version=identity.identity_version,
-            )
+        if _should_generate_chunk_assets(render_mode):
+            try:
+                scenes = plan_scenes(adapted, character_spec=char_spec)
+                word_prompts = plan_word_pictures(adapted)
+                ws_hash = compute_worksheet_hash(
+                    adapted.source_hash,
+                    i,
+                    theme_id,
+                    identity_version=identity.identity_version,
+                )
 
-            # Pass style sheet for theme-accurate character rendering
-            style_sheet = None
-            if profile.avatar and profile.avatar.style_sheet:
-                style_sheet = profile.avatar.style_sheet
+                # Pass style sheet for theme-accurate character rendering
+                style_sheet = None
+                if profile.avatar and profile.avatar.style_sheet:
+                    style_sheet = profile.avatar.style_sheet
 
-            asset_manifest = generate_worksheet_assets(
-                scenes,
-                word_prompts,
-                ws_hash,
-                character_name=(
-                    profile.avatar.base_character if profile.avatar else "rainbow_roblox"
-                ),
-                style_sheet=style_sheet,
-                character_spec=char_spec,
-                profile=profile,
-                theme_id=theme_id,
-                identity=identity,
-            )
-        except Exception as exc:
-            logger.warning("  Asset generation skipped: %s", exc)
+                asset_manifest = generate_worksheet_assets(
+                    scenes,
+                    word_prompts,
+                    ws_hash,
+                    character_name=(
+                        profile.avatar.base_character if profile.avatar else "rainbow_roblox"
+                    ),
+                    style_sheet=style_sheet,
+                    character_spec=char_spec,
+                    profile=profile,
+                    theme_id=theme_id,
+                    identity=identity,
+                )
+            except Exception as exc:
+                logger.warning("  Asset generation skipped: %s", exc)
+        else:
+            logger.info("  Asset generation skipped (image_gen renders full pages)")
 
         pdf_filename = f"worksheet_{content_hash}_{i}of{len(worksheets)}.pdf"
         pdf_path = str(output / pdf_filename)
@@ -851,6 +854,16 @@ def _skip_ai_review(judge_result: dict[str, object]) -> bool:
     no full-text judge gated the content.
     """
     return judge_result.get("planner_version") == 2
+
+
+def _should_generate_chunk_assets(render_mode: str) -> bool:
+    """Per-chunk scene/word images only serve pdf_classic-style layouts.
+
+    The image_gen renderer generates full pages and never reads the asset
+    manifest; if it falls back to pdf_classic mid-run, that worksheet renders
+    with the deterministic local art (same degradation as asset-gen failure).
+    """
+    return render_mode != "image_gen"
 
 
 def _validate_and_report(
