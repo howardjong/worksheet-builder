@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from adapt.rules import CHUNKING_RULES, INSTRUCTION_LIMITS, AccommodationRules
+from adapt.rules import (
+    CHUNKING_RULES,
+    INSTRUCTION_LIMITS,
+    MAX_SECTIONS_PER_WORKSHEET,
+    AccommodationRules,
+)
 from adapt.schema import AdaptedActivityModel
 from validate.schema import ValidationResult
 
@@ -24,6 +29,9 @@ def validate_adhd_compliance(
     8. No accuracy-based scoring (anti-pattern)
     9. Decoration zones don't overlap (normalized coords valid)
     10. Time estimates reasonable
+    11. Response format variety
+    12. Worksheet time limit
+    13. Sections per worksheet within grade cap
     """
     result = ValidationResult(validator="adhd_compliance", passed=True, checks_run=0)
 
@@ -208,6 +216,22 @@ def validate_adhd_compliance(
                 ),
                 severity="warning",
             )
+
+    # Check 13: Sections per worksheet (grade-scaled hard cap)
+    result.checks_run += 1
+    if rules is not None:
+        max_sections = rules.max_sections_per_worksheet
+    else:
+        max_sections = MAX_SECTIONS_PER_WORKSHEET.get(grade, 4)
+    if len(adapted.chunks) > max_sections:
+        result.add_violation(
+            check="sections_per_worksheet",
+            message=(
+                f"Worksheet has {len(adapted.chunks)} sections, "
+                f"max for grade {grade} is {max_sections}"
+            ),
+            details={"sections": len(adapted.chunks), "max": max_sections},
+        )
 
     return result
 

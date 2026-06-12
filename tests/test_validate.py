@@ -382,3 +382,64 @@ class TestValidationSchema:
         result = ValidationResult(validator="test", passed=True, checks_run=1)
         result.add_violation("check", "just a warning", severity="warning")
         assert result.passed
+
+
+def _worksheet_with_n_chunks(count: int, grade: str = "1") -> AdaptedActivityModel:
+    chunks = [
+        ActivityChunk(
+            chunk_id=i + 1,
+            micro_goal=f"Goal {i + 1}",
+            instructions=[Step(number=1, text="Do the task.")],
+            items=[ActivityItem(item_id=i + 1, content="cat", response_format="write")],
+            response_format="write",
+            time_estimate="About 2 minutes",
+        )
+        for i in range(count)
+    ]
+    return AdaptedActivityModel(
+        source_hash="s",
+        skill_model_hash="k",
+        learner_profile_hash="p",
+        grade_level=grade,
+        domain="phonics",
+        specific_skill="cvc",
+        chunks=chunks,
+        scaffolding=ScaffoldConfig(),
+        theme_id="default",
+        decoration_zones=[(0.85, 0.0, 1.0, 0.12)],
+        self_assessment=["I can read CVC words"],
+    )
+
+
+def test_sections_per_worksheet_cap_violated() -> None:
+    from validate.adhd_compliance import validate_adhd_compliance
+
+    result = validate_adhd_compliance(_worksheet_with_n_chunks(9, grade="1"))
+
+    assert result.passed is False
+    checks = [v.check for v in result.violations if v.severity == "error"]
+    assert "sections_per_worksheet" in checks
+
+
+def test_sections_per_worksheet_cap_respected() -> None:
+    from validate.adhd_compliance import validate_adhd_compliance
+
+    result = validate_adhd_compliance(_worksheet_with_n_chunks(3, grade="1"))
+
+    checks = [v.check for v in result.violations]
+    assert "sections_per_worksheet" not in checks
+
+
+def test_sections_per_worksheet_uses_rules_when_provided() -> None:
+    from adapt.rules import build_rules
+    from companion.schema import Accommodations, LearnerProfile
+    from validate.adhd_compliance import validate_adhd_compliance
+
+    profile = LearnerProfile(name="t", grade_level="K", accommodations=Accommodations())
+    result = validate_adhd_compliance(
+        _worksheet_with_n_chunks(3, grade="K"), rules=build_rules(profile)
+    )
+
+    assert result.passed is False
+    checks = [v.check for v in result.violations if v.severity == "error"]
+    assert "sections_per_worksheet" in checks
