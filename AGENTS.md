@@ -75,6 +75,8 @@ Paper → Capture → Normalize → Source Extract → Skill Model → ADHD Adap
 - Curated theme assets committed to repo; generated assets cached in `asset_cache/` (gitignored).
 - RAG store in `vector_store/`; UFLI curriculum corpus lives in the `curriculum` collection.
 - RAG embedding auto-selects API-key Gemini when available in `.env`; Vertex is available via `RAG_GEMINI_BACKEND=vertex`.
+- Image renderer (`--render-mode image_gen`) env: `WORKSHEET_IMAGE_PROVIDERS` (comma-ordered fallback chain, default `gemini,openai`), `WORKSHEET_GEMINI_IMAGE_MODEL` (default `gemini-3.1-flash-image-preview`), `WORKSHEET_OPENAI_IMAGE_MODEL` (default `gpt-image-2-2026-04-21`).
+- `WORKSHEET_SKIP_ASSET_GEN=1` disables all image generation and forces the deterministic `pdf_classic` fallback (used by tests/CI).
 
 ## Session Handoff
 
