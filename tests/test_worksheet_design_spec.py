@@ -164,6 +164,24 @@ def test_required_text_excludes_raw_skill_slug() -> None:
     assert "Vowel Team Adventure" in spec.required_text
 
 
+def test_required_text_excludes_answer_keys() -> None:
+    from render.design_spec import compile_worksheet_design_spec
+
+    adapted = _adapted()
+    adapted.chunks[0].items[1].answer = "zzz_marker"
+
+    theme = ThemeConfig(name="Geometry Dash Calm")
+    profile = LearnerProfile(name="Ian", grade_level="1")
+
+    spec = compile_worksheet_design_spec(adapted, theme, profile, render_mode="image_gen")
+
+    # The child writes answers; they are never rendered, so the text gate must
+    # not demand them.
+    assert "zzz_marker" not in spec.required_text
+    # Item content and options ARE rendered, so they remain required.
+    assert "play" in spec.required_text
+
+
 def test_worksheet_title_fallback_is_humanized() -> None:
     from render.design_spec import compile_worksheet_design_spec
 

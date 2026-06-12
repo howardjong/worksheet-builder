@@ -216,8 +216,8 @@ def _required_text(adapted: AdaptedActivityModel) -> list[str]:
             text.append(chunk.worked_example.content)
         for item in chunk.items:
             text.append(item.content)
-            if item.answer:
-                text.append(item.answer)
+            # Answers are written by the child, never rendered on the page, so
+            # they must not feed the image-page text gate (render/page_gates.py).
             if item.options:
                 text.extend(item.options)
     return _dedupe_nonblank(text)
