@@ -47,17 +47,23 @@ def _build_judge_prompt(
         source_sections.append(f"  - [{si.item_type}]: {si.content}")
     source_text = "\n".join(source_sections) if source_sections else "  (none)"
 
-    # Adapted worksheets summary
+    # Adapted worksheets — FULL text, the judge gates what ships
     ws_sections = []
     for ws in worksheets:
         chunks_desc = []
         for chunk in ws.chunks:
-            items_desc = [
-                f'      - "{item.content[:60]}" ({item.response_format})' for item in chunk.items
-            ]
-            chunks_desc.append(
-                f"    Chunk {chunk.chunk_id}: {chunk.micro_goal}\n" + "\n".join(items_desc)
-            )
+            lines = [f"    Section {chunk.chunk_id}: {chunk.micro_goal}"]
+            lines.append("      Instructions: " + " | ".join(s.text for s in chunk.instructions))
+            if chunk.worked_example is not None:
+                lines.append(f"      Worked example: {chunk.worked_example.content}")
+            for item in chunk.items:
+                item_line = f'      - "{item.content}" ({item.response_format})'
+                if item.options:
+                    item_line += f" options={item.options}"
+                if item.answer is not None:
+                    item_line += f" answer={item.answer!r}"
+                lines.append(item_line)
+            chunks_desc.append("\n".join(lines))
         ws_sections.append(
             f"  Worksheet {ws.worksheet_number}: {ws.worksheet_title}\n" + "\n".join(chunks_desc)
         )
@@ -91,6 +97,8 @@ Score each criterion 0.0-1.0:
 3. **lesson_flow**: Is the worksheet ordering pedagogically sound? Core practice activities should come before reinforcement. The progression should build understanding.
 
 4. **adhd_compliance**: Are ADHD accommodations properly applied? Chunked content, numbered instructions, worked examples, time estimates, brain breaks, not too many items per chunk.
+
+5. **Structural quality (fold into your scores and approval)**: Every item must be real, correctly spelled, complete text. If any item is truncated (e.g., ends mid-sentence or in "..."), garbled, misspelled, or a formatting artifact (raw markup, teacher-only instructions), set approved=false and name the exact item in feedback.
 
 ## Output Format
 
