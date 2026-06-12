@@ -438,11 +438,12 @@ def _log_performance(entry: AdaptationLogEntry, artifacts_dir: str | None) -> No
         with open(path / "llm_adaptation_log.jsonl", "a") as f:
             f.write(line)
 
-    # Write to global log (cross-run visibility)
-    global_log = Path("logs")
-    global_log.mkdir(parents=True, exist_ok=True)
-    with open(global_log / "llm_adaptation_log.jsonl", "a") as f:
-        f.write(line)
+    # Write to global log (cross-run visibility) — never from tests
+    if "PYTEST_CURRENT_TEST" not in os.environ:
+        global_log = Path("logs")
+        global_log.mkdir(parents=True, exist_ok=True)
+        with open(global_log / "llm_adaptation_log.jsonl", "a") as f:
+            f.write(line)
 
     logger.info(
         "  LLM orchestrator log: outcome=%s model=%s gemini_attempts=%d score=%s",

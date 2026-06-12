@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 
+from adapt.llm_judge import JudgeVerdict
 from adapt.llm_planner import _build_planner_prompt, _corpus_block
 from adapt.rules import build_rules
 from companion.schema import Accommodations, LearnerProfile
@@ -154,3 +158,166 @@ def test_planner_chain_no_keys(monkeypatch: pytest.MonkeyPatch) -> None:
 
     assert text is None
     assert model == "none"
+
+
+_PLAN_JSON = json.dumps(
+    {
+        "concept_focus": "CVCe magic-e",
+        "pedagogical_rationale": "Practice the pattern",
+        "worksheets": [
+            {
+                "title": "Magic E",
+                "activities": [
+                    {
+                        "activity_type": "write",
+                        "micro_goal": "Write CVCe words",
+                        "words": [],
+                        "items": [
+                            {"content": "cake", "response_format": "write"},
+                            {"content": "ride", "response_format": "write"},
+                        ],
+                        "instructions": ["Write each word."],
+                        "worked_example": "cake -> the e is silent",
+                        "response_format": "write",
+                        "time_estimate_minutes": 2,
+                        "rationale": "Practice writing the pattern",
+                    }
+                ],
+            }
+        ],
+    }
+)
+
+
+def _verdict(approved: bool, score: float) -> JudgeVerdict:
+    return JudgeVerdict(
+        approved=approved,
+        overall_score=score,
+        concept_alignment=score,
+        content_coverage=score,
+        lesson_flow=score,
+        adhd_compliance=score,
+        feedback=["ok" if approved else "missing chains"],
+        rationale="r",
+    )
+
+
+def _planner_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("WORKSHEET_LLM_ADAPT", "1")
+    monkeypatch.setenv("OPENAI_API_KEY", "fake")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("WORKSHEET_PLANNER_PROVIDERS", raising=False)
+
+
+def test_planner_ships_approved_plan(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from adapt import llm_planner
+
+    _planner_env(monkeypatch)
+    monkeypatch.setattr(llm_planner, "_call_planner", lambda p: (_PLAN_JSON, "gpt-5.4"))
+    monkeypatch.setattr(llm_planner, "judge_adaptation", lambda s, w: _verdict(True, 0.9))
+
+    result = llm_planner.plan_lesson_llm(_skill(), _profile(), artifacts_dir=str(tmp_path))
+
+    assert result is not None
+    assert [i.content for i in result[0].chunks[0].items] == ["cake", "ride"]
+    verdict = json.loads((tmp_path / "judge_verdict.json").read_text())
+    assert verdict["approved"] is True
+    assert verdict["planner_version"] == 2
+    assert verdict["outcome"] == "planned_approved"
+    log_lines = (tmp_path / "llm_adaptation_log.jsonl").read_text().splitlines()
+    assert json.loads(log_lines[-1])["outcome"] == "planned_approved"
+
+
+def test_planner_regenerates_once_with_feedback(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from adapt import llm_planner
+
+    _planner_env(monkeypatch)
+    prompts: list[str] = []
+
+    def _fake_call(prompt: str) -> tuple[str, str]:
+        prompts.append(prompt)
+        return _PLAN_JSON, "gpt-5.4"
+
+    verdicts = iter([_verdict(False, 0.4), _verdict(True, 0.85)])
+    monkeypatch.setattr(llm_planner, "_call_planner", _fake_call)
+    monkeypatch.setattr(llm_planner, "judge_adaptation", lambda s, w: next(verdicts))
+
+    result = llm_planner.plan_lesson_llm(_skill(), _profile(), artifacts_dir=str(tmp_path))
+
+    assert result is not None
+    assert len(prompts) == 2
+    assert "missing chains" in prompts[1]  # feedback fed back
+    verdict = json.loads((tmp_path / "judge_verdict.json").read_text())
+    assert verdict["outcome"] == "planned_regen_approved"
+
+
+def test_planner_falls_back_after_two_rejections(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from adapt import llm_planner
+
+    _planner_env(monkeypatch)
+    monkeypatch.setattr(llm_planner, "_call_planner", lambda p: (_PLAN_JSON, "gpt-5.4"))
+    monkeypatch.setattr(llm_planner, "judge_adaptation", lambda s, w: _verdict(False, 0.4))
+
+    result = llm_planner.plan_lesson_llm(_skill(), _profile(), artifacts_dir=str(tmp_path))
+
+    assert result is None
+    # No judge_verdict.json: transform must judge what actually ships
+    assert not (tmp_path / "judge_verdict.json").exists()
+    attempts = json.loads((tmp_path / "planner_attempts.json").read_text())
+    assert attempts["outcome"] == "planned_rejected_fallback"
+    assert len(attempts["verdicts"]) == 2
+
+
+def test_planner_ships_unjudged_when_judge_unavailable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from adapt import llm_planner
+
+    _planner_env(monkeypatch)
+    monkeypatch.setattr(llm_planner, "_call_planner", lambda p: (_PLAN_JSON, "gpt-5.4"))
+    monkeypatch.setattr(llm_planner, "judge_adaptation", lambda s, w: None)
+
+    result = llm_planner.plan_lesson_llm(_skill(), _profile(), artifacts_dir=str(tmp_path))
+
+    assert result is not None
+    verdict = json.loads((tmp_path / "judge_verdict.json").read_text())
+    assert verdict["unjudged"] is True
+    assert verdict["outcome"] == "planned_unjudged"
+
+
+def test_planner_returns_none_without_env_gate(monkeypatch: pytest.MonkeyPatch) -> None:
+    from adapt import llm_planner
+
+    monkeypatch.delenv("WORKSHEET_LLM_ADAPT", raising=False)
+
+    assert llm_planner.plan_lesson_llm(_skill(), _profile()) is None
+
+
+def test_planner_returns_none_without_keys(monkeypatch: pytest.MonkeyPatch) -> None:
+    from adapt import llm_planner
+
+    monkeypatch.setenv("WORKSHEET_LLM_ADAPT", "1")
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+
+    assert llm_planner.plan_lesson_llm(_skill(), _profile()) is None
+
+
+def test_planner_never_writes_global_log_under_pytest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from adapt import llm_planner
+
+    _planner_env(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(llm_planner, "_call_planner", lambda p: (_PLAN_JSON, "gpt-5.4"))
+    monkeypatch.setattr(llm_planner, "judge_adaptation", lambda s, w: _verdict(True, 0.9))
+
+    llm_planner.plan_lesson_llm(_skill(), _profile(), artifacts_dir=str(tmp_path / "artifacts"))
+
+    # PYTEST_CURRENT_TEST is set by pytest itself; the global log must not appear
+    assert not (tmp_path / "logs").exists()

@@ -11,12 +11,19 @@ a judge verdict.
 
 from __future__ import annotations
 
+import json
 import logging
 import os
+from datetime import UTC, datetime
+from pathlib import Path
 
-from adapt.llm_adapt import _call_gemini
-from adapt.llm_judge import _call_openai
-from adapt.rules import AccommodationRules
+from pydantic import BaseModel, Field
+
+from adapt.llm_adapt import _call_gemini, _parse_lesson_plan, _translate_plan
+from adapt.llm_judge import JudgeVerdict, _call_openai, judge_adaptation
+from adapt.rules import AccommodationRules, build_rules
+from adapt.schema import AdaptedActivityModel
+from adapt.section_cap import enforce_section_cap
 from companion.schema import LearnerProfile
 from corpus.ufli.lookup import lookup_lesson
 from skill.schema import LiteracySkillModel
@@ -179,3 +186,228 @@ sound_box|sentence_completion",
     }}
   ]
 }}"""
+
+
+class PlannerLogEntry(BaseModel):
+    """One row in llm_adaptation_log.jsonl (planner-v2 schema)."""
+
+    timestamp: str
+    skill_domain: str
+    specific_skill: str
+    template_type: str
+    outcome: str
+    planning_model: str
+    judge_verdicts: list[dict[str, object]] = Field(default_factory=list)
+    final_score: float | None = None
+    final_output_judged: bool = True
+    planner_version: int = 2
+
+
+def plan_lesson_llm(
+    skill: LiteracySkillModel,
+    profile: LearnerProfile,
+    theme_id: str = "default",
+    rules: AccommodationRules | None = None,
+    rag_curriculum_references: list[dict[str, object]] | None = None,
+    artifacts_dir: str | None = None,
+) -> list[AdaptedActivityModel] | None:
+    """One planning call → clamp → judge → one regen → deterministic fallback.
+
+    Returns worksheets on success, or None when the deterministic engine
+    should take over (no keys, parse failure, or judge rejected twice).
+    """
+    if not os.environ.get("WORKSHEET_LLM_ADAPT"):
+        return None
+
+    if rules is None:
+        rules = build_rules(profile)
+
+    if not (os.environ.get("OPENAI_API_KEY") or os.environ.get("GEMINI_API_KEY")):
+        logger.info("  LLM planner: no API keys, falling back to deterministic")
+        return None
+
+    base_prompt = _build_planner_prompt(skill, profile, rules, theme_id, rag_curriculum_references)
+
+    verdicts: list[JudgeVerdict] = []
+    model_label = "none"
+    prompt = base_prompt
+
+    for attempt in range(2):  # one call + one regeneration with feedback
+        if attempt == 1:
+            prompt = base_prompt + "\n\n" + _feedback_suffix(verdicts[-1])
+            logger.info("  LLM planner: regenerating once with judge feedback")
+
+        response_text, model_label = _call_planner(prompt)
+        if response_text is None:
+            break
+        plan = _parse_lesson_plan(response_text)
+        if plan is None:
+            logger.warning("  LLM planner: failed to parse plan (attempt %d)", attempt + 1)
+            break
+        worksheets = enforce_section_cap(
+            _translate_plan(plan, skill, profile, theme_id, rules), rules
+        )
+        if not worksheets:
+            logger.warning("  LLM planner: translation produced no worksheets")
+            break
+
+        verdict = judge_adaptation(skill, worksheets)
+        if verdict is None:
+            outcome = "planned_unjudged"
+            _write_verdict_artifact(_unjudged_payload(outcome), artifacts_dir)
+            _log_performance(
+                _entry(skill, outcome, verdicts, None, model_label, judged=False),
+                artifacts_dir,
+            )
+            logger.warning("  LLM planner: judge unavailable, shipping unjudged")
+            return worksheets
+
+        verdicts.append(verdict)
+        if verdict.approved:
+            outcome = "planned_approved" if attempt == 0 else "planned_regen_approved"
+            _write_verdict_artifact(_verdict_payload(verdict, outcome), artifacts_dir)
+            _log_performance(
+                _entry(skill, outcome, verdicts, verdict.overall_score, model_label),
+                artifacts_dir,
+            )
+            logger.info("  LLM planner: %s (score=%.2f)", outcome, verdict.overall_score)
+            return worksheets
+
+        logger.warning(
+            "  LLM planner: judge rejected attempt %d (score=%.2f)",
+            attempt + 1,
+            verdict.overall_score,
+        )
+
+    if verdicts:
+        outcome = "planned_rejected_fallback"
+    elif model_label != "none":
+        outcome = "parse_failure_fallback"
+    else:
+        outcome = "llm_unavailable"
+    _write_planner_attempts(outcome, verdicts, artifacts_dir)
+    _log_performance(
+        _entry(skill, outcome, verdicts, None, model_label, judged=False),
+        artifacts_dir,
+    )
+    logger.info("  LLM planner: %s — deterministic engine takes over", outcome)
+    return None
+
+
+def _feedback_suffix(verdict: JudgeVerdict) -> str:
+    """Judge feedback appended to the prompt for the single regeneration."""
+    feedback_lines = "\n".join(f"- {fb}" for fb in verdict.feedback)
+    return f"""## Previous Attempt Feedback
+
+Your previous plan was REJECTED by the pedagogical reviewer. You MUST fix all issues below.
+
+Scores:
+- Concept alignment: {verdict.concept_alignment:.2f}
+- Content coverage: {verdict.content_coverage:.2f}
+- Lesson flow: {verdict.lesson_flow:.2f}
+- ADHD compliance: {verdict.adhd_compliance:.2f}
+- Overall: {verdict.overall_score:.2f}
+
+Specific feedback:
+{feedback_lines}
+
+Rationale: {verdict.rationale}
+
+IMPORTANT: Address ALL feedback items above. Ensure EVERY source word, chain, and \
+sentence appears in your revised plan. Do not drop any content."""
+
+
+def _verdict_payload(verdict: JudgeVerdict, outcome: str) -> dict[str, object]:
+    payload: dict[str, object] = dict(verdict.model_dump())
+    payload["outcome"] = outcome
+    payload["planner_version"] = 2
+    return payload
+
+
+def _unjudged_payload(outcome: str) -> dict[str, object]:
+    return {
+        "approved": None,
+        "overall_score": None,
+        "outcome": outcome,
+        "unjudged": True,
+        "pedagogical_judge_ran": False,
+        "planner_version": 2,
+        "rationale": "Judge unavailable; planner output shipped without a verdict.",
+    }
+
+
+def _write_verdict_artifact(payload: dict[str, object], artifacts_dir: str | None) -> None:
+    if not artifacts_dir:
+        return
+    path = Path(artifacts_dir)
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "judge_verdict.json").write_text(json.dumps(payload, indent=2))
+
+
+def _write_planner_attempts(
+    outcome: str,
+    verdicts: list[JudgeVerdict],
+    artifacts_dir: str | None,
+) -> None:
+    """Record rejected attempts WITHOUT claiming a verdict for what ships.
+
+    Deliberately not judge_verdict.json: when the planner falls back, the
+    deterministic output is what ships, and transform.py runs the advisory
+    judge on it (judge-everything policy).
+    """
+    if not artifacts_dir:
+        return
+    path = Path(artifacts_dir)
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "planner_attempts.json").write_text(
+        json.dumps(
+            {
+                "outcome": outcome,
+                "planner_version": 2,
+                "verdicts": [v.model_dump() for v in verdicts],
+            },
+            indent=2,
+        )
+    )
+
+
+def _entry(
+    skill: LiteracySkillModel,
+    outcome: str,
+    verdicts: list[JudgeVerdict],
+    final_score: float | None,
+    planning_model: str,
+    judged: bool = True,
+) -> PlannerLogEntry:
+    return PlannerLogEntry(
+        timestamp=datetime.now(UTC).isoformat(),
+        skill_domain=skill.domain,
+        specific_skill=skill.specific_skill,
+        template_type=skill.template_type,
+        outcome=outcome,
+        planning_model=planning_model,
+        judge_verdicts=[v.model_dump() for v in verdicts],
+        final_score=final_score,
+        final_output_judged=judged,
+    )
+
+
+def _log_performance(entry: PlannerLogEntry, artifacts_dir: str | None) -> None:
+    line = entry.model_dump_json() + "\n"
+    if artifacts_dir:
+        path = Path(artifacts_dir)
+        path.mkdir(parents=True, exist_ok=True)
+        with open(path / "llm_adaptation_log.jsonl", "a") as f:
+            f.write(line)
+    # The global cross-run log is live telemetry — never write it from tests.
+    if "PYTEST_CURRENT_TEST" not in os.environ:
+        global_log = Path("logs")
+        global_log.mkdir(parents=True, exist_ok=True)
+        with open(global_log / "llm_adaptation_log.jsonl", "a") as f:
+            f.write(line)
+    logger.info(
+        "  LLM planner log: outcome=%s model=%s score=%s",
+        entry.outcome,
+        entry.planning_model,
+        f"{entry.final_score:.2f}" if entry.final_score is not None else "N/A",
+    )

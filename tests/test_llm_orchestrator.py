@@ -491,3 +491,21 @@ class TestGeminiParseFailure:
         assert entry["outcome"] == "gpt_takeover_unjudged"
         assert entry["final_output_judged"] is False
         assert entry["final_judge_status"] == "unjudged"
+
+
+def test_orchestrator_never_writes_global_log_under_pytest(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("WORKSHEET_LLM_ADAPT", "1")
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
+    monkeypatch.setenv("OPENAI_API_KEY", "fake-key")
+    monkeypatch.chdir(tmp_path)
+
+    with (
+        patch(_PATCH_GEMINI, return_value=_GEMINI_PLAN_JSON),
+        patch(_PATCH_JUDGE, return_value=_approved_verdict()),
+    ):
+        orchestrate_llm_adaptation(_skill(), _profile())
+
+    # PYTEST_CURRENT_TEST is set by pytest itself; the global log must not appear
+    assert not (tmp_path / "logs").exists()
