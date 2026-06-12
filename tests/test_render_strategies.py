@@ -41,15 +41,15 @@ def _design_spec(render_mode: str = "pdf_classic") -> WorksheetDesignSpec:
     )
 
 
-def test_default_render_strategy_is_pdf_classic() -> None:
+def test_default_render_strategy_is_image_gen() -> None:
     from render.strategies import default_render_mode, resolve_render_strategy
 
     strategy = resolve_render_strategy(None)
 
-    assert default_render_mode() == "pdf_classic"
-    assert strategy.renderer_id == "pdf_classic"
+    assert default_render_mode() == "image_gen"
+    assert strategy.renderer_id == "image_gen"
     assert strategy.produces_pdf is True
-    assert strategy.experimental is False
+    assert strategy.experimental is True
 
 
 def test_unknown_render_strategy_fails_fast() -> None:

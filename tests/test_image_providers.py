@@ -14,7 +14,7 @@ def test_chain_default_order_with_both_keys(monkeypatch: pytest.MonkeyPatch) -> 
 
     chain = resolve_provider_chain()
 
-    assert [provider.provider_id for provider in chain] == ["gemini", "openai"]
+    assert [provider.provider_id for provider in chain] == ["openai", "gemini"]
 
 
 def test_chain_skips_unavailable_providers(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -70,3 +70,11 @@ def test_openai_model_id_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("WORKSHEET_OPENAI_IMAGE_MODEL", "gpt-image-3-future")
 
     assert OpenAIImageProvider().model_id == "gpt-image-3-future"
+
+
+def test_gemini_model_id_defaults_to_pro_image(monkeypatch: pytest.MonkeyPatch) -> None:
+    from render.image_providers import GeminiImageProvider
+
+    monkeypatch.delenv("WORKSHEET_GEMINI_IMAGE_MODEL", raising=False)
+
+    assert GeminiImageProvider().model_id == "gemini-3-pro-image"

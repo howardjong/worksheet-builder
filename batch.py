@@ -193,9 +193,13 @@ def _process_single_file(
 @click.option("--output", "output_dir", default="./output", help="Output directory")
 @click.option(
     "--render-mode",
-    default="pdf_classic",
+    default="image_gen",
     type=click.Choice(["pdf_classic", "hybrid_shell", "image_prompt", "image_gen"]),
-    help="Renderer mode. Defaults to production-safe pdf_classic.",
+    help=(
+        "Renderer mode. Defaults to image_gen (full-page AI render, gated and "
+        "cached); degrades to pdf_classic offline. Use --render-mode pdf_classic "
+        "to force the deterministic renderer."
+    ),
 )
 @click.option(
     "--workers",

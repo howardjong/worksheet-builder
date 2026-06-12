@@ -15,9 +15,13 @@ from typing import Protocol
 
 logger = logging.getLogger(__name__)
 
-GEMINI_IMAGE_MODEL = "gemini-3.1-flash-image-preview"
+# Owner decision 2026-06-12 (D29): OpenAI first, then Gemini. Across all live
+# runs gpt-image-2 rescued text-dense pages 4-for-4 on attempt 1 while gemini
+# third attempts recovered 0-for-4. The Gemini fallback is upgraded to the pro
+# image model.
+GEMINI_IMAGE_MODEL = "gemini-3-pro-image"
 DEFAULT_OPENAI_IMAGE_MODEL = "gpt-image-2-2026-04-21"
-DEFAULT_PROVIDER_ORDER = "gemini,openai"
+DEFAULT_PROVIDER_ORDER = "openai,gemini"
 
 
 class ImageProvider(Protocol):

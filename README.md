@@ -36,7 +36,7 @@ python transform.py --input photo.jpg --profile profiles/ian.yaml --theme space 
 # Transform into multi-worksheet set (3 mini-worksheets with varied activities)
 python transform.py --input photo.jpg --profile profiles/ian.yaml --theme roblox_obby --output ./output/
 
-# Optional renderer modes; default is production-safe pdf_classic
+# Renderer modes; default is image_gen (degrades to pdf_classic offline)
 python transform.py --input photo.jpg --profile profiles/ian.yaml --theme roblox_obby --output ./output/ --render-mode pdf_classic
 python transform.py --input photo.jpg --profile profiles/ian.yaml --theme roblox_obby --output ./output-hybrid/ --render-mode hybrid_shell
 python transform.py --input photo.jpg --profile profiles/ian.yaml --theme roblox_obby --output ./output-prompts/ --render-mode image_prompt
@@ -152,11 +152,16 @@ All pipeline stages communicate through strict Pydantic contracts. The pipeline 
 
 ### Renderer modes and image-model readiness
 
-The production default renderer is `pdf_classic`. It uses deterministic
-ReportLab vector text, existing scene assets, and PDF validation. This remains
-the safe path for instructional output.
+The production default renderer is `image_gen` (decision D29): a full-page
+AI-generated worksheet, gated by text-fidelity and character-consistency judges,
+cached, and wrapped as a searchable PDF. It degrades to `pdf_classic` whenever no
+image provider is available (no API keys or `WORKSHEET_SKIP_ASSET_GEN=1`), so
+offline runs still produce a deterministic PDF.
 
-Two opt-in renderer modes keep the pipeline ready for improving image models:
+`pdf_classic` remains the explicit opt-out (`--render-mode pdf_classic`): it uses
+deterministic ReportLab vector text, existing scene assets, and PDF validation.
+
+Other opt-in renderer modes keep the pipeline ready for improving image models:
 
 - `hybrid_shell` — experimental PDF mode that keeps deterministic text/layout
   while routing through the renderer strategy interface for future visual-shell

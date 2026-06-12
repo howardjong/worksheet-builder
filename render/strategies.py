@@ -118,9 +118,15 @@ class ImagePromptRenderer:
 
 
 def default_render_mode() -> RenderMode:
-    """Return the production-safe renderer mode."""
+    """Return the production default renderer mode.
 
-    return "pdf_classic"
+    Owner decision 2026-06-12 (D29): image_gen is the production default. It
+    degrades to pdf_classic internally when no image provider is available
+    (no API keys or WORKSHEET_SKIP_ASSET_GEN=1), so offline runs still produce
+    a deterministic PDF.
+    """
+
+    return "image_gen"
 
 
 def resolve_render_strategy(mode: str | None) -> RenderStrategy:

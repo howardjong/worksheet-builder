@@ -16,8 +16,8 @@ make test-golden  # golden E2E, no network
 make format       # ruff format .
 
 # Transform
-python transform.py --input photo.jpg --profile profiles/ian.yaml --theme space --output ./output/
-python transform.py ... --render-mode pdf_classic    # default deterministic PDF renderer
+python transform.py --input photo.jpg --profile profiles/ian.yaml --theme space --output ./output/  # default render mode: image_gen
+python transform.py ... --render-mode pdf_classic    # opt out to the deterministic PDF renderer
 python transform.py ... --render-mode image_prompt   # offline prompt artifacts for image-model trials
 
 # Batch
@@ -75,8 +75,8 @@ Paper → Capture → Normalize → Source Extract → Skill Model → ADHD Adap
 - Curated theme assets committed to repo; generated assets cached in `asset_cache/` (gitignored).
 - RAG store in `vector_store/`; UFLI curriculum corpus lives in the `curriculum` collection.
 - RAG embedding auto-selects API-key Gemini when available in `.env`; Vertex is available via `RAG_GEMINI_BACKEND=vertex`.
-- Image renderer (`--render-mode image_gen`) env: `WORKSHEET_IMAGE_PROVIDERS` (comma-ordered fallback chain, default `gemini,openai`), `WORKSHEET_GEMINI_IMAGE_MODEL` (default `gemini-3.1-flash-image-preview`), `WORKSHEET_OPENAI_IMAGE_MODEL` (default `gpt-image-2-2026-04-21`).
-- `WORKSHEET_SKIP_ASSET_GEN=1` disables all image generation and forces the deterministic `pdf_classic` fallback (used by tests/CI).
+- Image renderer (`image_gen`, the default render mode) env: `WORKSHEET_IMAGE_PROVIDERS` (comma-ordered fallback chain, default `openai,gemini`), `WORKSHEET_GEMINI_IMAGE_MODEL` (default `gemini-3-pro-image`), `WORKSHEET_OPENAI_IMAGE_MODEL` (default `gpt-image-2-2026-04-21`). See decision D29.
+- `WORKSHEET_SKIP_ASSET_GEN=1` disables all image generation and forces the deterministic `pdf_classic` fallback (used by tests/CI). Offline runs with no API keys degrade to `pdf_classic` the same way.
 
 ## Session Handoff
 
