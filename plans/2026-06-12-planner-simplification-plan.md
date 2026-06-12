@@ -70,7 +70,7 @@
 **Files:**
 - Modify: `.claude/worksheet-project-context.md` (Key Decisions Log table, after the last row)
 
-- [ ] **Step 1: Append decision rows**
+- [x] **Step 1: Append decision rows**
 
 The parallel image_gen-promotion session may have claimed D29. Use the next free numbers (shown here as D30–D32; renumber if needed):
 
@@ -80,7 +80,7 @@ The parallel image_gen-promotion session may have claimed D29. Use the next free
 | D32 | Per-chunk scene/word-picture asset generation skipped when render mode is image_gen | The full-page renderer never consumes those assets; they only served pdf_classic layouts. If image_gen falls back to pdf_classic mid-run, that worksheet renders with deterministic local art (same as asset-gen failure today). Saves several image generations per lesson. | 2026-06-12 |
 ```
 
-- [ ] **Step 2: Commit**
+- [x] **Step 2: Commit**
 
 ```bash
 git add .claude/worksheet-project-context.md
@@ -95,7 +95,7 @@ git commit -m "docs: record D30-D32 (single-call planner, judge gate, asset-gen 
 - Modify: `adapt/rules.py`
 - Test: `tests/test_adapt.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/test_adapt.py`:
 
@@ -112,12 +112,12 @@ def test_rules_include_grade_scaled_section_cap() -> None:
         assert build_rules(profile).max_sections_per_worksheet == cap
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `.venv/bin/pytest tests/test_adapt.py::test_rules_include_grade_scaled_section_cap -v`
 Expected: FAIL — `ImportError: cannot import name 'MAX_SECTIONS_PER_WORKSHEET'`
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `adapt/rules.py`, add after the `TIME_ESTIMATE_MINUTES` table (~line 68):
 
@@ -148,12 +148,12 @@ and pass it in the constructor call after `max_items_per_chunk=max_items,`:
         max_sections_per_worksheet=max_sections,
 ```
 
-- [ ] **Step 4: Run test to verify it passes**
+- [x] **Step 4: Run test to verify it passes**
 
 Run: `.venv/bin/pytest tests/test_adapt.py::test_rules_include_grade_scaled_section_cap -v`
 Expected: PASS
 
-- [ ] **Step 5: Full check + commit**
+- [x] **Step 5: Full check + commit**
 
 ```bash
 make lint && make typecheck && .venv/bin/pytest tests/test_adapt.py -v
@@ -169,7 +169,7 @@ git commit -m "feat: grade-scaled max sections per mini-worksheet in accommodati
 - Modify: `validate/adhd_compliance.py`
 - Test: `tests/test_validate.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/test_validate.py`. Merge these imports into the import block at the TOP of the file (mypy strict needs the annotation resolvable at module level; appending imports mid-file trips ruff E402):
 
@@ -247,12 +247,12 @@ def test_sections_per_worksheet_uses_rules_when_provided() -> None:
     assert "sections_per_worksheet" in checks
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `.venv/bin/pytest tests/test_validate.py -k sections_per_worksheet -v`
 Expected: FAIL — `"sections_per_worksheet" in checks` assertions fail (check does not exist yet)
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `validate/adhd_compliance.py`, change the import at the top to include the new table:
 
@@ -289,12 +289,12 @@ Add a new check at the end of `validate_adhd_compliance()`, after Check 12 and b
 
 Also update the docstring checklist in `validate_adhd_compliance()` to add `13. Sections per worksheet within grade cap`.
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `.venv/bin/pytest tests/test_validate.py -v`
 Expected: PASS (all — if any pre-existing test constructs a worksheet with more chunks than its grade cap, update that fixture to stay within the cap and note it in the commit message)
 
-- [ ] **Step 5: Full check + commit**
+- [x] **Step 5: Full check + commit**
 
 ```bash
 make lint && make typecheck && make test
@@ -311,7 +311,7 @@ git commit -m "feat: hard-error ADHD check for sections per mini-worksheet"
 - Modify: `adapt/engine.py` (the three `adapt_lesson` returns)
 - Test: `tests/test_section_cap.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/test_section_cap.py`:
 
@@ -429,12 +429,12 @@ def test_split_uses_grade_cap() -> None:
     assert all(len(ws.chunks) <= 2 for ws in result)
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `.venv/bin/pytest tests/test_section_cap.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'adapt.section_cap'`
 
-- [ ] **Step 3: Implement the module**
+- [x] **Step 3: Implement the module**
 
 Create `adapt/section_cap.py`:
 
@@ -508,12 +508,12 @@ def enforce_section_cap(
     return final
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `.venv/bin/pytest tests/test_section_cap.py -v`
 Expected: PASS
 
-- [ ] **Step 5: Wire into the deterministic path**
+- [x] **Step 5: Wire into the deterministic path**
 
 In `adapt/engine.py`, add the import near the other `adapt.` imports at the top:
 
@@ -549,12 +549,12 @@ to:
     return enforce_section_cap(worksheets, rules)
 ```
 
-- [ ] **Step 6: Run the full suite**
+- [x] **Step 6: Run the full suite**
 
 Run: `make test`
 Expected: PASS. If any test pinned an exact worksheet/chunk count that the split now changes (most assert `>= 1` and survive), update the assertion to match the capped output and say so in the commit message. Candidates: `tests/test_adapt.py` multi-worksheet tests, `tests/test_rag_adapt.py`.
 
-- [ ] **Step 7: Full check + commit**
+- [x] **Step 7: Full check + commit**
 
 ```bash
 make lint && make typecheck && make test
@@ -572,7 +572,7 @@ git commit -m "feat: enforce grade-scaled section cap by splitting worksheets"
 - Modify: `adapt/llm_adapt.py`
 - Test: `tests/test_llm_adapt.py` (new file)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/test_llm_adapt.py`:
 
@@ -766,12 +766,12 @@ def test_match_activities_use_mechanical_builder_even_with_items() -> None:
     assert all(i.options for i in items)
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `.venv/bin/pytest tests/test_llm_adapt.py -v`
 Expected: FAIL — `ImportError: cannot import name 'PlannedItem'`
 
-- [ ] **Step 3: Implement the schema widening**
+- [x] **Step 3: Implement the schema widening**
 
 In `adapt/llm_adapt.py`, add before `ActivityPlan` (~line 41):
 
@@ -792,7 +792,7 @@ Add a field to `ActivityPlan` after `words`:
     items: list[PlannedItem] = Field(default_factory=list)
 ```
 
-- [ ] **Step 4: Implement authored-item translation**
+- [x] **Step 4: Implement authored-item translation**
 
 In `adapt/llm_adapt.py`, in `_translate_plan()` (~line 263), change:
 
@@ -882,12 +882,12 @@ def _items_from_planned(
     return items
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `.venv/bin/pytest tests/test_llm_adapt.py tests/test_llm_orchestrator.py -v`
 Expected: PASS (the old loop is unaffected — its prompt never emits `items`, so `_items_for_activity` degrades to the existing builder)
 
-- [ ] **Step 6: Full check + commit**
+- [x] **Step 6: Full check + commit**
 
 ```bash
 make lint && make typecheck && make test
@@ -903,7 +903,7 @@ git commit -m "feat: model-authored plan items with deterministic ADHD clamping"
 - Create: `adapt/llm_planner.py` (prompt builder only; orchestration arrives in Task 8)
 - Test: `tests/test_llm_planner.py` (new file)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/test_llm_planner.py`:
 
@@ -996,12 +996,12 @@ def test_corpus_block_empty_without_lesson_number() -> None:
     assert _corpus_block(_skill(lesson_number=None)) == ""
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `.venv/bin/pytest tests/test_llm_planner.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'adapt.llm_planner'`
 
-- [ ] **Step 3: Implement the prompt builder**
+- [x] **Step 3: Implement the prompt builder**
 
 Create `adapt/llm_planner.py`:
 
@@ -1165,12 +1165,12 @@ Respond with ONLY this JSON (no markdown fences):
 }}"""
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `.venv/bin/pytest tests/test_llm_planner.py -v`
 Expected: PASS
 
-- [ ] **Step 5: Full check + commit**
+- [x] **Step 5: Full check + commit**
 
 ```bash
 make lint && make typecheck && make test
@@ -1187,7 +1187,7 @@ git commit -m "feat: planner prompt with full source items and corpus ground tru
 - Modify: `adapt/llm_planner.py`
 - Test: `tests/test_llm_planner.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Append to `tests/test_llm_planner.py`:
 
@@ -1262,12 +1262,12 @@ def test_planner_chain_no_keys(monkeypatch: pytest.MonkeyPatch) -> None:
     assert model == "none"
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `.venv/bin/pytest tests/test_llm_planner.py -k chain -v`
 Expected: FAIL — `AttributeError: module 'adapt.llm_planner' has no attribute '_call_planner'`
 
-- [ ] **Step 3: Give `_call_gemini` a model parameter**
+- [x] **Step 3: Give `_call_gemini` a model parameter**
 
 In `adapt/llm_adapt.py`, change the `_call_gemini` signature and call (~line 170):
 
@@ -1294,7 +1294,7 @@ def _call_gemini(prompt: str, model: str = "gemini-3-flash-preview") -> str | No
 
 (The default keeps the old loop's behavior unchanged.)
 
-- [ ] **Step 4: Implement the chain in `adapt/llm_planner.py`**
+- [x] **Step 4: Implement the chain in `adapt/llm_planner.py`**
 
 Add to the imports:
 
@@ -1328,12 +1328,12 @@ def _call_planner(prompt: str) -> tuple[str | None, str]:
     return None, "none"
 ```
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `.venv/bin/pytest tests/test_llm_planner.py tests/test_llm_orchestrator.py -v`
 Expected: PASS
 
-- [ ] **Step 6: Full check + commit**
+- [x] **Step 6: Full check + commit**
 
 ```bash
 make lint && make typecheck && make test
@@ -1349,7 +1349,7 @@ git commit -m "feat: planner provider chain gpt-5.4 then gemini-3.5-flash"
 - Modify: `adapt/llm_judge.py`
 - Test: `tests/test_llm_judge.py` (new file)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/test_llm_judge.py`:
 
@@ -1451,12 +1451,12 @@ def test_judge_prompt_includes_structural_criteria() -> None:
     assert "garbled" in prompt
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `.venv/bin/pytest tests/test_llm_judge.py -v`
 Expected: FAIL — `LONG_ITEM in prompt` fails (60-char truncation) and structural-criteria assertions fail
 
-- [ ] **Step 3: Implement the full-text prompt**
+- [x] **Step 3: Implement the full-text prompt**
 
 In `adapt/llm_judge.py`, replace the worksheet-summary section of `_build_judge_prompt()` (the `ws_sections` loop, ~lines 51–64) with:
 
@@ -1495,12 +1495,12 @@ Then extend the evaluation-criteria section: after criterion 4 (`adhd_compliance
 
 (Keep the `JudgeVerdict` schema unchanged — four score fields; structural failures express through `approved`/`feedback`.)
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `.venv/bin/pytest tests/test_llm_judge.py tests/test_llm_orchestrator.py -v`
 Expected: PASS
 
-- [ ] **Step 5: Full check + commit**
+- [x] **Step 5: Full check + commit**
 
 ```bash
 make lint && make typecheck && make test
@@ -1516,7 +1516,7 @@ git commit -m "feat: judge evaluates full item text with structural criteria"
 - Modify: `adapt/llm_planner.py`
 - Test: `tests/test_llm_planner.py`
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Merge these imports into the import block at the TOP of `tests/test_llm_planner.py` (mid-file imports trip ruff E402):
 
@@ -1711,12 +1711,12 @@ def test_planner_never_writes_global_log_under_pytest(
     assert not (tmp_path / "logs").exists()
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `.venv/bin/pytest tests/test_llm_planner.py -v`
 Expected: new tests FAIL — `AttributeError: module 'adapt.llm_planner' has no attribute 'plan_lesson_llm'`
 
-- [ ] **Step 3: Implement the orchestration**
+- [x] **Step 3: Implement the orchestration**
 
 In `adapt/llm_planner.py`, extend the imports:
 
@@ -1965,12 +1965,12 @@ def _log_performance(entry: PlannerLogEntry, artifacts_dir: str | None) -> None:
     )
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `.venv/bin/pytest tests/test_llm_planner.py -v`
 Expected: PASS
 
-- [ ] **Step 5: Write a failing test for the OLD loop's log pollution**
+- [x] **Step 5: Write a failing test for the OLD loop's log pollution**
 
 The legacy orchestrator stays alive through the A/B window (Tasks 9–12) and its `_log_performance` is THE source of the 311 polluted entries — it needs the same guard now, not at deletion time. Append to `tests/test_llm_orchestrator.py` (merge `from pathlib import Path` into the top imports if missing; `json` and the patch targets are already imported there):
 
@@ -1996,7 +1996,7 @@ def test_orchestrator_never_writes_global_log_under_pytest(
 Run: `.venv/bin/pytest tests/test_llm_orchestrator.py::test_orchestrator_never_writes_global_log_under_pytest -v`
 Expected: FAIL — `logs/` directory created by the global write
 
-- [ ] **Step 6: Guard the old loop's global write**
+- [x] **Step 6: Guard the old loop's global write**
 
 In `adapt/llm_orchestrator.py:_log_performance()` (~line 441), wrap the global-log block:
 
@@ -2012,7 +2012,7 @@ In `adapt/llm_orchestrator.py:_log_performance()` (~line 441), wrap the global-l
 Run: `.venv/bin/pytest tests/test_llm_orchestrator.py -v`
 Expected: PASS
 
-- [ ] **Step 7: Full check + commit**
+- [x] **Step 7: Full check + commit**
 
 ```bash
 make lint && make typecheck && make test
@@ -2029,7 +2029,7 @@ git commit -m "feat: single-call planner with judge gate, one regen, pytest-safe
 - Modify: `transform.py` (`_run_multi_worksheet_pipeline`, ~lines 509–588)
 - Test: `tests/test_planner_pipeline.py` (new file)
 
-- [ ] **Step 1: Write the failing tests**
+- [x] **Step 1: Write the failing tests**
 
 Create `tests/test_planner_pipeline.py`:
 
@@ -2106,12 +2106,12 @@ def test_engine_routes_to_planner_v2(monkeypatch: pytest.MonkeyPatch) -> None:
     assert result[0].chunks[0].items[0].content == "cat"
 ```
 
-- [ ] **Step 2: Run tests to verify they fail**
+- [x] **Step 2: Run tests to verify they fail**
 
 Run: `.venv/bin/pytest tests/test_planner_pipeline.py -v`
 Expected: FAIL — `ImportError: cannot import name '_skip_ai_review'`
 
-- [ ] **Step 3: Add the engine routing**
+- [x] **Step 3: Add the engine routing**
 
 In `adapt/engine.py`, inside `adapt_lesson()`, replace the orchestrator block (~lines 144–159):
 
@@ -2174,7 +2174,7 @@ with:
             logger.warning("LLM orchestration failed, using deterministic engine: %s", exc)
 ```
 
-- [ ] **Step 4: Add the ai_review skip in `transform.py`**
+- [x] **Step 4: Add the ai_review skip in `transform.py`**
 
 Add a module-level helper near `_validate_and_report`:
 
@@ -2229,12 +2229,12 @@ Then wrap the existing AI-review block inside the worksheet loop (~lines 571–5
 
 (Indent the existing statements under the `else:`; the `adapted_json.write_text` + `worksheets[i - 1] = adapted` lines move inside it since nothing mutated when the review is skipped.)
 
-- [ ] **Step 5: Run tests to verify they pass**
+- [x] **Step 5: Run tests to verify they pass**
 
 Run: `.venv/bin/pytest tests/test_planner_pipeline.py -v && make test`
 Expected: PASS
 
-- [ ] **Step 6: Full check + commit**
+- [x] **Step 6: Full check + commit**
 
 ```bash
 make lint && make typecheck && make test
@@ -2250,7 +2250,7 @@ git commit -m "feat: WORKSHEET_PLANNER_V2 routing; skip ai_review for judged pla
 - Modify: `transform.py` (`_run_multi_worksheet_pipeline`, asset block ~lines 598–628)
 - Test: `tests/test_planner_pipeline.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Append to `tests/test_planner_pipeline.py`:
 
@@ -2263,12 +2263,12 @@ def test_chunk_assets_skipped_for_image_gen() -> None:
     assert _should_generate_chunk_assets("image_gen") is False
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `.venv/bin/pytest tests/test_planner_pipeline.py::test_chunk_assets_skipped_for_image_gen -v`
 Expected: FAIL — `ImportError: cannot import name '_should_generate_chunk_assets'`
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `transform.py`, add near `_skip_ai_review`:
 
@@ -2322,12 +2322,12 @@ In `_run_multi_worksheet_pipeline()`, wrap the asset-generation block (the `try:
             logger.info("  Asset generation skipped (image_gen renders full pages)")
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `.venv/bin/pytest tests/test_planner_pipeline.py -v && make test`
 Expected: PASS
 
-- [ ] **Step 5: Full check + commit**
+- [x] **Step 5: Full check + commit**
 
 ```bash
 make lint && make typecheck && make test
@@ -2343,7 +2343,7 @@ git commit -m "feat: skip per-chunk asset generation when render mode is image_g
 - Create: `adapt_battery.py`
 - Test: `tests/test_adapt_battery.py`
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**
 
 Create `tests/test_adapt_battery.py`:
 
@@ -2408,12 +2408,12 @@ def test_scorecard_shows_errors() -> None:
     assert "boom" in card
 ```
 
-- [ ] **Step 2: Run test to verify it fails**
+- [x] **Step 2: Run test to verify it fails**
 
 Run: `.venv/bin/pytest tests/test_adapt_battery.py -v`
 Expected: FAIL — `ModuleNotFoundError: No module named 'adapt_battery'`
 
-- [ ] **Step 3: Implement the CLI**
+- [x] **Step 3: Implement the CLI**
 
 Create `adapt_battery.py`:
 
@@ -2631,12 +2631,12 @@ if __name__ == "__main__":
     main()
 ```
 
-- [ ] **Step 4: Run tests to verify they pass**
+- [x] **Step 4: Run tests to verify they pass**
 
 Run: `.venv/bin/pytest tests/test_adapt_battery.py -v`
 Expected: PASS
 
-- [ ] **Step 5: Full check + commit**
+- [x] **Step 5: Full check + commit**
 
 ```bash
 make lint && make typecheck && make test
@@ -2653,7 +2653,7 @@ git commit -m "feat: A/B adaptation battery CLI with promotion scorecard"
 **Files:**
 - Modify: `.claude/worksheet-project-context.md` (session handoff entry)
 
-- [ ] **Step 1: Run the battery on 2–3 lessons**
+- [x] **Step 1: Run the battery on 2–3 lessons**
 
 Live calls need the sandbox disabled and, on macOS/Python 3.13, `SSL_CERT_FILE` pointed at the venv certifi bundle (Session 42 notes):
 
@@ -2667,7 +2667,7 @@ WORKSHEET_LLM_ADAPT=1 .venv/bin/python adapt_battery.py \
   --theme roblox_obby
 ```
 
-- [ ] **Step 2: Inspect the scorecard and artifacts**
+- [x] **Step 2: Inspect the scorecard and artifacts**
 
 In `samples/output/adapt_battery/<timestamp>/`:
 - `scorecard.md` — compare per input: judge approval/score, outcome, sections per worksheet (planner cells must all be ≤ grade cap), content coverage, ADHD compliance.
@@ -2682,7 +2682,7 @@ Present the scorecard and 2–3 adapted-model comparisons to the owner. The owne
 - **Promote** → proceed to Tasks 13–15.
 - **Iterate** → fix what the comparison exposed (prompt emphasis, judge threshold), rerun this task.
 
-- [ ] **Step 4: Record the handoff entry**
+- [x] **Step 4: Record the handoff entry**
 
 Add a dated session entry to `.claude/worksheet-project-context.md` covering: battery scorecard numbers (judge scores, outcomes, section counts, call counts old vs new), the owner's verdict, and any planner weaknesses found.
 

@@ -2077,6 +2077,47 @@ Completed all three queued items from Session 43, each strict red-green TDD, one
 - **Cover (Item 2):** generated this run via `Cover gen: provider=openai ... Accepted cover after character judge` (score 7, attempt 1); `cover_gates.json` written beside `cover.png`. First run cache-hit a stale Jun-11 cover (old path, no gate report); deleting it and rerunning exercised the new path.
 - **Visual buddy check:** rendered pages 1 (cover) and 2 to PNG (PyMuPDF). Cover and worksheet buddy now match each other AND the canonical `ref_celebration_pose.png`: rainbow spiky hair, blue shirt + yellow lightning bolt, brown pants, orange sneakers. Cover-drift from Session 43 is resolved.
 
+### Session 45 — 2026-06-12 (planner-simplification Tasks 0–12; A/B battery FAILED the promotion gate; finale 13–15 NOT run)
+**Branch:** `feature/worksheet-quality-redesign` | **Plan:** `plans/2026-06-12-planner-simplification-plan.md` (Tasks 0–12 of 15)
+
+Executed Tasks 0–11 via subagent-driven TDD (fresh subagent per task, diff + test review between tasks, one commit per task with the plan's exact message). `make lint`/`make typecheck`/`make test` green after every task; test count 566 → 603. Then ran the Task 12 live A/B battery. **The promotion gate FAILED, so the gated finale (Tasks 13–15) was deliberately NOT run.** No production behavior changed: `WORKSHEET_PLANNER_V2` is still unset by default (engine uses the legacy loop) and `WORKSHEET_LLM_ADAPT` is still opt-in (Task 13's default-on flip was not applied).
+
+**What shipped (Tasks 0–11, all behind `WORKSHEET_PLANNER_V2=1`, default OFF):**
+- D30–D32 recorded.
+- Grade-scaled section cap: `MAX_SECTIONS_PER_WORKSHEET {K:2,1:3,2:4,3:4}` + `AccommodationRules.max_sections_per_worksheet` (`adapt/rules.py`); hard-error `sections_per_worksheet` ADHD check (`validate/adhd_compliance.py`); content-preserving split in new `adapt/section_cap.py`, wired into all FOUR `adapt_lesson()` exits (direct-compiler exit included).
+- Widened plan schema: `PlannedItem` + `ActivityPlan.items`; the model authors item content/options/answers; deterministic ADHD clamping after (`adapt/llm_adapt.py`). `match`/`sound_box` still use the mechanical builders.
+- New `adapt/llm_planner.py`: full-source + corpus-ground-truth prompt; provider chain gpt-5.4 → gemini-3.5-flash (`WORKSHEET_PLANNER_PROVIDERS`); `plan_lesson_llm()` = one call → clamp → judge → one regen with feedback → deterministic fallback; pytest-safe logging; outcome taxonomy `planned_approved | planned_regen_approved | planned_unjudged | planned_rejected_fallback | parse_failure_fallback | llm_unavailable`.
+- Judge reads FULL item text + folded-in structural criteria (`adapt/llm_judge.py`); `_call_gemini` gained a `model=` param.
+- Engine routes through the planner behind `WORKSHEET_PLANNER_V2`; `transform.py` skips `ai_review` for planner-v2 output (`_skip_ai_review`) and skips per-chunk asset gen under `image_gen` (`_should_generate_chunk_assets`).
+- `adapt_battery.py` A/B CLI + scorecard.
+- Both the new planner AND the legacy orchestrator now guard the global `logs/llm_adaptation_log.jsonl` write under pytest.
+
+**Battery:** `samples/output/adapt_battery/20260612_135158/` — theme `roblox_obby`, `profiles/ian.yaml`, render `pdf_classic`, asset gen skipped, both variants. Live run: sandbox off + `SSL_CERT_FILE`=venv certifi.
+
+| input | loop outcome | planner outcome | planner attempt scores — overall (concept/coverage/flow/adhd) | planner sections/ws |
+|---|---|---|---|---|
+| IMG_0003 | gpt_takeover_unjudged | planned_rejected_fallback | a1 0.59 (0.80/0.68/0.72/**0.18**); a2 0.64 (0.85/0.55/0.80/**0.35**) | 3/1/3/2/3 |
+| IMG_0004 | llm_failure (takeover parse-fail→deterministic) | planned_rejected_fallback | a1 0.58 (0.74/0.55/0.72/**0.30**); a2 0.48 (0.72/0.28/0.62/**0.30**) | 3/1/2 |
+| IMG_0005 | gpt_takeover_unjudged | planned_rejected_fallback | a1 0.56 (0.72/0.67/0.74/**0.12**); a2 0.60 (0.85/0.90/0.80/**0.35**) | 2/3/2 |
+
+(Scorecard `judge` column shows the ADVISORY judge on the shipped deterministic-fallback output — 0.52/0.36/0.39 — even LOWER than the planner's own attempts above. The planner's own verdicts live in each cell's `artifacts/planner_attempts.json`.)
+
+**Gate evaluation (all three required):**
+- (a) ≥2/3 planner cells `planned_approved`/`planned_regen_approved`, zero error cells → **FAIL** (0/3 approved; 0 error cells).
+- (b) every planner worksheet ≤ grade cap → PASS (max 3 sections anywhere).
+- (c) planner content-coverage passes ≥ loop → PASS (planner 3/3 coverage-PASS vs loop 2/3).
+→ (a) fails → finale not run.
+
+**Diagnosis (systematic-debugging):** The judge rejected 100% of planner output, and nearly every cell was sunk by the `adhd_compliance` sub-score ALONE (0.12–0.35) while concept (0.72–0.85), coverage (up to 0.90) and flow (0.72–0.80) were strong. IMG_0005 attempt 2 is the tell: concept 0.85 / coverage 0.90 / flow 0.80 / adhd 0.35 → overall 0.60 — an otherwise excellent plan failed solely on ADHD scoring. Two root causes:
+1. **Judge-prompt visibility gap (Task 7).** `_build_judge_prompt` renders section/instructions/worked-example/items but NOT `time_estimate`, `break_prompt`, or `self_assessment`. `_translate_plan` sets `time_estimate` on every chunk, yet the judge repeatedly complains "no time estimates / no brain breaks" because those fields are withheld from its prompt. The judge is scoring ADHD on information it cannot see.
+2. **Genuinely missing supports on the planner path.** Brain breaks are only added by `enforce_section_cap` when SPLITTING; in-cap packages get none, and the prompt never asks for them. Instructions are authored as plain strings, not numbered steps.
+Corroboration: the deterministic adhd_compliance + content_coverage validators PASS on every planner cell — only the LLM judge's adhd sub-score fails — and the deterministic fallback was judged WORSE than the planner. This is a judge-calibration / judge-prompt-coverage problem (the plan's "self-judging" + "judge harshness" risks materializing), NOT a planner-quality problem. Per the execution gate I did NOT tune prompts/thresholds.
+- **Side note (legacy, slated for deletion):** IMG_0004's GPT takeover emitted `items` as plain strings; Task 4's widened `ActivityPlan.items` now requires `PlannedItem` dicts, so the takeover parse failed (12 validation errors) → `llm_failure` → deterministic. Harmless (graceful degrade), explains the `llm_failure` outcome.
+
+**Owner decision needed (Task 12 Step 3): Iterate, not Promote.** Candidate fixes for a follow-up (NOT applied here): (1) render `time_estimate`/`break_prompt`/`self_assessment` into `_build_judge_prompt` so the judge sees the supports that exist; (2) have the planner translate path add brain breaks between worksheets and number instruction steps (or have the prompt author them); (3) after the visibility fix, reconsider cross-vendor judging (`WORKSHEET_PLANNER_PROVIDERS=gemini,openai`) and/or the 0.7 threshold / adhd weighting, then re-run the battery.
+
+**Also still open:** `gemini-3.5-flash` (planner TEXT model) is configured but was NOT exercised live — OpenAI is first in the chain and answered every call, so the Gemini fallback never ran. Same live-unverified status as `gemini-3-pro-image` from Session 44.
+
 **⚠️ `gemini-3-pro-image` was NOT exercised / NOT verified against the live API.** Because OpenAI is now first and rescued every page + the cover on attempt 1, the chain never reached the Gemini fallback. The new default model id is unvalidated against the live Gemini image API. To verify, force it: `WORKSHEET_IMAGE_PROVIDERS=gemini WORKSHEET_LLM_ADAPT=1 .venv/bin/python transform.py ...` (with `SSL_CERT_FILE` set) and check the logged `Page gen: provider=gemini model=gemini-3-pro-image` plus whether the API 200s. If the id is rejected, find the correct current id via the Gemini model listing, report it, and update `GEMINI_IMAGE_MODEL`.
 
 **What's next:** verify `gemini-3-pro-image` live (above); then the deferred planner-simplification plan (adaptation is the quality bottleneck — gpt takeover ships unjudged, the smoke run hit pedagogical-judge REJECT score 0.36–0.39 on coverage before takeover); provider attempt-budget tuning (gemini→2) once the model id is confirmed; multi-theme rotation; Seedream adapter.
