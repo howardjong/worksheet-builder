@@ -186,3 +186,59 @@ def test_match_activities_use_mechanical_builder_even_with_items() -> None:
     # Mechanical builder ran: picture prompts + shuffled options contract intact
     assert all(i.picture_prompt for i in items)
     assert all(i.options for i in items)
+
+
+def test_translate_drops_self_negating_worked_example() -> None:
+    """A worked example that models a WRONG answer (e.g. "Write cate? No.")
+    confuses the child and must never be printed."""
+    plan = LessonPlan(
+        worksheets=[
+            WorksheetPlan(
+                title="Magic E",
+                activities=[
+                    ActivityPlan(
+                        activity_type="word_chain",
+                        micro_goal="Change one letter",
+                        items=[
+                            PlannedItem(content="cute"),
+                            PlannedItem(content="cake"),
+                        ],
+                        instructions=["Change one letter to make a new word."],
+                        worked_example="make cute. Change u to a. Write cate? No.",
+                        response_format="write",
+                    )
+                ],
+            )
+        ]
+    )
+    worksheets = _translate_plan(plan, _skill(), _profile(), "default", build_rules(_profile()))
+
+    assert worksheets[0].chunks[0].worked_example is None
+
+
+def test_translate_keeps_valid_worked_example() -> None:
+    plan = LessonPlan(
+        worksheets=[
+            WorksheetPlan(
+                title="Magic E",
+                activities=[
+                    ActivityPlan(
+                        activity_type="fill_blank",
+                        micro_goal="Complete each word",
+                        items=[
+                            PlannedItem(content="r__de"),
+                            PlannedItem(content="h__me"),
+                        ],
+                        instructions=["Fill in the blank."],
+                        worked_example="c__ke -> cake (the magic e!)",
+                        response_format="fill_blank",
+                    )
+                ],
+            )
+        ]
+    )
+    worksheets = _translate_plan(plan, _skill(), _profile(), "default", build_rules(_profile()))
+
+    worked = worksheets[0].chunks[0].worked_example
+    assert worked is not None
+    assert worked.content == "c__ke -> cake (the magic e!)"

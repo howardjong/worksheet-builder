@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 
 from pydantic import BaseModel, Field
 
@@ -230,6 +231,25 @@ def _parse_lesson_plan(text: str) -> LessonPlan | None:
 # --- Translation: LessonPlan → AdaptedActivityModel ---
 
 
+# A worked example must MODEL the correct answer. The planner occasionally
+# emits self-refuting examples that show a wrong attempt (e.g. "make cute.
+# Change u to a. Write cate? No."), which teach the child the wrong thing.
+# Drop those rather than print them.
+_BAD_WORKED_EXAMPLE = re.compile(
+    r"\?\s*no\b"  # answers its own question with "no"
+    r"|\bnot a (real )?word\b"
+    r"|\bthat'?s (wrong|not right)\b"
+    r"|\bis (?:not|n'?t) (?:a )?(?:real )?word\b",
+    re.IGNORECASE,
+)
+
+
+def _is_clean_worked_example(content: str) -> bool:
+    """Return False when a worked example models a WRONG answer instead of
+    demonstrating the skill (those confuse the learner)."""
+    return _BAD_WORKED_EXAMPLE.search(content) is None
+
+
 def _translate_plan(
     plan: LessonPlan,
     skill: LiteracySkillModel,
@@ -263,9 +283,14 @@ def _translate_plan(
             if not instructions:
                 instructions = [Step(number=1, text="Complete the activity below.")]
 
-            # Build worked example
+            # Build worked example (only the first chunk shows one, and only if
+            # it actually models a correct answer — see _is_clean_worked_example).
             worked_example = None
-            if activity.worked_example and chunk_id == 1:
+            if (
+                activity.worked_example
+                and chunk_id == 1
+                and _is_clean_worked_example(activity.worked_example)
+            ):
                 worked_example = Example(
                     instruction="Watch how I do the first one:",
                     content=activity.worked_example,

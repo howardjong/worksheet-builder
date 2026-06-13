@@ -66,6 +66,15 @@ def test_prompt_states_section_cap_and_item_authoring() -> None:
     assert '"answer"' in prompt
 
 
+def test_prompt_requires_correct_worked_example() -> None:
+    prompt = _build_planner_prompt(_skill(), _profile(), build_rules(_profile()), "default", None)
+
+    lowered = prompt.lower()
+    assert "real word" in lowered  # worked example must produce a real word
+    # never model a wrong attempt / self-refuting "No"
+    assert "wrong" in lowered or "incorrect" in lowered
+
+
 def test_corpus_block_injects_lesson_ground_truth(monkeypatch: pytest.MonkeyPatch) -> None:
     def _fake_lookup(lesson_number: int) -> CorpusLookupResult:
         assert lesson_number == 84

@@ -132,7 +132,10 @@ Response format preferences: {profile.accommodations.response_format_prefs}
 - Maximum {rules.instruction_max_words} words per instruction step
 - Time estimate per section: about {rules.time_estimate_minutes} minutes
 - Allowed response formats: {rules.allowed_response_formats}
-- The FIRST section of the first worksheet MUST have a worked example
+- The FIRST section of the first worksheet MUST have a worked example. A worked
+  example MUST model the CORRECT answer and end on a real word, correctly
+  spelled (e.g. "c__ke -> cake"). NEVER show a wrong attempt, a non-word, or a
+  self-refuting question like "Write cate? No." — only demonstrate what is right.
 - One main task per section; keep each mini-worksheet to one page of focus
 
 ## Your Task
