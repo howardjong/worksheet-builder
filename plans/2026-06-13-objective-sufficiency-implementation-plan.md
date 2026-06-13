@@ -53,16 +53,24 @@ byte-identical until promotion is earned. Parent-plan Tasks 13–15 stay BLOCKED
 ```
 frozen LiteracySkillModel (+ lesson_number -> UFLI corpus)
   -> build_objective_ledger()                 [deterministic, Phase 1]
-       objectives (cells) + classified source items + word roles
-  -> planner authors AdaptedActivityModel      (existing planner, ledger in prompt)
-  -> run_blocking_gates(adapted, ledger)       [deterministic hard block, Phase 1]
-       fail -> not approved, judge skipped
-  -> build_evidence_index(adapted, ledger)     [deterministic, Phase 1]
+       objectives (cells) + classified source items + word roles (+confidence/source)
+  -> planner authors worksheets: list[AdaptedActivityModel]  (planner, ledger in prompt)
+  -> run_blocking_gates(worksheets, ledger)    [deterministic hard block, Phase 1]
+       fail -> not approved, judge skipped (but battery still records gate+coverage report)
+  -> build_evidence_index(worksheets, ledger)  [deterministic, Phase 1; visibility/role-aware]
   -> evaluate_objective_coverage(ledger, evidence)  [deterministic validator, Phase 1]
-  -> judge scores evidence against ledger      [Phase 2; judge cannot reclassify]
+       OWNS counts + required-form + distinctness; hard-fail only on HIGH-confidence shortfalls
+  -> judge scores QUALITY against ledger        [Phase 2; judge cannot reclassify OR re-count]
   -> approval policy: gates pass AND required-forms present AND det-coverage pass
        AND overall>=0.70 AND every essential cell>=0.60 AND adhd/safety>=0.50
 ```
+
+**Two-signal division of labour (no double-counting).** The deterministic validator is
+*authoritative* for counts, required-form presence, distinctness, and blockers. The judge
+scores **quality** per cell (clarity, developmental fit, coherence, "does this practice
+genuinely exercise the objective") — it never re-derives counts in prose. Coverage is
+evaluated at the **lesson package** level (the full `list[AdaptedActivityModel]`, since one
+lesson splits into mini-worksheets via `worksheet_number/count`), never per single worksheet.
 
 ---
 
@@ -73,20 +81,34 @@ frozen LiteracySkillModel (+ lesson_number -> UFLI corpus)
 Port the Pydantic schema from the research spec: `ObjectiveType`, `SourceRole`,
 `CoverageClass`, `RequiredForm`, `LedgerWord`, `ClassifiedSourceItem`, `ObjectiveCell`,
 `BlockingGateSpec`, `ObjectiveLedger`. Pure models + Literals; no logic yet.
-- [ ] RED: construct a ledger from literals; assert serialization round-trips and the
-  enums reject bad values.
+**Added per review:** `LedgerWord` carries `role_confidence: Literal["high","low"]` and
+`role_source: Literal["corpus_exact","pattern_rule","source_context","unknown"]`. This is
+what lets the validator (T6) hard-fail only on high-confidence classifications and treat
+low-confidence ones as advisory — replacing the blanket "safe-undercount" that would have
+manufactured a *new* class of false rejections (the exact thing this plan exists to remove).
+- [ ] RED: construct a ledger from literals; assert serialization round-trips, the enums
+  reject bad values, and `role_confidence`/`role_source` are required on `LedgerWord`.
 - [ ] GREEN; commit: `feat: ObjectiveLedger schema for objective-sufficiency coverage`.
 
-### T2: Deterministic role classifier
+### T2: Deterministic role classifier (confidence-tagged)
 **Files:** `adapt/objective_ledger.py`; `tests/test_objective_ledger.py`.
-`classify_word_role(word, pattern_ctx) -> SourceRole`. Simple, explicit phonics-pattern
-helpers first (reuse `skill/extractor.py` pattern utilities where they exist). Rules from
-the spec §"Classify words by role": target_pattern / irregular_word (corpus heart words) /
-review_word / contrast_word (only in deliberate contrast tasks) / `ambiguous_review_word`
-(safe-undercount default — never counts toward the primary pattern objective).
-- [ ] RED: in a u_e context, `cute/mute`→target_pattern, `who/one`→irregular, `mop`/`jazz`
-  in an -oll lesson→review/contrast not target, unknown→ambiguous_review_word.
-- [ ] GREEN; commit: `feat: deterministic word-role classifier (safe-undercount default)`.
+`classify_word_role(word, pattern_ctx) -> (SourceRole, role_confidence, role_source)`. Simple,
+explicit phonics-pattern helpers first (reuse `skill/extractor.py` pattern utilities where
+they exist). Rules from the spec §"Classify words by role": target_pattern / irregular_word
+(corpus heart words) / review_word / contrast_word (only in deliberate contrast tasks) /
+`ambiguous_review_word`.
+**Changed per review (the load-bearing fix):** classification is *confidence-tagged*, not
+blindly undercounted. `corpus_exact` (word found in the lesson's UFLI corpus list) →
+`high`; a clean single-pattern rule match (e.g. C-V-C-e with the target vowel, no competing
+team) → `high` `pattern_rule`; everything resolved only by surrounding task framing →
+`low` `source_context`; unresolved → `low` `unknown`. Ambiguity (mixed-VCe, vowel teams,
+y-as-vowel, schwa/multisyllable, visually-pattern-containing irregulars) yields `low`, which
+T6 treats as advisory — it does **not** auto-reject. Only `high`-confidence target-pattern
+words count toward (or against) a pattern cell's hard threshold.
+- [ ] RED: u_e context — `cute/mute`→(target_pattern, high); `who/one`→(irregular, high via
+  corpus); `mop`/`jazz` in an -oll lesson→(review/contrast, high) not target; `type`/`gym`
+  (y-as-vowel) in a u_e lesson→(ambiguous, low); a corpus-miss word→(…, low).
+- [ ] GREEN; commit: `feat: confidence-tagged deterministic word-role classifier`.
 
 ### T3: build_objective_ledger
 **Files:** `adapt/objective_ledger.py`; `tests/test_objective_ledger.py`.
@@ -96,6 +118,11 @@ spec §"Deterministic Builder Rules" + §"Typed Source Item Mapping": resolve le
 objective cells (decode/encode/manipulation/connected-text/irregular/contrast); classify
 each typed source item to a `CoverageClass`/`RequiredForm`; attach role-classified words and
 sufficiency thresholds (priors table). Deterministic + stable.
+**Graceful degrade per review:** `corpus_lookup` is a deterministic local dict lookup by
+`lesson_number` (not retrieval/order-dependent). On a corpus miss / non-UFLI input, record
+`corpus_status="miss"`, fall back to skill-model fields, and cap every word's
+`role_confidence` at `low` — so the validator degrades to required-form/source-preservation
+checks and never hard-fails a sufficiency count it can't confidently compute.
 - [ ] RED: feed the IMG_0004 (lesson 59) and IMG_0003 (lesson 58) skill models (fixtures
   from the S5 artifacts); assert chains→required_form manipulation cells, roll_and_read→
   samplable_pool, passage→required connected-text, sight_words→irregular cell, contrast
@@ -113,28 +140,74 @@ metadata only. Mirrors the existing `_sanitize_concept_text` approach.
 
 ### T5: Deterministic blocking gates
 **Files:** new `validate/blocking_gates.py`; test `tests/test_blocking_gates.py`.
-`run_blocking_gates(adapted, ledger) -> BlockingGateResult` per spec §"Gate Rules":
-`answer_key` (answer∈options — **special-case `match`**: verify pair existence, not
-answer-in-options — this was the false-positive the backtest caught),
-`instruction_option_answer` (checkable subset only; defer free-text predicate parsing —
-mark `teacher_checked` or block), `source_notation_artifact`, `capitalization` (proper
-nouns from source/corpus, e.g. `June`). Hard `blocker` severity.
-- [ ] RED: a fill_blank with answer∉options → blocker; a `match` item with answer≠option →
-  PASS (no false positive); `by*` in content → blocker; lowercase `june` → blocker;
-  a clean packet → passed.
-- [ ] GREEN; commit: `feat: deterministic blocking gates (answer-key, artifact, capitalization; match-aware)`.
+`run_blocking_gates(worksheets, ledger) -> BlockingGateResult`. Hard `blocker` severity.
+
+**`answer_key` is a format ALLOWLIST, not "answer∈options with a `match` exception"**
+(review Critical #1, confirmed: `sound_box`/`read_aloud`/`trace`/`write` all legitimately
+have answer≠option or no answer). The check fires *only* on formats where answer-in-options
+is unambiguously required:
+  - `circle`, `fill_blank` **with non-empty `options`** → require answer ∈ options (this is
+    the format that carried the backtest defect).
+  - `match` → verify pair existence (answer≠option is the intended mechanic), not membership.
+  - `sound_box`, `read_aloud`, `trace`, `write`, `verbal`, or any item with `options` empty
+    → **not checked** (no false block). If such an item is the *sole* evidence for an
+    essential objective cell and is unverifiable, mark `teacher_checked` (advisory), don't block.
+  - Unknown/future `response_format` → `teacher_checked`, never a blocker.
+Deferring the typed interaction contract (review's proposed `answer_mode`/`option_roles`
+schema fields) — the allowlist gets the defect-catch without rippling into the planner,
+renderer, and existing tests. Revisit only if T10 shows the allowlist too coarse (open decision 4).
+
+Other gates: `instruction_option_answer` (checkable subset only; free-text predicate →
+`teacher_checked`, not a block); `source_notation_artifact` (`by*`/`my*` etc. in
+student-facing text); `capitalization` (proper nouns from source/corpus, e.g. `June` — but
+**only** when the token is not sentence-initial, to avoid the obvious false positive).
+**Two gates added per review #7** (backtest defects the original four missed):
+  - `heading_as_item`: an item whose `content` matches a known source section heading /
+    `chain_script` label rather than a practice item.
+  - `worked_example_consistency` (narrow): the chunk's `worked_example` answer contradicts
+    the modeled item, or contains a "No."/negation after a modeled answer, or its
+    answer/options are themselves mismatched.
+- [ ] RED: fill_blank w/ answer∉options→blocker; `match` answer≠option→PASS; `sound_box`
+  phoneme-options + whole-word answer→PASS (no false positive); sentence-initial `June`→PASS,
+  mid-sentence `june`→blocker; a source heading used as an item→blocker; a worked example
+  whose answer contradicts its item→blocker; `by*` in content→blocker; clean packet→passed.
+- [ ] GREEN; commit: `feat: deterministic blocking gates (format-allowlisted answer-key, heading + worked-example, artifact, capitalization)`.
 
 ### T6: Deterministic objective-coverage validator
 **Files:** new `validate/objective_coverage.py`; test `tests/test_objective_coverage.py`.
-`build_evidence_index(adapted, ledger)` + `evaluate_objective_coverage(ledger, evidence)
--> ObjectiveCoverageResult`. Role-aware: a pattern cell's numerator counts only
-target-pattern practice in acceptable forms; required-form presence checked (chain build
-sequence complete; passage as connected text; etc.); samplable pools satisfied at threshold,
-not exhausted. Failure conditions per spec §"Deterministic Coverage Validator Change" item 4.
-- [ ] RED: a plan that samples 7/18 roll-and-read but hits the decode threshold → PASS
-  (the S5 false-rejection); an incomplete chain (missing early steps) → required-form FAIL;
-  a pattern cell satisfied only by contrast words → FAIL.
-- [ ] GREEN; commit: `feat: deterministic role-aware objective-coverage validator`.
+`build_evidence_index(worksheets, ledger)` + `evaluate_objective_coverage(ledger, evidence)
+-> ObjectiveCoverageResult`. Operates on the **whole package** (`list[AdaptedActivityModel]`)
+so objectives split across mini-worksheets aggregate correctly (review missed-mode). This
+module is the single canonical home for evidence + evaluation logic; `validate/` and the
+judge-input builder both import it — no forked definitions (review minor #9).
+
+**Visibility/role-aware evidence index (review missed-mode).** Only *student-facing
+practice* counts. Derive visibility from `response_format` + field: `content` is practice;
+`answer` is the key (never practice); the correct `option` is not itself practice; teacher
+worked-example text isn't student production. So a target word appearing only as a throwaway
+answer option or in an answer key does **not** satisfy a cell — this is the S4 "presence
+≠ practice" failure made structural.
+
+**Required-form is form- AND cognitive-skill-specific (review #3), from the
+skill-preservation substitution table:** a manipulation/chain cell needs ordered
+*transformation* steps (not the chain's words scattered across write items); a connected-text
+cell needs an actual passage/connected text (not a title or a lone sentence); an *encode*
+cell needs written production (not reading); a sentence-*writing* cell needs production (not
+sentence reading).
+
+**Counting rules:** a pattern cell's numerator counts only **distinct, high-confidence**
+target-pattern practice in an acceptable form (distinctness defeats the "repeat one word to
+hit the count" game, review missed-mode; high-confidence gate from T2 means classifier
+uncertainty can't manufacture a rejection). Low-confidence shortfalls are recorded as
+**advisory**, surfaced to the judge, and do not hard-fail. Samplable pools (roll-and-read,
+word_list) satisfied at threshold, not exhausted.
+- [ ] RED: samples 7/18 roll-and-read but hits the distinct decode threshold → PASS (the S5
+  false-rejection); a target word present only as an answer-key/option → does NOT count;
+  incomplete chain (missing early transformation steps) → required-form FAIL; pattern cell
+  satisfied only by contrast words → FAIL; threshold met only by a repeated word → FAIL
+  (distinctness); a cell short only on low-confidence words → PASS with advisory flag;
+  objective split across two worksheets in the package → aggregates to PASS.
+- [ ] GREEN; commit: `feat: package-level role/visibility-aware objective-coverage validator`.
 
 ## Phase 2 — Judge rubric reframe (scores only)
 
@@ -145,6 +218,11 @@ Build the judge input (`objective_ledger` + `blocking_gates` + `deterministic_co
 prompt instructs: score handed objectives only; never create objectives, reclassify items,
 demand full pools, or count contrast/review/irregular toward target pattern; never approve
 a blocked package. Keep **0–1** scoring.
+**Sharpened per review #5 (no double-counting):** the judge scores **quality** of the
+evidence (clarity, developmental fit, coherence, "does this practice genuinely exercise the
+objective"). Counts, required-form presence, and distinctness are *already decided* by T6 and
+handed in as facts — the prompt explicitly forbids the judge from re-deriving or overriding
+them. The deterministic validator owns "enough?"; the judge owns "good?".
 - [ ] RED: prompt contains the ledger objective ids + the "do not require every source
   word / Roll and Read item" instruction; omits any "reproduce all source" language.
 - [ ] GREEN; commit: `feat: objective-sufficiency judge input contract (judge scores handed ledger)`.
@@ -163,6 +241,9 @@ When `WORKSHEET_OBJECTIVE_COVERAGE=1`: build ledger → planner authors (ledger 
 `run_blocking_gates` (block→reject, skip judge) → `evaluate_objective_coverage` (det fail→
 reject) → judge against ledger → approval policy (gates + required-form + det-coverage +
 overall≥0.70 + every essential cell≥0.60 + adhd/safety≥0.50). Flag OFF ⇒ byte-identical.
+**Flag mutual-exclusion (review minor #8):** if both `WORKSHEET_OBJECTIVE_COVERAGE` and
+`WORKSHEET_PLANNER_SLOT_CONTRACT` are set, fail fast with a clear error — never run both
+coverage systems at once (results would be uninterpretable).
 - [ ] RED: flag on, a stubbed plan with answer∉options → rejected by gate (judge not called);
   a clean plan sampling roll-and-read → approved. Flag off ⇒ unchanged path.
 - [ ] GREEN; commit: `feat: objective-sufficiency coverage path in plan_lesson_llm (flagged)`.
@@ -175,14 +256,26 @@ Re-run the frozen-cache battery with `WORKSHEET_OBJECTIVE_COVERAGE=1` on IMG_000
 (if any) are caught by the deterministic gates (not the fuzzy judge); a clean dense lesson
 reaches ≥0.70 with essential cells ≥0.60. Record scorecards in the context doc. This is the
 proof the free backtest could not provide (no clean dense plan was persisted).
+**Per review #4:** in battery/eval mode, always write the deterministic coverage result +
+blocker report **even when a package is blocked** (production may skip the judge on a blocker,
+but calibration must not lose the signal). **Per review missed-mode:** spot-check the
+*rendered* output, not just the validated model — the renderer can alter match/display
+semantics after validation.
 - [ ] Not offline; owner env (sandbox off, `SSL_CERT_FILE`). Compare vs S5 baselines.
 
-### T11: C-small human approve-precision calibration
-15–20 stratified plans (5 good, 5 page-faithful-overwhelming, 5 objective-thin, 5 mixed
-edge), 2–3 expert raters, blind, per spec §"Calibration Against Human Raters". Metrics:
-false-approve/false-reject, quadratic-weighted kappa on per-cell scores, blocker confusion
-matrix. Tune essential-cell floors to the human revise/reject boundary; fix false approvals
-(answer-key/artifact/dilution) before false rejections. **This is the promotion gate.**
+### T11: Human approve-precision calibration (sequential, anti-overfit)
+Per spec §"Calibration Against Human Raters", but restructured per review #6 so we don't tune
+the rubric until it passes its own examples. **Two disjoint sets, in order:**
+1. **Freeze the rubric** (thresholds, floors, gate definitions) — written down before raters see anything.
+2. **Dev set (~20, stratified:** good / page-faithful-overwhelming / objective-thin / mixed
+   edge). Used only to *debug* the harness and surface obvious breakage. Tuning is allowed here.
+3. **Blind holdout (40–60, fresh stratified, never inspected during dev), 2–3 expert raters.**
+   This is the **promotion gate** and it is *not* tuned against. Metrics: false-approve /
+   false-reject rates, quadratic-weighted kappa on per-cell quality scores, blocker confusion
+   matrix.
+**Abort rules:** any single *severe* false approval (a genuinely harmful/wrong package
+approved), or ≥2 material false approvals in the first 20 holdout cases → stop, do not promote,
+return to design. Fix false approvals (answer-key / artifact / dilution) before false rejections.
 
 ## Conditional / deferred
 - Full SlotPack (author per slot by `allowed_practice_forms`) only if T10 shows residual
@@ -204,4 +297,20 @@ Do not flip any default; do not lower the 0.70 bar.
    build; fold into `validate/content_coverage.py` only at promotion (keeps the scorecard
    meaning stable for loop/unflagged runs mid-flight).
 3. **Role classifier depth.** Start with simple explicit pattern helpers + corpus heart
-   words; safe-undercount ambiguous words. Defer a richer phonics engine unless T10 needs it.
+   words; **confidence-tag** ambiguous words (T2) so they degrade to advisory rather than
+   forcing rejection. Defer a richer phonics engine unless T10 needs it.
+4. **Typed interaction contract on `ActivityItem`** (review's headline fix — `answer_mode`,
+   `option_roles`, `visible_to_student`, …). **Deferred.** T5's format-allowlist + T6's
+   derived visibility get the defect-catch without a schema change that ripples into the
+   planner, renderer, and every existing test. Promote to a real task only if T10 shows the
+   allowlist mis-gates a legitimate format (e.g. a new activity type the allowlist can't classify).
+
+## Review changes folded in (GPT-5.5, 2026-06-13)
+Go-with-changes. Adopted: confidence-tagged classification replacing blanket safe-undercount
+(T1/T2/T6); answer-key gate as a format allowlist + `heading_as_item` and
+`worked_example_consistency` gates (T5); form/cognitive-specific required-form + distinctness
++ visibility-derived evidence + package-level aggregation (T6); judge scores quality, validator
+owns counts (T7); sequential dev/blind-holdout calibration with abort rules (T11); flag
+mutual-exclusion (T9); single canonical evidence module (T6); battery records coverage even
+when blocked (T10). Pushed back on: typed interaction-contract schema change (open decision 4,
+deferred in favour of the allowlist).
