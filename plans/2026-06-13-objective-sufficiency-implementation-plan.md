@@ -27,11 +27,11 @@ defect-catching and is variance-free; build it first.
 3. Answer-key/option mismatches and source-notation artifacts are **deterministic hard
    blocks**, not soft criteria (`match` activities special-cased).
 4. Contrast / review / irregular words do **not** count toward target-pattern sufficiency.
-5. On a live clean dense lesson (e.g. IMG_0004 lesson 59), the objective rubric reaches
-   ≥0.70 with all essential objective cells ≥0.60 and no required-form missing — the one
-   thing the free backtest could not prove.
-6. Judge-approve precision validated against human raters (C-small, 15–20 plans) before
-   any promotion.
+5. On a live clean dense lesson (e.g. IMG_0004 lesson 59), the objective rubric APPROVES
+   (det gates + coverage pass, overall ≥0.70, every essential cell ≥0.65, no severe defect,
+   no required-form missing) — the one thing the free backtest could not prove.
+6. Judge-approve precision validated against human raters (blind holdout) before any promotion;
+   the approve/abstain/reject split and the uncertainty-band width are calibrated there.
 
 Hard rules carried over: do NOT lower the 0.70 judge bar. Everything new is **default
 OFF** (`WORKSHEET_OBJECTIVE_COVERAGE`, see below) so production (old loop) is
@@ -61,9 +61,33 @@ frozen LiteracySkillModel (+ lesson_number -> UFLI corpus)
   -> evaluate_objective_coverage(ledger, evidence)  [deterministic validator, Phase 1]
        OWNS counts + required-form + distinctness; hard-fail only on HIGH-confidence shortfalls
   -> judge scores QUALITY against ledger        [Phase 2; judge cannot reclassify OR re-count]
-  -> approval policy: gates pass AND required-forms present AND det-coverage pass
-       AND overall>=0.70 AND every essential cell>=0.60 AND adhd/safety>=0.50
+  -> approval policy (TRI-STATE, see below): approve / abstain(uncertain) / reject
 ```
+
+**Approval is tri-state, not binary (Session 50, per GPT-5.5 follow-up).** A hard
+`essential cell >= 0.60` floor is the same fake precision we just moved out of coverage — a
+noisy quality score landing at 0.58 must not masquerade as a deterministic product failure
+(we *proved* hard thresholds on noisy LLM scores flip, S48). Per-cell judge scores are
+**diagnostic confidence, not release-law**. Bands: essential cell `>=0.65` pass, `<0.50`
+fail, `0.50–0.65` **uncertain** (abstain). A cell hard-blocks only on `<0.50` OR a typed
+severe qualitative defect with evidence (enum, T8): `wrong_cognitive_task`,
+`misleading_or_wrong_instruction`, `generic_activity_not_exercising_objective`,
+`child_cannot_reasonably_answer`, `overwhelming_or_adhd_unsafe`.
+
+```
+APPROVE  = det blockers pass AND required-forms pass AND det objective-coverage pass
+           AND overall_median >= 0.70 AND adhd/safety >= 0.50
+           AND every essential cell quality >= 0.65 AND no essential-cell severe defect
+REJECT   = any det gate/required-form/coverage fail  OR overall_median < 0.70
+           OR adhd/safety < 0.50  OR any essential cell quality < 0.50
+           OR any essential-cell severe defect
+ABSTAIN  = otherwise (an essential cell in 0.50–0.65, no severe defect, all else passing)
+           -> "not auto-approved", route to existing fallback; NOT a clean
+              objective-insufficiency reject; tracked separately in telemetry
+```
+Abstain maps onto the *existing* fallback path (a non-approved package already falls back) —
+this changes labels + telemetry, not infra. Band width (0.50–0.65) is a starting prior,
+**calibrated on the T11 holdout**, not asserted.
 
 **Two-signal division of labour (no double-counting).** The deterministic validator is
 *authoritative* for counts, required-form presence, distinctness, and blockers. The judge
@@ -72,14 +96,13 @@ genuinely exercise the objective") — it never re-derives counts in prose. Cove
 evaluated at the **lesson package** level (the full `list[AdaptedActivityModel]`, since one
 lesson splits into mini-worksheets via `worksheet_number/count`), never per single worksheet.
 
-**Known residual judge variance (accepted, measure don't pre-solve — Session 50).** The
-approval policy keeps "every essential cell ≥ 0.60," and 0.60 is a *quality* score, so a
-borderline cell (≈0.58↔0.62) can still flip the gate run-to-run — the one place the judge can
-re-inject instability despite scoring a fixed ledger. This is accepted for now: the variance
-we actually proved (S48/S49b) was coverage-*count* variance (0.34↔0.76), now deterministic; a
-quality wobble near 0.60 is a genuinely borderline lesson, and median-of-N damps it. **Do not
-pre-build a band.** T10 measures whether residual quality-floor flipping survives; only if it
-does, add an uncertainty band (0.55–0.65 → "revise", hard-reject below 0.55).
+**Residual judge variance is designed out, not deferred (Session 50, GPT-5.5 follow-up).**
+The naive "every essential cell ≥ 0.60" hard floor would let a noisy 0.58 flip the gate
+run-to-run — the one place the judge re-injects instability despite a fixed ledger. We do
+*not* keep it and "measure later"; we already proved (S48) hard thresholds on noisy LLM
+scores flip, so the abstention zone is built in from the start (see the tri-state policy
+above) and its width is what T11 calibrates. Per-cell scores are diagnostic confidence; only
+`<0.50` or a typed severe defect blocks an essential cell.
 
 ---
 
@@ -240,29 +263,47 @@ evidence (clarity, developmental fit, coherence, "does this practice genuinely e
 objective"). Counts, required-form presence, and distinctness are *already decided* by T6 and
 handed in as facts — the prompt explicitly forbids the judge from re-deriving or overriding
 them. The deterministic validator owns "enough?"; the judge owns "good?".
+**Typed severe-defect veto (Session 50).** Per essential cell the prompt asks the judge to
+emit, *with cited evidence*, zero or more typed severe defects from a fixed enum:
+`wrong_cognitive_task`, `misleading_or_wrong_instruction`,
+`generic_activity_not_exercising_objective`, `child_cannot_reasonably_answer`,
+`overwhelming_or_adhd_unsafe`. These — not a fuzzy numeric floor — are the judge's hard veto
+on an essential cell. A bare low score with no cited defect is diagnostic, not a block.
+- [ ] RED additions: prompt enumerates the severe-defect enum + "cite evidence"; instructs
+  per-cell quality scores are advisory confidence, not pass/fail thresholds.
 - [ ] RED: prompt contains the ledger objective ids + the "do not require every source
   word / Roll and Read item" instruction; omits any "reproduce all source" language.
 - [ ] GREEN; commit: `feat: objective-sufficiency judge input contract (judge scores handed ledger)`.
 
 ### T8: Judge output schema + aggregation
 **Files:** `adapt/llm_judge.py`; `tests/test_llm_judge.py`.
-`ObjectiveJudgeVerdict` (per-cell scores + 5 criteria + overall + approval_recommendation).
-Map old `content_coverage` → `objective_sufficiency` for transition. Keep median-of-N
-(`judge_adaptation_samples`) but aggregate **per objective cell** before the overall.
-- [ ] RED: median-of-N aggregation computes per-cell medians then overall; approval recomputed.
-- [ ] GREEN; commit: `feat: objective-sufficiency judge verdict schema + per-cell median aggregation`.
+`ObjectiveJudgeVerdict`: per-cell `quality` score (0–1) + per-cell `severe_defects:
+list[SevereDefect]` (typed enum + evidence string) + 5 criteria + overall +
+`approval_recommendation` ∈ {approve, abstain, reject}. Map old `content_coverage` →
+`objective_sufficiency` for transition. Keep median-of-N (`judge_adaptation_samples`) but
+aggregate **per objective cell** before the overall; a severe defect counts if it appears in
+a **majority** of the N samples for that cell (median-style robustness, not one-shot noise).
+Derive the tri-state per the approval policy (≥0.65 / 0.50–0.65 abstain / <0.50, severe-defect
+override).
+- [ ] RED: per-cell median quality computed; a defect in 2/3 samples → veto, in 1/3 → ignored;
+  an essential cell at 0.58 with no defect → `abstain` (not reject); at 0.45 → reject; clean
+  ≥0.65 everywhere + gates pass → approve.
+- [ ] GREEN; commit: `feat: tri-state objective-sufficiency judge verdict (per-cell quality + typed severe-defect veto)`.
 
 ### T9: Wire the objective path into plan_lesson_llm (flagged)
 **Files:** `adapt/llm_planner.py`; `tests/test_llm_planner.py`.
 When `WORKSHEET_OBJECTIVE_COVERAGE=1`: build ledger → planner authors (ledger in prompt) →
 `run_blocking_gates` (block→reject, skip judge) → `evaluate_objective_coverage` (det fail→
-reject) → judge against ledger → approval policy (gates + required-form + det-coverage +
-overall≥0.70 + every essential cell≥0.60 + adhd/safety≥0.50). Flag OFF ⇒ byte-identical.
+reject) → judge against ledger → **tri-state** approval policy (APPROVE / ABSTAIN / REJECT
+per the design block). ABSTAIN routes to the existing fallback (same code path as a
+non-approved package today) and is logged distinctly from a clean reject. Flag OFF ⇒
+byte-identical.
 **Flag mutual-exclusion (review minor #8):** if both `WORKSHEET_OBJECTIVE_COVERAGE` and
 `WORKSHEET_PLANNER_SLOT_CONTRACT` are set, fail fast with a clear error — never run both
 coverage systems at once (results would be uninterpretable).
 - [ ] RED: flag on, a stubbed plan with answer∉options → rejected by gate (judge not called);
-  a clean plan sampling roll-and-read → approved. Flag off ⇒ unchanged path.
+  a clean plan sampling roll-and-read → approved; a plan with an essential cell at 0.58 and no
+  severe defect → ABSTAIN→fallback (not a clean reject); flag off ⇒ unchanged path.
 - [ ] GREEN; commit: `feat: objective-sufficiency coverage path in plan_lesson_llm (flagged)`.
 
 ## Phase 3 — Live verification + calibration (owner env)
@@ -271,17 +312,20 @@ coverage systems at once (results would be uninterpretable).
 Re-run the frozen-cache battery with `WORKSHEET_OBJECTIVE_COVERAGE=1` on IMG_0003/4/5,
 `--runs 2`, judge×3. **Success:** the roll-and-read false-rejections are gone; real defects
 (if any) are caught by the deterministic gates (not the fuzzy judge); a clean dense lesson
-reaches ≥0.70 with essential cells ≥0.60. Record scorecards in the context doc. This is the
-proof the free backtest could not provide (no clean dense plan was persisted).
+APPROVES (overall ≥0.70, every essential cell ≥0.65, no severe defect). Record scorecards in
+the context doc. This is the proof the free backtest could not provide (no clean dense plan was
+persisted).
 **Per review #4:** in battery/eval mode, always write the deterministic coverage result +
 blocker report **even when a package is blocked** (production may skip the judge on a blocker,
 but calibration must not lose the signal). **Per review missed-mode:** spot-check the
 *rendered* output, not just the validated model — the renderer can alter match/display
 semantics after validation.
-**Measure the residual judge-quality-floor flip (Session 50):** across the `--runs 2`,
-judge×3 cells, record per-essential-cell quality scores and check whether any cell crosses the
-0.60 floor between runs on frozen input. If flipping persists, that's the trigger to add the
-0.55–0.65 uncertainty band; if not, leave the hard 0.60 floor as-is.
+**Characterize the abstention zone (Session 50):** across the `--runs 2`, judge×3 cells,
+record per-essential-cell quality scores and the approve/abstain/reject label per run. Report
+the **abstain rate** and whether the *final* label (not the raw 0.50–0.65 score) is stable
+run-to-run on frozen input — the tri-state should convert former gate-flips into stable
+ABSTAINs. A high abstain rate or unstable approve↔reject (excluding abstain) is the signal to
+re-tune the band width — which is then calibrated for real in T11, not guessed here.
 - [ ] Not offline; owner env (sandbox off, `SSL_CERT_FILE`). Compare vs S5 baselines.
 
 ### T11: Human approve-precision calibration (sequential, anti-overfit)
@@ -293,7 +337,13 @@ the rubric until it passes its own examples. **Two disjoint sets, in order:**
 3. **Blind holdout (40–60, fresh stratified, never inspected during dev), 2–3 expert raters.**
    This is the **promotion gate** and it is *not* tuned against. Metrics: false-approve /
    false-reject rates, quadratic-weighted kappa on per-cell quality scores, blocker confusion
-   matrix.
+   matrix. **Three-bucket** (approve / abstain / reject), not binary: abstain is tracked
+   separately and is NOT counted as a false reject. Promotion requires a **low abstain rate**
+   AND zero severe false approvals on the holdout.
+**Band calibration:** the 0.50–0.65 uncertainty width is fit here against the human
+revise/reject boundary (where do raters actually disagree?), not asserted. The typed
+severe-defect veto is validated against rater-labeled defects (do humans agree those cells are
+genuinely broken?).
 **Abort rules:** any single *severe* false approval (a genuinely harmful/wrong package
 approved), or ≥2 material false approvals in the first 20 holdout cases → stop, do not promote,
 return to design. Fix false approvals (answer-key / artifact / dilution) before false rejections.
