@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from adapt.coverage_ledger import build_coverage_ledger, verify_coverage
+from adapt.coverage_ledger import build_coverage_ledger, repair_coverage, verify_coverage
 from adapt.llm_adapt import ActivityPlan, LessonPlan, PlannedItem, WorksheetPlan
 from skill.schema import LiteracySkillModel, SourceItem
 
@@ -226,3 +226,54 @@ def test_unknown_claim_is_reported() -> None:
     report = verify_coverage(plan, ledger)
     assert report.unknown_claims == ["bogus_999"]
     assert report.missing == []
+
+
+# --- S3: repair_coverage (deterministic catch-up) ---
+
+
+def test_repair_fills_all_missing_required() -> None:
+    ledger = build_coverage_ledger(_small_skill())
+    plan = _plan([PlannedItem(content="unrelated filler")])
+    missing = verify_coverage(plan, ledger).missing
+    assert missing  # precondition: something is missing
+    repaired = repair_coverage(plan, missing)
+    assert verify_coverage(repaired, ledger).missing == []
+
+
+def test_repair_preserves_existing_covered_items() -> None:
+    ledger = build_coverage_ledger(_small_skill())
+    plan = _plan([PlannedItem(content="Write cake.", covered_source_item_ids=["word_001"])])
+    missing = verify_coverage(plan, ledger).missing
+    repaired = repair_coverage(plan, missing)
+    # the original worksheet/item is untouched
+    assert repaired.worksheets[0].activities[0].items[0].content == "Write cake."
+    assert verify_coverage(repaired, ledger).missing == []
+
+
+def test_repair_no_missing_returns_plan_unchanged() -> None:
+    ledger = build_coverage_ledger(_small_skill())
+    plan = _plan(
+        [
+            PlannedItem(content="Write cake.", covered_source_item_ids=["word_001"]),
+            PlannedItem(
+                content="The cake is on the lake.",
+                covered_source_item_ids=["sentence_001"],
+            ),
+        ]
+    )
+    assert not verify_coverage(plan, ledger).missing
+    repaired = repair_coverage(plan, [])
+    assert repaired == plan
+
+
+def test_repair_chunks_many_missing_within_cap() -> None:
+    ledger = build_coverage_ledger(_skill_with_chain_and_sentences())
+    plan = _plan([PlannedItem(content="filler")])
+    missing = verify_coverage(plan, ledger).missing
+    assert len(missing) > 4  # dense lesson → multiple catch-up chunks
+    repaired = repair_coverage(plan, missing)
+    catch_up = repaired.worksheets[-1]
+    assert catch_up.title == "Catch-up practice"
+    assert len(catch_up.activities) > 1
+    assert all(len(a.items) <= 4 for a in catch_up.activities)
+    assert verify_coverage(repaired, ledger).missing == []

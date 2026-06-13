@@ -20,6 +20,7 @@ from skill.schema import LiteracySkillModel
 
 if TYPE_CHECKING:
     from adapt.llm_adapt import LessonPlan, PlannedItem
+    from adapt.rules import AccommodationRules
 
 ItemType = Literal[
     "word",
@@ -231,3 +232,51 @@ def verify_coverage(plan: LessonPlan, ledger: list[CoverageLedgerEntry]) -> Cove
                 unknown_claims.append(cid)
 
     return CoverageReport(missing=missing, unknown_claims=unknown_claims)
+
+
+# Deterministic catch-up chunk size when no rules are passed (a safe ADHD chunk).
+_REPAIR_CHUNK_DEFAULT = 4
+# Content types practiced by reading the whole text rather than writing it.
+_REPAIR_READ_TYPES = {"sentence", "passage"}
+
+
+def repair_coverage(
+    plan: LessonPlan,
+    missing: list[CoverageLedgerEntry],
+    rules: AccommodationRules | None = None,
+) -> LessonPlan:
+    """Append a deterministic "Catch-up practice" worksheet covering every gap.
+
+    No LLM call: each missing required entry becomes its own practice item
+    (content = exact_text, tagged with its source id) so the verifier passes.
+    Items are chunked to the per-section item cap so translation keeps them all;
+    ``enforce_section_cap`` later splits the catch-up worksheet across pages.
+    Returns the plan unchanged when nothing is missing.
+    """
+    if not missing:
+        return plan
+
+    from adapt.llm_adapt import ActivityPlan, PlannedItem, WorksheetPlan
+
+    chunk_size = rules.max_items_per_chunk if rules is not None else _REPAIR_CHUNK_DEFAULT
+    items = [
+        PlannedItem(
+            content=entry.exact_text,
+            response_format=("read_aloud" if entry.item_type in _REPAIR_READ_TYPES else "write"),
+            covered_source_item_ids=[entry.source_item_id],
+        )
+        for entry in missing
+    ]
+    activities = [
+        ActivityPlan(
+            activity_type="write",
+            micro_goal="Practice the words and sentences from your lesson.",
+            items=items[i : i + chunk_size],
+            instructions=["Read each one out loud.", "Then write it."],
+            response_format="write",
+            rationale="Deterministic catch-up: every source item gets its own practice.",
+        )
+        for i in range(0, len(items), chunk_size)
+    ]
+    catch_up = WorksheetPlan(title="Catch-up practice", activities=activities)
+    return plan.model_copy(update={"worksheets": [*plan.worksheets, catch_up]})
