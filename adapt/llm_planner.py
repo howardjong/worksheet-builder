@@ -19,6 +19,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from adapt.coverage_ledger import CoverageLedgerEntry, build_coverage_ledger
 from adapt.llm_adapt import _call_gemini, _parse_lesson_plan, _translate_plan
 from adapt.llm_judge import JudgeVerdict, _call_openai, judge_adaptation_samples
 from adapt.rules import AccommodationRules, build_rules
@@ -85,6 +86,47 @@ def _call_planner(prompt: str) -> tuple[str | None, str]:
     return None, "none"
 
 
+def _slot_contract_enabled() -> bool:
+    """Whether the deterministic coverage contract is active (default OFF)."""
+    return bool(os.environ.get("WORKSHEET_PLANNER_SLOT_CONTRACT"))
+
+
+def _coverage_contract_block(skill: LiteracySkillModel) -> str:
+    """Render the required ledger entries as an explicit coverage contract.
+
+    Empty string when the flag is off so the prompt is byte-identical to today.
+    """
+    if not _slot_contract_enabled():
+        return ""
+    required = [e for e in build_coverage_ledger(skill) if e.priority == "required"]
+    if not required:
+        return ""
+    lines = [_contract_line(e) for e in required]
+    listing = "\n".join(lines)
+    return f"""
+## Coverage contract (REQUIRED — every id below MUST be covered)
+
+Each row is `id | type | exact_text`. Every required id MUST be exercised by at
+least one practice item, and each item MUST list the ids it covers in its
+"covered_source_item_ids" field, reproducing the exact_text verbatim in the
+item's content, options, or answer. Coverage is verified deterministically —
+a claimed id whose exact_text is absent does NOT count.
+
+{listing}
+"""
+
+
+def _contract_line(entry: CoverageLedgerEntry) -> str:
+    return f"- {entry.source_item_id} | {entry.item_type} | {entry.exact_text}"
+
+
+def _covered_ids_schema_line() -> str:
+    """The extra item-schema key, only when the contract is active."""
+    if not _slot_contract_enabled():
+        return ""
+    return ',\n              "covered_source_item_ids": ["id1", "id2"]'
+
+
 def _build_planner_prompt(
     skill: LiteracySkillModel,
     profile: LearnerProfile,
@@ -99,6 +141,8 @@ def _build_planner_prompt(
     source_text = "\n".join(source_sections) if source_sections else "(no source items)"
 
     corpus_text = _corpus_block(skill)
+    contract_block = _coverage_contract_block(skill)
+    covered_ids_schema = _covered_ids_schema_line()
 
     curriculum_text = ""
     if rag_curriculum_references:
@@ -125,7 +169,7 @@ Source sections:
 
 {corpus_text}
 {curriculum_text}
-
+{contract_block}
 ## Learner Profile
 
 Name: {profile.name}
@@ -196,7 +240,7 @@ sound_box|sentence_completion",
               "content": "Exact student-facing item text",
               "response_format": "write|circle|fill_blank|read_aloud|trace",
               "options": ["choice1", "choice2"],
-              "answer": "correct answer or null"
+              "answer": "correct answer or null"{covered_ids_schema}
             }}
           ],
           "instructions": ["Step 1 text", "Step 2 text"],

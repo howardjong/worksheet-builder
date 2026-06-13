@@ -47,6 +47,9 @@ class PlannedItem(BaseModel):
     options: list[str] = Field(default_factory=list)
     answer: str | None = None
     picture_prompt: str | None = None
+    # Coverage-contract claim: which source ledger ids this item exercises.
+    # Verified deterministically against exact_text (a claim alone never counts).
+    covered_source_item_ids: list[str] = Field(default_factory=list)
 
 
 class ActivityPlan(BaseModel):

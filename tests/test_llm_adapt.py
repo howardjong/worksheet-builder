@@ -242,3 +242,15 @@ def test_translate_keeps_valid_worked_example() -> None:
     worked = worksheets[0].chunks[0].worked_example
     assert worked is not None
     assert worked.content == "c__ke -> cake (the magic e!)"
+
+
+def test_planned_item_parses_covered_source_item_ids() -> None:
+    item = PlannedItem.model_validate(
+        {"content": "cake", "covered_source_item_ids": ["word_001", "chain_001_step_2"]}
+    )
+    assert item.covered_source_item_ids == ["word_001", "chain_001_step_2"]
+
+
+def test_planned_item_defaults_covered_ids_to_empty() -> None:
+    item = PlannedItem(content="cake")
+    assert item.covered_source_item_ids == []

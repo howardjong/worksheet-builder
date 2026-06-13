@@ -348,3 +348,30 @@ def test_prompt_demands_individual_coverage_not_bundling() -> None:
     assert "one item per word" in prompt
     # Word chains must be student activities, not just worked examples.
     assert "not only as a worked example" in prompt
+
+
+def test_prompt_omits_coverage_contract_when_flag_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("WORKSHEET_PLANNER_SLOT_CONTRACT", raising=False)
+    prompt = _build_planner_prompt(_skill(), _profile(), build_rules(_profile()), "default", None)
+
+    assert "Coverage contract" not in prompt
+    assert "covered_source_item_ids" not in prompt
+
+
+def test_prompt_carries_coverage_ledger_when_flag_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("WORKSHEET_PLANNER_SLOT_CONTRACT", "1")
+    prompt = _build_planner_prompt(_skill(), _profile(), build_rules(_profile()), "default", None)
+
+    assert "Coverage contract" in prompt
+    # required ledger ids are listed
+    assert "word_001" in prompt
+    assert "chain_001_step_1" in prompt
+    assert "sentence_001" in prompt
+    # exact text appears next to its id so the model can author it verbatim
+    assert "tone" in prompt
+    # the output schema asks each item to declare the ids it covers
+    assert "covered_source_item_ids" in prompt
