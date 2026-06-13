@@ -12,6 +12,8 @@ from adapt.objective_ledger import (
     LedgerWord,
     ObjectiveCell,
     ObjectiveLedger,
+    PatternContext,
+    classify_word_role,
 )
 
 
@@ -305,3 +307,186 @@ class TestObjectiveLedgerSchema:
                 source_items=[],
             )
         assert "corpus_status" in str(exc_info.value)
+
+
+# ----------------------------------------------------------------------------
+# Helpers for the classifier tests
+# ----------------------------------------------------------------------------
+
+
+def _u_e_context(
+    *,
+    corpus_target_words: frozenset[str] = frozenset(),
+    irregular_words: frozenset[str] = frozenset(),
+    review_words: frozenset[str] = frozenset(),
+    is_contrast_context: bool = False,
+    corpus_matched: bool = True,
+) -> PatternContext:
+    """A u_e (long-u CVCe) lesson context for classifier tests."""
+    return PatternContext(
+        pattern_key="u_e",
+        pattern_kind="vce",
+        vowel="u",
+        rimes=frozenset(),
+        corpus_target_words=corpus_target_words,
+        irregular_words=irregular_words,
+        review_words=review_words,
+        is_contrast_context=is_contrast_context,
+        corpus_matched=corpus_matched,
+    )
+
+
+def _oll_context(
+    *,
+    corpus_target_words: frozenset[str] = frozenset(),
+    irregular_words: frozenset[str] = frozenset(),
+    review_words: frozenset[str] = frozenset(),
+    is_contrast_context: bool = False,
+    corpus_matched: bool = True,
+) -> PatternContext:
+    """An -all/-oll/-ull word-family lesson context for classifier tests."""
+    return PatternContext(
+        pattern_key="oll",
+        pattern_kind="rime",
+        vowel=None,
+        rimes=frozenset({"all", "oll", "ull"}),
+        corpus_target_words=corpus_target_words,
+        irregular_words=irregular_words,
+        review_words=review_words,
+        is_contrast_context=is_contrast_context,
+        corpus_matched=corpus_matched,
+    )
+
+
+class TestPatternContext:
+    """PatternContext is a typed, frozen, round-trippable data contract."""
+
+    def test_pattern_context_round_trips(self) -> None:
+        ctx = _u_e_context(
+            corpus_target_words=frozenset({"cube", "mute"}),
+            irregular_words=frozenset({"who", "one"}),
+        )
+        restored = PatternContext.model_validate_json(ctx.model_dump_json())
+        assert restored.pattern_key == "u_e"
+        assert restored.vowel == "u"
+        assert restored.corpus_target_words == frozenset({"cube", "mute"})
+        assert restored.irregular_words == frozenset({"who", "one"})
+
+    def test_pattern_context_is_frozen(self) -> None:
+        ctx = _u_e_context()
+        with pytest.raises(ValidationError):
+            ctx.pattern_key = "a_e"
+
+
+class TestClassifyWordRoleUE:
+    """RED cases — u_e (long-u CVCe) lesson context."""
+
+    def test_cute_is_target_pattern_high(self) -> None:
+        ctx = _u_e_context(corpus_target_words=frozenset({"cute", "mute"}))
+        role, conf, src = classify_word_role("cute", ctx)
+        assert role == "target_pattern"
+        assert conf == "high"
+        assert src in ("corpus_exact", "pattern_rule")
+
+    def test_cute_via_pattern_rule_when_not_in_corpus(self) -> None:
+        # No corpus membership for cute → must still resolve via clean CVCe rule.
+        ctx = _u_e_context(corpus_target_words=frozenset())
+        role, conf, src = classify_word_role("cute", ctx)
+        assert role == "target_pattern"
+        assert conf == "high"
+        assert src == "pattern_rule"
+
+    def test_mute_is_target_pattern_high(self) -> None:
+        ctx = _u_e_context(corpus_target_words=frozenset({"cube", "mute"}))
+        role, conf, src = classify_word_role("mute", ctx)
+        assert role == "target_pattern"
+        assert conf == "high"
+
+    def test_who_is_irregular_high_corpus(self) -> None:
+        ctx = _u_e_context(irregular_words=frozenset({"who", "one"}))
+        assert classify_word_role("who", ctx) == ("irregular_word", "high", "corpus_exact")
+
+    def test_one_is_irregular_high_corpus(self) -> None:
+        ctx = _u_e_context(irregular_words=frozenset({"who", "one"}))
+        assert classify_word_role("one", ctx) == ("irregular_word", "high", "corpus_exact")
+
+    def test_type_is_ambiguous_low_y_as_vowel(self) -> None:
+        ctx = _u_e_context()
+        role, conf, _src = classify_word_role("type", ctx)
+        assert role == "ambiguous_review_word"
+        assert conf == "low"
+
+    def test_gym_is_ambiguous_low_y_as_vowel(self) -> None:
+        ctx = _u_e_context()
+        role, conf, _src = classify_word_role("gym", ctx)
+        assert role == "ambiguous_review_word"
+        assert conf == "low"
+
+    def test_corpus_miss_caps_confidence_low(self) -> None:
+        # corpus_matched=False → graceful degrade: never high-confidence.
+        ctx = _u_e_context(
+            corpus_target_words=frozenset({"cute"}),
+            corpus_matched=False,
+        )
+        _role, conf, _src = classify_word_role("cute", ctx)
+        assert conf == "low"
+
+    def test_unresolvable_word_is_low(self) -> None:
+        # A word that matches nothing and no framing → low confidence.
+        ctx = _u_e_context()
+        _role, conf, _src = classify_word_role("zxqwv", ctx)
+        assert conf == "low"
+
+    def test_irregular_takes_priority_over_visual_pattern(self) -> None:
+        # "use" visually contains u_e but is supplied as an irregular/heart word.
+        ctx = _u_e_context(irregular_words=frozenset({"use"}))
+        role, conf, src = classify_word_role("use", ctx)
+        assert role == "irregular_word"
+        assert conf == "high"
+        assert src == "corpus_exact"
+
+    def test_normalizes_case_and_punctuation(self) -> None:
+        ctx = _u_e_context(corpus_target_words=frozenset({"cute"}))
+        role, conf, _src = classify_word_role("Cute!", ctx)
+        assert role == "target_pattern"
+        assert conf == "high"
+
+
+class TestClassifyWordRoleOll:
+    """RED cases — -all/-oll/-ull word-family lesson context."""
+
+    def test_mop_is_not_target_high(self) -> None:
+        ctx = _oll_context(corpus_target_words=frozenset({"doll", "roll", "toll"}))
+        role, conf, src = classify_word_role("mop", ctx)
+        assert role in ("review_word", "contrast_word")
+        assert role != "target_pattern"
+        assert conf == "high"
+        assert src == "pattern_rule"
+
+    def test_jazz_is_not_target_high(self) -> None:
+        ctx = _oll_context(corpus_target_words=frozenset({"doll", "roll", "toll"}))
+        role, conf, src = classify_word_role("jazz", ctx)
+        assert role in ("review_word", "contrast_word")
+        assert role != "target_pattern"
+        assert conf == "high"
+        assert src == "pattern_rule"
+
+    def test_mop_is_contrast_word_under_contrast_framing(self) -> None:
+        ctx = _oll_context(is_contrast_context=True)
+        role, conf, src = classify_word_role("mop", ctx)
+        assert role == "contrast_word"
+        assert conf == "high"
+        assert src == "pattern_rule"
+
+    def test_roll_is_target_pattern_high(self) -> None:
+        ctx = _oll_context(corpus_target_words=frozenset({"doll", "roll", "toll"}))
+        role, conf, _src = classify_word_role("roll", ctx)
+        assert role == "target_pattern"
+        assert conf == "high"
+
+    def test_toll_via_rime_rule_when_not_in_corpus(self) -> None:
+        ctx = _oll_context(corpus_target_words=frozenset())
+        role, conf, src = classify_word_role("toll", ctx)
+        assert role == "target_pattern"
+        assert conf == "high"
+        assert src == "pattern_rule"
