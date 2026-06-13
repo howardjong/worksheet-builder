@@ -72,6 +72,15 @@ genuinely exercise the objective") — it never re-derives counts in prose. Cove
 evaluated at the **lesson package** level (the full `list[AdaptedActivityModel]`, since one
 lesson splits into mini-worksheets via `worksheet_number/count`), never per single worksheet.
 
+**Known residual judge variance (accepted, measure don't pre-solve — Session 50).** The
+approval policy keeps "every essential cell ≥ 0.60," and 0.60 is a *quality* score, so a
+borderline cell (≈0.58↔0.62) can still flip the gate run-to-run — the one place the judge can
+re-inject instability despite scoring a fixed ledger. This is accepted for now: the variance
+we actually proved (S48/S49b) was coverage-*count* variance (0.34↔0.76), now deterministic; a
+quality wobble near 0.60 is a genuinely borderline lesson, and median-of-N damps it. **Do not
+pre-build a band.** T10 measures whether residual quality-floor flipping survives; only if it
+does, add an uncertainty band (0.55–0.65 → "revise", hard-reject below 0.55).
+
 ---
 
 ## Phase 1 — Deterministic core (variance-free; the real value)
@@ -201,12 +210,20 @@ hit the count" game, review missed-mode; high-confidence gate from T2 means clas
 uncertainty can't manufacture a rejection). Low-confidence shortfalls are recorded as
 **advisory**, surfaced to the judge, and do not hard-fail. Samplable pools (roll-and-read,
 word_list) satisfied at threshold, not exhausted.
+**Self-introduced hole closed (Session 50):** an *essential* cell with **zero** distinct
+high-confidence practice must NOT auto-pass on advisory low-confidence evidence alone — that
+would let a genuinely thin objective (corpus-miss / all-ambiguous lesson) sail through with no
+verified practice. Such a cell is marked `needs_verification` and routes to judge-quality +
+`teacher_checked` rather than a silent deterministic PASS. (Distinct from a cell that meets its
+threshold on high-confidence words and has a few extra low-confidence ones — that still passes.)
 - [ ] RED: samples 7/18 roll-and-read but hits the distinct decode threshold → PASS (the S5
   false-rejection); a target word present only as an answer-key/option → does NOT count;
   incomplete chain (missing early transformation steps) → required-form FAIL; pattern cell
   satisfied only by contrast words → FAIL; threshold met only by a repeated word → FAIL
-  (distinctness); a cell short only on low-confidence words → PASS with advisory flag;
-  objective split across two worksheets in the package → aggregates to PASS.
+  (distinctness); a cell short only on low-confidence words but ABOVE threshold on
+  high-confidence → PASS with advisory flag; an essential cell with ONLY low-confidence
+  evidence (zero high-confidence) → `needs_verification`, not silent PASS; objective split
+  across two worksheets in the package → aggregates to PASS.
 - [ ] GREEN; commit: `feat: package-level role/visibility-aware objective-coverage validator`.
 
 ## Phase 2 — Judge rubric reframe (scores only)
@@ -261,6 +278,10 @@ blocker report **even when a package is blocked** (production may skip the judge
 but calibration must not lose the signal). **Per review missed-mode:** spot-check the
 *rendered* output, not just the validated model — the renderer can alter match/display
 semantics after validation.
+**Measure the residual judge-quality-floor flip (Session 50):** across the `--runs 2`,
+judge×3 cells, record per-essential-cell quality scores and check whether any cell crosses the
+0.60 floor between runs on frozen input. If flipping persists, that's the trigger to add the
+0.55–0.65 uncertainty band; if not, leave the hard 0.60 floor as-is.
 - [ ] Not offline; owner env (sandbox off, `SSL_CERT_FILE`). Compare vs S5 baselines.
 
 ### T11: Human approve-precision calibration (sequential, anti-overfit)
