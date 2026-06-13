@@ -12,11 +12,14 @@ generation variance.
 from __future__ import annotations
 
 import re
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel
 
 from skill.schema import LiteracySkillModel
+
+if TYPE_CHECKING:
+    from adapt.llm_adapt import LessonPlan, PlannedItem
 
 ItemType = Literal[
     "word",
@@ -172,3 +175,59 @@ def build_coverage_ledger(skill: LiteracySkillModel) -> list[CoverageLedgerEntry
             )
 
     return entries
+
+
+class CoverageReport(BaseModel):
+    """Result of verifying an authored plan against the coverage ledger."""
+
+    missing: list[CoverageLedgerEntry]  # required entries not actually covered
+    unknown_claims: list[str]  # claimed ids that aren't in the ledger
+
+
+def _normalize(text: str) -> str:
+    """Casefold and collapse whitespace for exact-text presence checks."""
+    return re.sub(r"\s+", " ", text).strip().casefold()
+
+
+def _item_haystack(item: PlannedItem) -> str:
+    """All authored text of an item where source content could legitimately appear."""
+    parts = [item.content, *item.options]
+    if item.answer:
+        parts.append(item.answer)
+    return _normalize(" ".join(p for p in parts if p))
+
+
+def verify_coverage(plan: LessonPlan, ledger: list[CoverageLedgerEntry]) -> CoverageReport:
+    """Check the plan against the ledger: claim AND exact-text presence both required.
+
+    A required entry is covered iff some authored item (a) lists the entry's id in
+    ``covered_source_item_ids`` AND (b) the entry's ``exact_text`` actually appears
+    (normalized) in that item's content/options/answer. A claimed id without the
+    matching text never counts (closes the trust loophole). Claimed ids absent from
+    the ledger are reported as ``unknown_claims``.
+    """
+    known_ids = {e.source_item_id for e in ledger}
+    items = [
+        item for ws in plan.worksheets for activity in ws.activities for item in activity.items
+    ]
+    # Per-item normalized text, paired with the set of ids that item claims.
+    authored = [(set(item.covered_source_item_ids), _item_haystack(item)) for item in items]
+
+    missing: list[CoverageLedgerEntry] = []
+    for entry in ledger:
+        if entry.priority != "required":
+            continue
+        needle = _normalize(entry.exact_text)
+        covered = any(
+            entry.source_item_id in claimed and needle in haystack for claimed, haystack in authored
+        )
+        if not covered:
+            missing.append(entry)
+
+    unknown_claims: list[str] = []
+    for claimed, _ in authored:
+        for cid in claimed:
+            if cid not in known_ids and cid not in unknown_claims:
+                unknown_claims.append(cid)
+
+    return CoverageReport(missing=missing, unknown_claims=unknown_claims)

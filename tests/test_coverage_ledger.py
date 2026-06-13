@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from adapt.coverage_ledger import build_coverage_ledger
+from adapt.coverage_ledger import build_coverage_ledger, verify_coverage
+from adapt.llm_adapt import ActivityPlan, LessonPlan, PlannedItem, WorksheetPlan
 from skill.schema import LiteracySkillModel, SourceItem
 
 
@@ -122,3 +123,106 @@ def test_sight_words_become_sight_word_entries() -> None:
         "sight_002",
         "sight_003",
     ]
+
+
+# --- S2: verify_coverage (claim + exact-text) ---
+
+
+def _small_skill() -> LiteracySkillModel:
+    """One target word + one sentence → ledger required = word_001, sentence_001."""
+    return LiteracySkillModel(
+        grade_level="1",
+        domain="phonics",
+        specific_skill="cvce_pattern",
+        learning_objectives=["Read CVCe words"],
+        target_words=["cake"],
+        response_types=["write"],
+        source_items=[
+            SourceItem(
+                item_type="sentence",
+                content="The cake is on the lake.",
+                source_region_index=0,
+            ),
+        ],
+        extraction_confidence=0.9,
+        template_type="word_work",
+    )
+
+
+def _plan(items: list[PlannedItem]) -> LessonPlan:
+    return LessonPlan(
+        worksheets=[
+            WorksheetPlan(
+                title="t",
+                activities=[ActivityPlan(activity_type="write", micro_goal="g", items=items)],
+            )
+        ]
+    )
+
+
+def test_missing_when_id_claimed_but_text_absent() -> None:
+    ledger = build_coverage_ledger(_small_skill())
+    plan = _plan([PlannedItem(content="apple", covered_source_item_ids=["word_001"])])
+    report = verify_coverage(plan, ledger)
+    assert "word_001" in {e.source_item_id for e in report.missing}
+    assert report.unknown_claims == []
+
+
+def test_covered_when_id_and_text_present() -> None:
+    ledger = build_coverage_ledger(_small_skill())
+    plan = _plan(
+        [
+            PlannedItem(content="Write the word cake.", covered_source_item_ids=["word_001"]),
+            PlannedItem(
+                content="The cake is on the lake.",
+                covered_source_item_ids=["sentence_001"],
+            ),
+        ]
+    )
+    report = verify_coverage(plan, ledger)
+    assert report.missing == []
+    assert report.unknown_claims == []
+
+
+def test_text_in_options_or_answer_counts() -> None:
+    ledger = build_coverage_ledger(_small_skill())
+    plan = _plan(
+        [
+            PlannedItem(
+                content="Pick the real word.",
+                options=["cake", "kake"],
+                answer="cake",
+                covered_source_item_ids=["word_001"],
+            ),
+            PlannedItem(
+                content="The cake is on the lake.",
+                covered_source_item_ids=["sentence_001"],
+            ),
+        ]
+    )
+    report = verify_coverage(plan, ledger)
+    assert report.missing == []
+
+
+def test_claim_required_text_alone_does_not_count() -> None:
+    ledger = build_coverage_ledger(_small_skill())
+    # text present, but the item never claims word_001 → not covered
+    plan = _plan([PlannedItem(content="cake", covered_source_item_ids=[])])
+    report = verify_coverage(plan, ledger)
+    assert "word_001" in {e.source_item_id for e in report.missing}
+
+
+def test_unknown_claim_is_reported() -> None:
+    ledger = build_coverage_ledger(_small_skill())
+    plan = _plan(
+        [
+            PlannedItem(content="cake", covered_source_item_ids=["word_001", "bogus_999"]),
+            PlannedItem(
+                content="The cake is on the lake.",
+                covered_source_item_ids=["sentence_001"],
+            ),
+        ]
+    )
+    report = verify_coverage(plan, ledger)
+    assert report.unknown_claims == ["bogus_999"]
+    assert report.missing == []
