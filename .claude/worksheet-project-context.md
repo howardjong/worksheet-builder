@@ -2140,7 +2140,27 @@ Implications (owner decision; Tasks 13–15 still blocked): (a) a NEW, separate 
 
 **Next-move plan of record (Fable 5 analysis, full writeup `plans/2026-06-12-next-move-fable5.md`):** Key reframe — the 0.91→0.61 swing is **vision-step variance, not judge variance** (non-deterministic OCR put the worksheet header into the "concept", which leaked into the child's self-check line). And "1/3" mis-bills a safe fallback as failure: rejected plans fall back to the deterministic engine (validators pass), and the old loop is already worse. So: **fix the gate's measurement, don't trust it as-is or replace it.** Sequenced path: (1) **A + D-small** — concept sanitization + the worked-example bug ("Write cate? No."), both deterministic/TDD; (2) **B′** — freeze extraction per image for battery runs, judge each plan median-of-N, require 2 consecutive passing runs; (3) re-evaluate the gate honestly (expected IMG_0003+IMG_0005 pass → 2/3; IMG_0004 → safe fallback); (4) **C-small** — human precision check on ~15–20 approved+cusp plans + a Gemini cross-vendor second-opinion judge BEFORE flipping the default (Tasks 13–14); **hold Task 15** until 1–2 weeks production telemetry; (5) post-promotion: D-large dense-story coverage + vision robustness. **The metric that governs promotion: judge-approve precision vs human** (rejection is safe, approval ships to a child) — stop and build the full calibration set if ≥~20% of approved plans have real defects.
 
-**Current status:** Fable 5 plan of record steps 1–2 SHIPPED — **A + D-small** (Session 46) and **B′** offline pieces (Session 47 below). Next action = **B4** the honest live `--runs 2` re-run (owner environment), then **C-small** human precision check. planner-v2 stays behind `WORKSHEET_PLANNER_V2` (default OFF), `WORKSHEET_LLM_ADAPT` opt-in, old loop is the production default. Branch `feature/worksheet-quality-redesign`; suite 621 green offline; Tasks 13–15 still BLOCKED.
+**Current status:** Fable 5 steps 1–2 SHIPPED (A+D-small Session 46; B′ offline Session 47). **B4 live `--runs 2` re-run is DONE (Session 48 below) and the gate correctly FAILED** — with extraction frozen and judging at median-of-3, all three images still flip approve↔reject between the two runs. Root cause is now isolated to **planner-generation variance on content coverage** (NOT vision extraction, NOT judge noise). Next action = decide on the coverage-reliability fix (D-large: deterministic coverage backstop) — owner decision pending. planner-v2 stays behind `WORKSHEET_PLANNER_V2` (default OFF), old loop is the production default. Branch `feature/worksheet-quality-redesign`; suite 621 green offline; Tasks 13–15 still BLOCKED.
+
+### Session 48 — 2026-06-12 (B4 honest live re-run; gate correctly FAILS; planner-variance isolated)
+
+**Setup:** `--runs 2`, `WORKSHEET_JUDGE_SAMPLES=3`, `WORKSHEET_EXTRACTION_CACHE` frozen per image, IMG_0003/4/5, profile ian, theme roblox_obby. Run1 `samples/output/adapt_battery/20260612_220801/`, run2 `20260612_222046/`. Log `/tmp/b4_battery.log`.
+
+**Result: gate FAIL (run1 FAIL, run2 PASS → not two consecutive).** Planner medians per image, same frozen input:
+- IMG_0003 (u_e dense: chains+sentences+passage+roll&read): run1 0.66→0.69 reject (coverage 0.42→0.48) → fallback; run2 **0.85 approve** (coverage 0.72–0.75).
+- IMG_0004: run1 **0.83 approve** (coverage 0.68–0.76); run2 0.66 reject (coverage 0.34–0.42) → fallback.
+- IMG_0005: run1 0.64→0.68 reject (concept 0.48–0.52) → fallback; run2 **0.80 approve** (concept 0.62–0.72).
+
+**Key diagnosis (changes the plan):**
+1. **Median-of-3 made the JUDGE stable** — the 3 samples per attempt cluster within ~0.02–0.06 (one 0.14 outlier the median absorbed). Judge noise is NOT the problem.
+2. **Frozen extraction removed vision variance** — yet every image still flipped. Vision is NOT the problem.
+3. **Planner-generation variance dominates.** Same frozen source → plans ranging 0.34–0.76 coverage across runs. Run-to-run deltas (0.14–0.18) ≫ within-run judge spread (0.02–0.06). The planner covers the dense source inconsistently — sometimes well (approve), sometimes poorly (reject). This is the binding instability.
+4. **Judge vs deterministic coverage validator disagree in BOTH directions** (IMG_0004 run1 judge-approved 0.83 but deterministic content_coverage FAIL; IMG_0005 judge concept-rejected but coverage validator PASS/1.00). Neither coverage signal is authoritative alone.
+5. **B′ worked as designed** — the two-consecutive-runs gate correctly blocked promotion on an unstable system; a single run would have false-passed (run2) or false-failed (run1).
+
+**IMG_0004 is not a chronic failure** — it APPROVED in run1 (0.83). The issue is consistency across all three, not one image.
+
+**Recommended next move (D-large, "pass with working software, don't game the bar"):** add a **deterministic coverage backstop** after `_translate_plan` — diff the plan's items against the source items (words, chains, sentences, passage) and append practice items for whatever the planner dropped, then let `enforce_section_cap` split into more (smaller, ADHD-friendly) worksheets. Deterministic ⇒ it removes the run-to-run coverage variance at the root instead of averaging it, lifting rejected runs over the bar legitimately. Re-run `--runs 2` after. Hold Tasks 13–15. Do NOT lower the 0.70 bar.
 
 ### Session 47 — 2026-06-12 (B′ gate-protocol fix, offline pieces, TDD)
 
