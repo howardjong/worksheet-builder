@@ -43,6 +43,62 @@ class AdaptBatteryRow(BaseModel):
     error: str | None = None
 
 
+_APPROVED_OUTCOMES = {"planned_approved", "planned_regen_approved"}
+
+
+class GateResult(BaseModel):
+    """Promotion-gate verdict for one battery run."""
+
+    passed: bool
+    reasons: list[str]
+
+
+def evaluate_gate(rows: list[AdaptBatteryRow]) -> GateResult:
+    """Evaluate the documented planner promotion gate over one run's rows.
+
+    Criteria (all must hold):
+      (a) at least two-thirds of planner cells approved, and zero planner errors;
+      (b) every planner cell passes the ADHD check (the section-cap hard error
+          lives there);
+      (c) planner content-coverage >= loop content-coverage.
+    """
+    planner = [r for r in rows if r.variant == "planner"]
+    loop = [r for r in rows if r.variant == "loop"]
+    reasons: list[str] = []
+
+    errored = [r for r in planner if r.error or r.outcome == "error"]
+    approved = [r for r in planner if r.judge_approved is True and r.outcome in _APPROVED_OUTCOMES]
+    # (a) >= 2/3 approved, zero errors
+    if errored:
+        names = [r.input_name for r in errored]
+        reasons.append(f"(a) {len(errored)} planner error cell(s): {names}")
+    if not planner or len(approved) * 3 < len(planner) * 2:
+        reasons.append(
+            f"(a) only {len(approved)}/{len(planner)} planner cells approved (need >= 2/3)"
+        )
+
+    # (b) ADHD compliance (encodes the section cap)
+    adhd_fail = [r for r in planner if r.adhd_compliance_passed is not True]
+    if adhd_fail:
+        reasons.append(
+            f"(b) {len(adhd_fail)} planner cell(s) fail ADHD/section-cap: "
+            f"{[r.input_name for r in adhd_fail]}"
+        )
+
+    # (c) coverage >= loop
+    planner_cov = sum(1 for r in planner if r.content_coverage_passed)
+    loop_cov = sum(1 for r in loop if r.content_coverage_passed)
+    if planner_cov < loop_cov:
+        reasons.append(f"(c) planner coverage {planner_cov} < loop coverage {loop_cov}")
+
+    return GateResult(passed=not reasons, reasons=reasons)
+
+
+def gate_over_runs(results: list[GateResult]) -> bool:
+    """True iff two consecutive runs both pass the gate."""
+    return any(a.passed and b.passed for a, b in zip(results, results[1:], strict=False))
+
+
 def build_scorecard(rows: list[AdaptBatteryRow]) -> str:
     lines = [
         "# Adaptation battery scorecard",
@@ -66,6 +122,13 @@ def build_scorecard(rows: list[AdaptBatteryRow]) -> str:
         lines.append("## Errors")
         for row in errors:
             lines.append(f"- {row.input_name} ({row.variant}): {row.error}")
+
+    gate = evaluate_gate(rows)
+    lines.append("")
+    lines.append("## Gate")
+    lines.append(f"- Result: {'PASS' if gate.passed else 'FAIL'}")
+    for reason in gate.reasons:
+        lines.append(f"- {reason}")
     lines.append("")
     return "\n".join(lines)
 
@@ -169,13 +232,13 @@ def _run_variant(
     return _collect_row(input_name, variant, artifacts, flags)
 
 
-def battery(
+def _run_once(
     inputs: list[str],
     profile_path: str,
     theme_id: str,
     output_dir: str,
-) -> Path:
-    """Run every input through both variants; write and return the scorecard path."""
+) -> tuple[Path, GateResult]:
+    """Run every input through both variants once; write the scorecard."""
     root = Path(output_dir) / datetime.now().strftime("%Y%m%d_%H%M%S")
     root.mkdir(parents=True, exist_ok=True)
 
@@ -188,8 +251,35 @@ def battery(
     scorecard_path = root / "scorecard.md"
     scorecard_path.write_text(build_scorecard(rows))
     (root / "scorecard.json").write_text(json.dumps([row.model_dump() for row in rows], indent=2))
-    logger.info("Scorecard: %s", scorecard_path)
-    return scorecard_path
+    gate = evaluate_gate(rows)
+    logger.info("Scorecard: %s — gate %s", scorecard_path, "PASS" if gate.passed else "FAIL")
+    return scorecard_path, gate
+
+
+def battery(
+    inputs: list[str],
+    profile_path: str,
+    theme_id: str,
+    output_dir: str,
+    runs: int = 1,
+) -> bool:
+    """Run the battery ``runs`` times; return whether the promotion gate passed.
+
+    ``runs == 1`` passes iff that single run passes. ``runs >= 2`` passes only
+    on two consecutive passing runs (set ``WORKSHEET_EXTRACTION_CACHE`` so every
+    run consumes the same frozen extraction).
+    """
+    runs = max(1, runs)
+    gates: list[GateResult] = []
+    for i in range(runs):
+        if runs > 1:
+            logger.info("=== Battery run %d/%d ===", i + 1, runs)
+        _, gate = _run_once(inputs, profile_path, theme_id, output_dir)
+        gates.append(gate)
+
+    passed = gate_over_runs(gates) if runs > 1 else gates[0].passed
+    logger.info("Gate over %d run(s): %s", len(gates), "PASS" if passed else "FAIL")
+    return passed
 
 
 def main() -> None:
@@ -199,8 +289,14 @@ def main() -> None:
     parser.add_argument("--profile", required=True)
     parser.add_argument("--theme", default="default")
     parser.add_argument("--output", default="samples/output/adapt_battery")
+    parser.add_argument(
+        "--runs",
+        type=int,
+        default=1,
+        help="Battery runs; >= 2 requires two consecutive passing runs for the gate.",
+    )
     args = parser.parse_args()
-    battery(args.inputs, args.profile, args.theme, args.output)
+    battery(args.inputs, args.profile, args.theme, args.output, args.runs)
 
 
 if __name__ == "__main__":
