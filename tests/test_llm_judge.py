@@ -2,7 +2,14 @@
 
 from __future__ import annotations
 
-from adapt.llm_judge import _build_judge_prompt
+import pytest
+
+from adapt.llm_judge import (
+    JudgeVerdict,
+    _aggregate_verdicts,
+    _build_judge_prompt,
+    judge_adaptation_samples,
+)
 from adapt.schema import (
     ActivityChunk,
     ActivityItem,
@@ -107,3 +114,77 @@ def test_judge_prompt_shows_adhd_supports() -> None:
     assert "1. Read it aloud." in prompt  # numbered instruction steps
     assert "Stand up and stretch!" in prompt  # brain break between worksheets
     assert "I can read CVCe words" in prompt  # self-check list
+
+
+def _verdict(
+    overall: float,
+    *,
+    concept: float = 0.8,
+    coverage: float = 0.8,
+    flow: float = 0.8,
+    adhd: float = 0.8,
+    approved: bool = True,
+) -> JudgeVerdict:
+    return JudgeVerdict(
+        approved=approved,
+        overall_score=overall,
+        concept_alignment=concept,
+        content_coverage=coverage,
+        lesson_flow=flow,
+        adhd_compliance=adhd,
+        feedback=[f"fb-{overall}"],
+        rationale=f"r-{overall}",
+    )
+
+
+def test_aggregate_single_verdict_unchanged() -> None:
+    v = _verdict(0.91)
+    assert _aggregate_verdicts([v]) is v
+
+
+def test_aggregate_medians_and_recomputes_approval() -> None:
+    verdicts = [
+        _verdict(0.60, coverage=0.45, approved=False),
+        _verdict(0.72, coverage=0.55, approved=True),
+        _verdict(0.90, coverage=0.80, approved=True),
+    ]
+    agg = _aggregate_verdicts(verdicts)
+
+    assert agg.overall_score == 0.72  # median overall
+    assert agg.content_coverage == 0.55  # median criterion
+    assert agg.approved is True  # 0.72 >= 0.70 and every median criterion >= 0.50
+    assert agg.rationale == "r-0.72"  # prose from the representative (median) sample
+
+
+def test_aggregate_rejects_when_median_criterion_below_floor() -> None:
+    verdicts = [
+        _verdict(0.72, coverage=0.40),
+        _verdict(0.75, coverage=0.45),
+        _verdict(0.90, coverage=0.48),
+    ]
+    agg = _aggregate_verdicts(verdicts)
+
+    assert agg.overall_score == 0.75
+    assert agg.content_coverage == 0.45
+    assert agg.approved is False  # median coverage 0.45 < 0.50 floor
+
+
+def test_judge_samples_calls_judge_n_times(monkeypatch: pytest.MonkeyPatch) -> None:
+    seq = iter([_verdict(0.60), _verdict(0.72), _verdict(0.90)])
+    calls: list[int] = []
+
+    def fake(skill: object, worksheets: object) -> JudgeVerdict:
+        calls.append(1)
+        return next(seq)
+
+    monkeypatch.setattr("adapt.llm_judge.judge_adaptation", fake)
+    agg = judge_adaptation_samples(_skill(), [_worksheet()], 3)
+
+    assert len(calls) == 3
+    assert agg is not None
+    assert agg.overall_score == 0.72
+
+
+def test_judge_samples_returns_none_when_all_fail(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("adapt.llm_judge.judge_adaptation", lambda s, w: None)
+    assert judge_adaptation_samples(_skill(), [_worksheet()], 3) is None

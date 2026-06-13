@@ -20,7 +20,7 @@ from pathlib import Path
 from pydantic import BaseModel, Field
 
 from adapt.llm_adapt import _call_gemini, _parse_lesson_plan, _translate_plan
-from adapt.llm_judge import JudgeVerdict, _call_openai, judge_adaptation
+from adapt.llm_judge import JudgeVerdict, _call_openai, judge_adaptation_samples
 from adapt.rules import AccommodationRules, build_rules
 from adapt.schema import AdaptedActivityModel
 from adapt.section_cap import enforce_section_cap
@@ -34,6 +34,14 @@ DEFAULT_PLANNER_PROVIDERS = "openai,gemini"
 DEFAULT_PLANNER_GEMINI_MODEL = "gemini-3.5-flash"
 PLANNER_MAX_COMPLETION_TOKENS = 8192
 _CORPUS_FIELD_CHAR_CAP = 2000
+
+
+def _judge_samples() -> int:
+    """How many times to judge each plan (median-of-N). Default 1 (production)."""
+    try:
+        return max(1, int(os.environ.get("WORKSHEET_JUDGE_SAMPLES", "1")))
+    except ValueError:
+        return 1
 
 
 def _corpus_block(skill: LiteracySkillModel) -> str:
@@ -266,7 +274,7 @@ def plan_lesson_llm(
             logger.warning("  LLM planner: translation produced no worksheets")
             break
 
-        verdict = judge_adaptation(skill, worksheets)
+        verdict = judge_adaptation_samples(skill, worksheets, _judge_samples())
         if verdict is None:
             outcome = "planned_unjudged"
             _write_verdict_artifact(_unjudged_payload(outcome), artifacts_dir)

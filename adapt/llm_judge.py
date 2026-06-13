@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import statistics
 
 from pydantic import BaseModel
 
@@ -219,3 +220,63 @@ def judge_adaptation(
         logger.info("    - %s", fb)
 
     return verdict
+
+
+# Documented approval rule (mirrors the judge prompt): approve iff the overall
+# score clears 0.70 and no individual criterion drops below 0.50.
+_APPROVE_OVERALL_MIN = 0.70
+_APPROVE_CRITERION_MIN = 0.50
+
+
+def _aggregate_verdicts(verdicts: list[JudgeVerdict]) -> JudgeVerdict:
+    """Combine repeated judge samples into one median verdict.
+
+    A single sample is returned unchanged (production default). With multiple
+    samples, each score is the median across samples and ``approved`` is
+    recomputed from those medians per the documented rule — this removes
+    per-call sampling noise from the gate. The prose (feedback/rationale) comes
+    from the sample whose overall score is closest to the median.
+    """
+    if len(verdicts) == 1:
+        return verdicts[0]
+
+    concept = statistics.median(v.concept_alignment for v in verdicts)
+    coverage = statistics.median(v.content_coverage for v in verdicts)
+    flow = statistics.median(v.lesson_flow for v in verdicts)
+    adhd = statistics.median(v.adhd_compliance for v in verdicts)
+    overall = statistics.median(v.overall_score for v in verdicts)
+    approved = (
+        overall >= _APPROVE_OVERALL_MIN
+        and min(concept, coverage, flow, adhd) >= _APPROVE_CRITERION_MIN
+    )
+    representative = min(verdicts, key=lambda v: abs(v.overall_score - overall))
+    return JudgeVerdict(
+        approved=approved,
+        overall_score=overall,
+        concept_alignment=concept,
+        content_coverage=coverage,
+        lesson_flow=flow,
+        adhd_compliance=adhd,
+        feedback=representative.feedback,
+        rationale=representative.rationale,
+    )
+
+
+def judge_adaptation_samples(
+    skill: LiteracySkillModel,
+    worksheets: list[AdaptedActivityModel],
+    samples: int,
+) -> JudgeVerdict | None:
+    """Judge the adaptation ``samples`` times and return the median verdict.
+
+    Failed calls are dropped; returns ``None`` only if every call failed.
+    ``samples <= 1`` is exactly one judge call (production default).
+    """
+    collected: list[JudgeVerdict] = []
+    for _ in range(max(1, samples)):
+        verdict = judge_adaptation(skill, worksheets)
+        if verdict is not None:
+            collected.append(verdict)
+    if not collected:
+        return None
+    return _aggregate_verdicts(collected)

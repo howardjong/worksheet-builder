@@ -223,7 +223,9 @@ def test_planner_ships_approved_plan(monkeypatch: pytest.MonkeyPatch, tmp_path: 
 
     _planner_env(monkeypatch)
     monkeypatch.setattr(llm_planner, "_call_planner", lambda p: (_PLAN_JSON, "gpt-5.4"))
-    monkeypatch.setattr(llm_planner, "judge_adaptation", lambda s, w: _verdict(True, 0.9))
+    monkeypatch.setattr(
+        llm_planner, "judge_adaptation_samples", lambda s, w, n: _verdict(True, 0.9)
+    )
 
     result = llm_planner.plan_lesson_llm(_skill(), _profile(), artifacts_dir=str(tmp_path))
 
@@ -251,7 +253,7 @@ def test_planner_regenerates_once_with_feedback(
 
     verdicts = iter([_verdict(False, 0.4), _verdict(True, 0.85)])
     monkeypatch.setattr(llm_planner, "_call_planner", _fake_call)
-    monkeypatch.setattr(llm_planner, "judge_adaptation", lambda s, w: next(verdicts))
+    monkeypatch.setattr(llm_planner, "judge_adaptation_samples", lambda s, w, n: next(verdicts))
 
     result = llm_planner.plan_lesson_llm(_skill(), _profile(), artifacts_dir=str(tmp_path))
 
@@ -269,7 +271,9 @@ def test_planner_falls_back_after_two_rejections(
 
     _planner_env(monkeypatch)
     monkeypatch.setattr(llm_planner, "_call_planner", lambda p: (_PLAN_JSON, "gpt-5.4"))
-    monkeypatch.setattr(llm_planner, "judge_adaptation", lambda s, w: _verdict(False, 0.4))
+    monkeypatch.setattr(
+        llm_planner, "judge_adaptation_samples", lambda s, w, n: _verdict(False, 0.4)
+    )
 
     result = llm_planner.plan_lesson_llm(_skill(), _profile(), artifacts_dir=str(tmp_path))
 
@@ -288,7 +292,7 @@ def test_planner_ships_unjudged_when_judge_unavailable(
 
     _planner_env(monkeypatch)
     monkeypatch.setattr(llm_planner, "_call_planner", lambda p: (_PLAN_JSON, "gpt-5.4"))
-    monkeypatch.setattr(llm_planner, "judge_adaptation", lambda s, w: None)
+    monkeypatch.setattr(llm_planner, "judge_adaptation_samples", lambda s, w, n: None)
 
     result = llm_planner.plan_lesson_llm(_skill(), _profile(), artifacts_dir=str(tmp_path))
 
@@ -324,7 +328,9 @@ def test_planner_never_writes_global_log_under_pytest(
     _planner_env(monkeypatch)
     monkeypatch.chdir(tmp_path)
     monkeypatch.setattr(llm_planner, "_call_planner", lambda p: (_PLAN_JSON, "gpt-5.4"))
-    monkeypatch.setattr(llm_planner, "judge_adaptation", lambda s, w: _verdict(True, 0.9))
+    monkeypatch.setattr(
+        llm_planner, "judge_adaptation_samples", lambda s, w, n: _verdict(True, 0.9)
+    )
 
     llm_planner.plan_lesson_llm(_skill(), _profile(), artifacts_dir=str(tmp_path / "artifacts"))
 
