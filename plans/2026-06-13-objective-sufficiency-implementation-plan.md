@@ -116,6 +116,11 @@ above) and its width is what T11 calibrates. Per-cell scores are diagnostic conf
 
 ## Phase 1 — Deterministic core (variance-free; the real value)
 
+**T0 (do this first, caution):** before writing any ledger-builder logic, create and commit the
+minimal `tests/fixtures/objective_ledger/` skill-model fixtures (lesson 59 / 58 / an oll case,
+see T3). The fixtures are load-bearing for every Phase-1 RED test and `samples/output/**` is
+gitignored — don't start a clever builder against artifacts that aren't in the repo.
+
 ### T1: ObjectiveLedger schema
 **Files:** new `adapt/objective_ledger.py`; test `tests/test_objective_ledger.py`.
 Port the Pydantic schema from the research spec: `ObjectiveType`, `SourceRole`,
@@ -208,9 +213,13 @@ is unambiguously required:
     the format that carried the backtest defect).
   - `match` → verify pair existence (answer≠option is the intended mechanic), not membership.
   - `sound_box`, `read_aloud`, `trace`, `write`, `verbal`, or any item with `options` empty
-    → **not checked** (no false block). If such an item is the *sole* evidence for an
-    essential objective cell and is unverifiable, mark `teacher_checked` (advisory), don't block.
+    → **not checked** (no false block).
   - Unknown/future `response_format` → `teacher_checked`, never a blocker.
+**Scope (caution): T5 owns concrete answer-key/artifact blockers only.** It may flag an item
+`teacher_checked` at the *item* level, but it does NOT reason about objectives — "is this the
+sole evidence for an essential cell?" and the `teacher_checked`/`needs_verification`
+*objective* semantics live in T6 (it owns `EvidenceItem` + objective-evidence logic). Keep the
+gate dumb and local.
 Deferring the typed interaction contract (review's proposed `answer_mode`/`option_roles`
 schema fields) — the allowlist gets the defect-catch without rippling into the planner,
 renderer, and existing tests. Revisit only if T10 shows the allowlist too coarse (open decision 4).
@@ -424,6 +433,9 @@ in-form) is the generation-side fix without which dense lessons abstain rather t
 Phase 3 (T10–T11) needs the owner env. Do not flip any default; do not lower the 0.70 bar.
 
 ## Open decisions for the owner (flagging before coding)
+> 1–3 are **decided** (the recommendations stand — proceed unless the owner overrides). 4 is
+> resolved via the `EvidenceItem` middle path. None block Phase 1.
+
 1. **New flag name** `WORKSHEET_OBJECTIVE_COVERAGE` (vs reusing `WORKSHEET_PLANNER_SLOT_CONTRACT`).
    Recommend new flag so the two coverage systems can be A/B'd and S0–S4 retired cleanly.
 2. **Additive validator vs in-place wrapper.** Recommend additive new validator during the

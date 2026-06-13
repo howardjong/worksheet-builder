@@ -619,13 +619,17 @@ Tooling worth buying versus building:
 5. Replace `validate/content_coverage.py` internals with objective-sufficiency evaluation.
 6. Update `adapt/llm_judge.py` prompt and schema, mapping old `content_coverage` to `objective_sufficiency` during transition.
 7. Update battery scorecard details to display `definition="objective_sufficiency_v1"`.
-8. Build 15-20 calibration fixtures and compare to expert human ratings.
+8. Build calibration fixtures and compare to expert human ratings. *(Superseded — the plan's
+   T11 uses ~20 dev + 40–60 blind holdout, not 15–20; implementation plan is the source of truth.)*
 9. Tune thresholds based on false approvals before optimizing false rejections.
 
 ## Evidence Gaps And Contested Areas
 
 - There is no precise universal dosage threshold for phonics practice in ages 5-8 with ADHD. The proposed counts are conservative engineering priors grounded in instructional design and cognitive-load constraints.
-- UFLI corpus metadata may not explicitly label every contrast/review word. The safe fallback is to undercount ambiguous words, not overcredit them.
+- UFLI corpus metadata may not explicitly label every contrast/review word. *(Superseded — the
+  plan does NOT blanket-undercount: ambiguous words are tagged `low` `role_confidence` and
+  treated as advisory, never auto-rejecting an essential cell. Blanket undercount would
+  manufacture a new class of false rejections. Implementation plan T2/T6 is the source of truth.)*
 - Deterministic answer-key checks require machine-readable task metadata. Where the planner cannot emit checkable metadata, the item should be teacher-checked or blocked.
 - LLM-judge research is changing quickly. Claims about new judge frameworks, scales, and debiasing methods should be treated as provisional and rechecked before product commitments.
 
