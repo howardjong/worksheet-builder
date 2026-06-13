@@ -19,8 +19,13 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from adapt.coverage_ledger import CoverageLedgerEntry, build_coverage_ledger
-from adapt.llm_adapt import _call_gemini, _parse_lesson_plan, _translate_plan
+from adapt.coverage_ledger import (
+    CoverageLedgerEntry,
+    build_coverage_ledger,
+    repair_coverage,
+    verify_coverage,
+)
+from adapt.llm_adapt import LessonPlan, _call_gemini, _parse_lesson_plan, _translate_plan
 from adapt.llm_judge import JudgeVerdict, _call_openai, judge_adaptation_samples
 from adapt.rules import AccommodationRules, build_rules
 from adapt.schema import AdaptedActivityModel
@@ -255,6 +260,33 @@ sound_box|sentence_completion",
 }}"""
 
 
+def _apply_coverage_contract(
+    plan: LessonPlan,
+    skill: LiteracySkillModel,
+    rules: AccommodationRules,
+) -> LessonPlan:
+    """Verify the authored plan against the ledger and deterministically repair gaps.
+
+    Removes content-coverage as a generation-variance source: any required source
+    item the planner dropped is appended as deterministic catch-up practice before
+    the plan is translated and judged. Only invoked when the slot contract is on.
+    """
+    ledger = build_coverage_ledger(skill)
+    report = verify_coverage(plan, ledger)
+    required = sum(1 for e in ledger if e.priority == "required")
+    missing = len(report.missing)
+    if report.missing:
+        plan = repair_coverage(plan, report.missing, rules)
+    logger.info(
+        "  LLM planner coverage: required=%d covered=%d repaired=%d unknown_claims=%d",
+        required,
+        required - missing,
+        missing,
+        len(report.unknown_claims),
+    )
+    return plan
+
+
 class PlannerLogEntry(BaseModel):
     """One row in llm_adaptation_log.jsonl (planner-v2 schema)."""
 
@@ -311,6 +343,8 @@ def plan_lesson_llm(
         if plan is None:
             logger.warning("  LLM planner: failed to parse plan (attempt %d)", attempt + 1)
             break
+        if _slot_contract_enabled():
+            plan = _apply_coverage_contract(plan, skill, rules)
         worksheets = enforce_section_cap(
             _translate_plan(plan, skill, profile, theme_id, rules), rules
         )

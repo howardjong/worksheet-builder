@@ -375,3 +375,43 @@ def test_prompt_carries_coverage_ledger_when_flag_on(
     assert "tone" in prompt
     # the output schema asks each item to declare the ids it covers
     assert "covered_source_item_ids" in prompt
+
+
+def test_contract_repairs_dropped_source_when_flag_on(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from adapt import llm_planner
+
+    _planner_env(monkeypatch)
+    monkeypatch.setenv("WORKSHEET_PLANNER_SLOT_CONTRACT", "1")
+    monkeypatch.setattr(llm_planner, "_call_planner", lambda p: (_PLAN_JSON, "gpt-5.4"))
+    monkeypatch.setattr(
+        llm_planner, "judge_adaptation_samples", lambda s, w, n: _verdict(True, 0.9)
+    )
+
+    result = llm_planner.plan_lesson_llm(_skill(), _profile(), artifacts_dir=str(tmp_path))
+
+    assert result is not None
+    contents = [i.content for ws in result for chunk in ws.chunks for i in chunk.items]
+    # _PLAN_JSON drops "home" (and the chain + sentence); the contract repairs them in.
+    assert "home" in contents
+
+
+def test_contract_off_leaves_dropped_source_absent(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from adapt import llm_planner
+
+    _planner_env(monkeypatch)
+    monkeypatch.delenv("WORKSHEET_PLANNER_SLOT_CONTRACT", raising=False)
+    monkeypatch.setattr(llm_planner, "_call_planner", lambda p: (_PLAN_JSON, "gpt-5.4"))
+    monkeypatch.setattr(
+        llm_planner, "judge_adaptation_samples", lambda s, w, n: _verdict(True, 0.9)
+    )
+
+    result = llm_planner.plan_lesson_llm(_skill(), _profile(), artifacts_dir=str(tmp_path))
+
+    assert result is not None
+    contents = [i.content for ws in result for chunk in ws.chunks for i in chunk.items]
+    assert "home" not in contents
+    assert contents == ["cake", "ride"]
