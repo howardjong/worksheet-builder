@@ -30,6 +30,7 @@ from capture.store import store_master
 from companion.schema import load_profile
 from extract.heuristics import map_to_source_model
 from extract.ocr import extract_text_with_fallback
+from extract.schema import SourceWorksheetModel
 from extract.vision import extract_with_vision
 from render.design_spec import RenderMode, WorksheetDesignSpec, compile_worksheet_design_spec
 from render.pdf import render_cover_page
@@ -142,6 +143,48 @@ def run_pipeline(
     return run_artifacts.pdf_paths[0] if run_artifacts.pdf_paths else ""
 
 
+def _resolve_source_model(
+    input_path: str, preprocessed_path: str, image_hash: str
+) -> SourceWorksheetModel:
+    """Run AI vision (primary) with OCR fallback to extract the source model.
+
+    Vision uses the original image (not preprocessed) because preprocessing can
+    destroy content (e.g., warping to an illustration box).
+    """
+    vision_model = extract_with_vision(input_path, image_hash)
+    if vision_model is not None:
+        logger.info("  Using AI vision extraction")
+        return vision_model
+    logger.info("  AI vision unavailable — falling back to OCR...")
+    ocr_result = extract_text_with_fallback(preprocessed_path)
+    return map_to_source_model(ocr_result, image_hash)
+
+
+def _source_model_with_cache(
+    input_path: str, preprocessed_path: str, image_hash: str
+) -> SourceWorksheetModel:
+    """Extract the source model, optionally freezing it per image.
+
+    When ``WORKSHEET_EXTRACTION_CACHE`` names a directory, the (non-deterministic)
+    vision extraction runs once per image hash and is cached, so repeated runs —
+    e.g. every A/B battery cell — consume identical input. Unset ⇒ no cache I/O,
+    behaving exactly as before.
+    """
+    cache_dir = os.environ.get("WORKSHEET_EXTRACTION_CACHE")
+    if not cache_dir:
+        return _resolve_source_model(input_path, preprocessed_path, image_hash)
+
+    cache_path = Path(cache_dir) / f"{image_hash}.source_model.json"
+    if cache_path.exists():
+        logger.info("  Using frozen (cached) extraction: %s", cache_path)
+        return SourceWorksheetModel.model_validate_json(cache_path.read_text())
+
+    model = _resolve_source_model(input_path, preprocessed_path, image_hash)
+    cache_path.parent.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text(model.model_dump_json(indent=2))
+    return model
+
+
 def run_pipeline_collect_artifacts(
     input_path: str,
     profile_path: str,
@@ -173,18 +216,7 @@ def run_pipeline_collect_artifacts(
 
     # Stage 3: Source extraction (AI vision primary, OCR fallback)
     logger.info("Stage 3: Extracting source content...")
-    source_model = None
-
-    # Vision extraction uses the original image (not preprocessed) because
-    # preprocessing can destroy content (e.g., warping to illustration box)
-    vision_model = extract_with_vision(input_path, master.image_hash)
-    if vision_model is not None:
-        source_model = vision_model
-        logger.info("  Using AI vision extraction")
-    else:
-        logger.info("  AI vision unavailable — falling back to OCR...")
-        ocr_result = extract_text_with_fallback(preprocessed_path)
-        source_model = map_to_source_model(ocr_result, master.image_hash)
+    source_model = _source_model_with_cache(input_path, preprocessed_path, master.image_hash)
 
     source_json = artifacts / "source_model.json"
     source_json.write_text(source_model.model_dump_json(indent=2))
