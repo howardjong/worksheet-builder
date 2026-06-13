@@ -69,25 +69,33 @@ frozen LiteracySkillModel (+ lesson_number -> UFLI corpus)
 noisy quality score landing at 0.58 must not masquerade as a deterministic product failure
 (we *proved* hard thresholds on noisy LLM scores flip, S48). Per-cell judge scores are
 **diagnostic confidence, not release-law**. Bands: essential cell `>=0.65` pass, `<0.50`
-fail, `0.50–0.65` **uncertain** (abstain). A cell hard-blocks only on `<0.50` OR a typed
-severe qualitative defect with evidence (enum, T8): `wrong_cognitive_task`,
-`misleading_or_wrong_instruction`, `generic_activity_not_exercising_objective`,
-`child_cannot_reasonably_answer`, `overwhelming_or_adhd_unsafe`.
+fail, `0.50–0.65` **uncertain** (abstain). The judge's hard veto is a typed severe defect
+*with cited evidence* (enum, T8): `wrong_cognitive_task`, `misleading_or_wrong_instruction`,
+`generic_activity_not_exercising_objective`, `child_cannot_reasonably_answer`,
+`overwhelming_or_adhd_unsafe`. **Severe-defect voting (conservative for safety, per GPT-5.5):
+2/3 samples → REJECT; 1/3 with evidence → ABSTAIN (manual review), never silently ignored;
+0/3 → pass.** (Stricter than the median rule used for numeric scores — a single credible
+safety flag must not be averaged away.)
 
 ```
 APPROVE  = det blockers pass AND required-forms pass AND det objective-coverage pass
+           AND det package ADHD upper-bounds pass
            AND overall_median >= 0.70 AND adhd/safety >= 0.50
-           AND every essential cell quality >= 0.65 AND no essential-cell severe defect
-REJECT   = any det gate/required-form/coverage fail  OR overall_median < 0.70
+           AND every essential cell quality >= 0.65
+           AND no essential-cell severe defect in >=1/3 of samples
+REJECT   = any det gate/required-form/coverage/package-bound fail  OR overall_median < 0.70
            OR adhd/safety < 0.50  OR any essential cell quality < 0.50
-           OR any essential-cell severe defect
-ABSTAIN  = otherwise (an essential cell in 0.50–0.65, no severe defect, all else passing)
+           OR any essential-cell severe defect in >=2/3 of samples
+ABSTAIN  = otherwise (essential cell in 0.50–0.65, OR a 1/3 severe-defect flag, all else passing)
            -> "not auto-approved", route to existing fallback; NOT a clean
               objective-insufficiency reject; tracked separately in telemetry
 ```
-Abstain maps onto the *existing* fallback path (a non-approved package already falls back) —
-this changes labels + telemetry, not infra. Band width (0.50–0.65) is a starting prior,
-**calibrated on the T11 holdout**, not asserted.
+**Abstain safety definition (per GPT-5.5).** Abstain means *the objective path did not
+auto-approve* — it never ships the abstained objective-path plan through a relaxed gate. It
+routes to the **existing fallback** (the old loop), whose output must still independently pass
+its own deterministic blockers, print checks, ADHD clamps, and current validators before
+shipping. This changes labels + telemetry, not infra. Band width (0.50–0.65) is a starting
+prior, **calibrated on the T11 holdout**, not asserted.
 
 **Two-signal division of labour (no double-counting).** The deterministic validator is
 *authoritative* for counts, required-form presence, distinctness, and blockers. The judge
@@ -118,8 +126,18 @@ Port the Pydantic schema from the research spec: `ObjectiveType`, `SourceRole`,
 what lets the validator (T6) hard-fail only on high-confidence classifications and treat
 low-confidence ones as advisory — replacing the blanket "safe-undercount" that would have
 manufactured a *new* class of false rejections (the exact thing this plan exists to remove).
+**Idempotency (per GPT-5.5 #6):** the ledger carries `corpus_version: str` (a hash/version of
+the UFLI corpus metadata used) and `corpus_status`. Same photo/profile/theme + same
+`corpus_version` ⇒ byte-identical ledger; a corpus change is visible, not silent — this is
+what makes the frozen-cache battery (T10) reproducible.
+**Typed `EvidenceItem` (per GPT-5.5 #4 — the cheap half of the deferred interaction contract):**
+add an `EvidenceItem` model (`visible_text`, `practice_role`, `answer_key_text`,
+`response_format`, `is_student_production: bool`, `objective_ids: list[str]`). T6 adapts each
+`ActivityItem` into `EvidenceItem`s, giving the validator + judge a clean typed surface
+*without* changing `ActivityItem`/planner/renderer schema.
 - [ ] RED: construct a ledger from literals; assert serialization round-trips, the enums
-  reject bad values, and `role_confidence`/`role_source` are required on `LedgerWord`.
+  reject bad values, `role_confidence`/`role_source` required on `LedgerWord`, `corpus_version`
+  required on the ledger, and `EvidenceItem` round-trips.
 - [ ] GREEN; commit: `feat: ObjectiveLedger schema for objective-sufficiency coverage`.
 
 ### T2: Deterministic role classifier (confidence-tagged)
@@ -154,11 +172,19 @@ sufficiency thresholds (priors table). Deterministic + stable.
 `lesson_number` (not retrieval/order-dependent). On a corpus miss / non-UFLI input, record
 `corpus_status="miss"`, fall back to skill-model fields, and cap every word's
 `role_confidence` at `low` — so the validator degrades to required-form/source-preservation
-checks and never hard-fails a sufficiency count it can't confidently compute.
-- [ ] RED: feed the IMG_0004 (lesson 59) and IMG_0003 (lesson 58) skill models (fixtures
-  from the S5 artifacts); assert chains→required_form manipulation cells, roll_and_read→
-  samplable_pool, passage→required connected-text, sight_words→irregular cell, contrast
-  words not in target counts, stable across calls.
+checks and never hard-fails a sufficiency count it can't confidently compute. Stamp
+`corpus_version` on every ledger.
+**Fixtures (per GPT-5.5 #8 — `samples/output/**` is gitignored, so offline tests cannot read
+the live artifacts).** Copy minimal frozen `LiteracySkillModel` JSON into committed
+`tests/fixtures/objective_ledger/` (lesson 59 / lesson 58 / an oll case), distilled from
+`samples/output/lesson59_multi/artifacts/skill_model.json`,
+`samples/output/lesson58/artifacts/skill_model.json`, and the IMG_0004
+`frozen/artifacts/skill_model.json`. Follow the existing `tests/fixtures/quality_cases/`
+convention.
+- [ ] RED: load the committed lesson-59 / lesson-58 fixtures; assert chains→required_form
+  manipulation cells, roll_and_read→samplable_pool, passage→required connected-text,
+  sight_words→irregular cell, contrast words not in target counts, `corpus_version` stamped,
+  stable across calls.
 - [ ] GREEN; commit: `feat: deterministic objective ledger builder from skill model + UFLI corpus`.
 
 ### T4: Extraction artifact-strip (upstream, Fix-A-style)
@@ -207,18 +233,28 @@ student-facing text); `capitalization` (proper nouns from source/corpus, e.g. `J
 
 ### T6: Deterministic objective-coverage validator
 **Files:** new `validate/objective_coverage.py`; test `tests/test_objective_coverage.py`.
-`build_evidence_index(worksheets, ledger)` + `evaluate_objective_coverage(ledger, evidence)
--> ObjectiveCoverageResult`. Operates on the **whole package** (`list[AdaptedActivityModel]`)
-so objectives split across mini-worksheets aggregate correctly (review missed-mode). This
-module is the single canonical home for evidence + evaluation logic; `validate/` and the
-judge-input builder both import it — no forked definitions (review minor #9).
+`build_evidence_index(worksheets, ledger) -> list[EvidenceItem]` +
+`evaluate_objective_coverage(ledger, evidence) -> ObjectiveCoverageResult`. Operates on the
+**whole, post-`section_cap` package** (`list[AdaptedActivityModel]` *after* the splitter
+paginates — that's the final child-facing artifact) so objectives split across mini-worksheets
+aggregate correctly (review missed-mode). This module is the single canonical home for evidence
++ evaluation logic; `validate/` and the judge-input builder both import it — no forked
+definitions (review minor #9).
 
-**Visibility/role-aware evidence index (review missed-mode).** Only *student-facing
-practice* counts. Derive visibility from `response_format` + field: `content` is practice;
-`answer` is the key (never practice); the correct `option` is not itself practice; teacher
-worked-example text isn't student production. So a target word appearing only as a throwaway
-answer option or in an answer key does **not** satisfy a cell — this is the S4 "presence
-≠ practice" failure made structural.
+**Typed `EvidenceItem` adapter (GPT-5.5 #4).** `build_evidence_index` converts each
+`ActivityItem` into one or more `EvidenceItem`s (the T1 model: `visible_text`, `practice_role`,
+`answer_key_text`, `response_format`, `is_student_production`, `objective_ids`). Visibility is
+derived once, here, from `response_format` + field: `content`→student practice; `answer`→key
+(`is_student_production=False`, never counts); the correct `option`→not itself practice;
+teacher worked-example text→not student production. A target word appearing only as a throwaway
+answer option or in a key does **not** satisfy a cell — the S4 "presence ≠ practice" failure
+made structural, now on a typed surface the judge also consumes.
+
+**Package-level ADHD upper bounds (GPT-5.5 #7).** Aggregating sufficiency across worksheets
+can *pass* by spreading too much total work across the package. Add deterministic package
+upper-bound checks: total estimated minutes, total item count, max dense-text blocks, max
+objectives per worksheet. Breach → fail (feeds the REJECT path / adhd-safety). Per-worksheet
+`section_cap` guards each page; this guards the package total.
 
 **Required-form is form- AND cognitive-skill-specific (review #3), from the
 skill-preservation substitution table:** a manipulation/chain cell needs ordered
@@ -246,7 +282,8 @@ threshold on high-confidence words and has a few extra low-confidence ones — t
   (distinctness); a cell short only on low-confidence words but ABOVE threshold on
   high-confidence → PASS with advisory flag; an essential cell with ONLY low-confidence
   evidence (zero high-confidence) → `needs_verification`, not silent PASS; objective split
-  across two worksheets in the package → aggregates to PASS.
+  across two worksheets in the package → aggregates to PASS; a package that meets every cell
+  but exceeds total-minutes/total-items → package-upper-bound FAIL.
 - [ ] GREEN; commit: `feat: package-level role/visibility-aware objective-coverage validator`.
 
 ## Phase 2 — Judge rubric reframe (scores only)
@@ -281,14 +318,35 @@ on an essential cell. A bare low score with no cited defect is diagnostic, not a
 list[SevereDefect]` (typed enum + evidence string) + 5 criteria + overall +
 `approval_recommendation` ∈ {approve, abstain, reject}. Map old `content_coverage` →
 `objective_sufficiency` for transition. Keep median-of-N (`judge_adaptation_samples`) but
-aggregate **per objective cell** before the overall; a severe defect counts if it appears in
-a **majority** of the N samples for that cell (median-style robustness, not one-shot noise).
-Derive the tri-state per the approval policy (≥0.65 / 0.50–0.65 abstain / <0.50, severe-defect
-override).
-- [ ] RED: per-cell median quality computed; a defect in 2/3 samples → veto, in 1/3 → ignored;
-  an essential cell at 0.58 with no defect → `abstain` (not reject); at 0.45 → reject; clean
-  ≥0.65 everywhere + gates pass → approve.
+aggregate **per objective cell** before the overall. Numeric quality uses the median of the N
+samples. **Severe defects use the conservative vote (not median):** a typed defect in **2/3**
+samples → REJECT that cell; in **1/3** with cited evidence → ABSTAIN (manual review), never
+ignored; 0/3 → pass. Derive the tri-state per the approval policy.
+- [ ] RED: per-cell median quality computed; a severe defect in 2/3 → reject, in 1/3 →
+  abstain (NOT ignored); an essential cell at 0.58 with no defect → `abstain`; at 0.45 →
+  reject; clean ≥0.65 everywhere + gates pass + no defect → approve.
 - [ ] GREEN; commit: `feat: tri-state objective-sufficiency judge verdict (per-cell quality + typed severe-defect veto)`.
+
+### T8.5: Planner authoring prompt — author IN the required forms (the generation-side fix)
+**Files:** `adapt/llm_planner.py` (prompt builder); `tests/test_llm_planner.py`.
+**Why this exists (the blindspot caught Session 50):** we hardened the deterministic validator
+AND the judge to demand correct pedagogical *form*, but nothing tells the *planner* to produce
+it. S5 proved the planner name-drops tokens instead of authoring build-chains; the old S3
+deterministic repair (which can't synthesize a good chain anyway) is retired with S0–S4. So
+without a planner-side change, dense lessons hit required-form FAIL → abstain → fallback to the
+old page-faithful loop, and **success criterion #5 (a clean dense lesson APPROVES) is
+unreachable.** Research spec step (line 604) calls for exactly this.
+Under `WORKSHEET_OBJECTIVE_COVERAGE`, the planner prompt receives the ledger's **objective
+cells + required forms** (not just a word list) and is instructed to: author each
+`required_form` objective *in* its form (word_chain/chain_script → an executable
+transformation sequence; passage → connected text; encode → written production; sentence-write
+→ production); **sample** `samplable_pool` items to the cell threshold, not exhaustively; and
+**not** dilute target-pattern cells with contrast/review/irregular words. Flag OFF ⇒ prompt
+byte-identical (assert no drift, as with S1).
+- [ ] RED: flag on, the prompt for a chain objective instructs an ordered build/transformation
+  (contains the step language), instructs sampling roll-and-read to threshold (not "include
+  all"), and forbids padding the pattern cell with contrast words; flag off ⇒ prompt unchanged.
+- [ ] GREEN; commit: `feat: planner authors in required forms under objective-coverage flag`.
 
 ### T9: Wire the objective path into plan_lesson_llm (flagged)
 **Files:** `adapt/llm_planner.py`; `tests/test_llm_planner.py`.
@@ -324,8 +382,11 @@ semantics after validation.
 record per-essential-cell quality scores and the approve/abstain/reject label per run. Report
 the **abstain rate** and whether the *final* label (not the raw 0.50–0.65 score) is stable
 run-to-run on frozen input — the tri-state should convert former gate-flips into stable
-ABSTAINs. A high abstain rate or unstable approve↔reject (excluding abstain) is the signal to
-re-tune the band width — which is then calibrated for real in T11, not guessed here.
+ABSTAINs. Two distinct signals: unstable approve↔reject (excluding abstain) → re-tune band
+width (calibrated for real in T11). A **high abstain rate on dense lessons** is NOT a band
+problem — it means the planner isn't authoring the required forms, i.e. **fix T8.5**, not the
+threshold. (If most dense lessons abstain, the feature ships nothing new — that's a redesign
+signal, not a tuning knob.)
 - [ ] Not offline; owner env (sandbox off, `SSL_CERT_FILE`). Compare vs S5 baselines.
 
 ### T11: Human approve-precision calibration (sequential, anti-overfit)
@@ -358,8 +419,9 @@ return to design. Fix false approvals (answer-key / artifact / dilution) before 
 
 ## Sequencing
 Phase 1 (T1–T6) is fully offline and TDD-able now and delivers the variance-free
-defect-catching on its own. Phase 2 (T7–T9) needs Phase 1. Phase 3 needs the owner env.
-Do not flip any default; do not lower the 0.70 bar.
+defect-catching on its own. Phase 2 (T7, T8, **T8.5**, T9) needs Phase 1; T8.5 (planner authors
+in-form) is the generation-side fix without which dense lessons abstain rather than approve.
+Phase 3 (T10–T11) needs the owner env. Do not flip any default; do not lower the 0.70 bar.
 
 ## Open decisions for the owner (flagging before coding)
 1. **New flag name** `WORKSHEET_OBJECTIVE_COVERAGE` (vs reusing `WORKSHEET_PLANNER_SLOT_CONTRACT`).
@@ -371,10 +433,17 @@ Do not flip any default; do not lower the 0.70 bar.
    words; **confidence-tag** ambiguous words (T2) so they degrade to advisory rather than
    forcing rejection. Defer a richer phonics engine unless T10 needs it.
 4. **Typed interaction contract on `ActivityItem`** (review's headline fix — `answer_mode`,
-   `option_roles`, `visible_to_student`, …). **Deferred.** T5's format-allowlist + T6's
-   derived visibility get the defect-catch without a schema change that ripples into the
-   planner, renderer, and every existing test. Promote to a real task only if T10 shows the
-   allowlist mis-gates a legitimate format (e.g. a new activity type the allowlist can't classify).
+   `option_roles`, `visible_to_student`, …). **Resolved via middle path:** keep `ActivityItem`
+   unchanged (no ripple into planner/renderer/tests), but add a canonical typed `EvidenceItem`
+   (T1) that T6 derives from each item — the cheap half of the contract (GPT-5.5 #4). T5's
+   format-allowlist handles gating. Promote a full `ActivityItem` contract only if T10 shows
+   the allowlist mis-gates a legitimate format.
+
+## Scope of the auto-approval promise (GPT-5.5 #5)
+The objective path's auto-approve targets **UFLI-matched lessons** (corpus hit). On
+corpus-miss / non-UFLI input, confidence caps to `low`, essential cells become
+`needs_verification` → **abstain → fallback**; these are explicitly *not* part of the initial
+promotion promise. Promotion (T11) is measured on matched UFLI lessons only.
 
 ## Review changes folded in (GPT-5.5, 2026-06-13)
 Go-with-changes. Adopted: confidence-tagged classification replacing blanket safe-undercount
@@ -385,3 +454,17 @@ owns counts (T7); sequential dev/blind-holdout calibration with abort rules (T11
 mutual-exclusion (T9); single canonical evidence module (T6); battery records coverage even
 when blocked (T10). Pushed back on: typed interaction-contract schema change (open decision 4,
 deferred in favour of the allowlist).
+
+**Round 2 (GPT-5.5 follow-up + own sweep, 2026-06-13).** Tri-state approval replaces the hard
+per-cell 0.60 floor (design block, T7–T11). Then: **T8.5 added** — planner authors *in* the
+required forms (the generation-side fix; without it dense lessons abstain→fallback and
+criterion #5 is unreachable — caught in the own-sweep, confirmed by spec line 604). Severe-defect
+voting tightened to 2/3 reject / 1/3 abstain / 0 pass (T8, design block). Abstain given a
+**safety definition** (objective path doesn't auto-approve; fallback output still passes its own
+blockers/print/ADHD/validators). Canonical typed **`EvidenceItem`** added (T1/T6) as the cheap
+half of the interaction contract (open decision 4 resolved). `corpus_version` hash for ledger
+idempotency (T1/T3). **Package-level ADHD upper bounds** so aggregation can't pass by spreading
+overload (T6). Coverage pinned to the **post-`section_cap`** package (T6). Committed
+`tests/fixtures/objective_ledger/` skill-model fixtures (T3 — `samples/output/**` is gitignored).
+UFLI-first auto-approval scope stated. Research spec's superseded sections (0.60 floor, 15–20
+calibration) banner-marked.

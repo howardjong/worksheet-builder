@@ -473,13 +473,20 @@ Per-objective anchors should be attached to `ObjectiveCell.sufficiency_rule` so 
 
 ### Approval Policy
 
+> **SUPERSEDED (Session 50).** The binary "approve iff … no essential cell < 0.60" below is
+> replaced by the **tri-state** policy in `plans/2026-06-13-objective-sufficiency-implementation-plan.md`
+> (approve / abstain / reject; per-cell `>=0.65` pass, `0.50–0.65` abstain, `<0.50` reject;
+> typed severe-defect veto via 2/3 reject, 1/3 abstain). A hard per-cell floor is fake
+> precision on a noisy judge score — see the plan's design block. The lines below are kept for
+> rationale only.
+
 Approve only if all are true:
 
 - deterministic blocking gates pass
 - deterministic required-form checks pass for essential objectives
 - deterministic objective coverage passes with `definition="objective_sufficiency_v1"`
 - overall judge score >= 0.70
-- no essential objective cell has judge score < 0.60
+- no essential objective cell has judge score < 0.60  *(superseded — see banner)*
 - no safety/ADHD criterion is < 0.50
 
 Do not use a single hard floor on the old `content_coverage` field. It encourages page fidelity and false rejection of good ADHD-optimized adaptations. Instead, use per-objective essential floors plus deterministic blockers.
@@ -547,6 +554,12 @@ Use short, bounded practice sets. The initial priors should be easy to tune:
 These are implementation priors, not settled science. The calibration process below should tune them against expert ratings and child-output data when available.
 
 ## Calibration Against Human Raters
+
+> **SUPERSEDED (Session 50).** The 15–20-sample plan below is replaced by the sequential
+> design in the implementation plan (T11): freeze rubric → ~20 dev set (debug, tunable) →
+> **40–60 blind holdout** (promotion gate, not tuned against) with abort rules. Three-bucket
+> (approve/abstain/reject) tracking; band width + severe-defect enum calibrated there. The
+> outline below is kept for the strata/metrics ideas only.
 
 Cheap validation plan for 15-20 samples:
 
