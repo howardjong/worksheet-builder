@@ -187,6 +187,45 @@ def _unknown_source() -> SourceWorksheetModel:
     )
 
 
+def _garbled_concept_source() -> SourceWorksheetModel:
+    """Word Work source where vision mis-tagged the worksheet header as the
+    concept label (a real failure: handwriting/header text grabbed as concept).
+    """
+    return SourceWorksheetModel(
+        source_image_hash="garbled1",
+        pipeline_version=PIPELINE_VERSION,
+        template_type="ufli_word_work",
+        regions=[
+            SourceRegion(
+                type="title",
+                content="Home Practice Lesson 43",
+                bbox=(50, 10, 400, 60),
+                confidence=0.98,
+                metadata={},
+            ),
+            SourceRegion(
+                type="concept_label",
+                content="check out my new were learning oll words today",
+                bbox=(50, 150, 700, 200),
+                confidence=0.55,
+                metadata={},
+            ),
+            SourceRegion(
+                type="sample_words",
+                content="doll, roll, poll",
+                bbox=(100, 210, 400, 250),
+                confidence=0.93,
+                metadata={},
+            ),
+        ],
+        raw_text="Home Practice Lesson 43\n"
+        "check out my new were learning oll words today\n"
+        "doll, roll, poll",
+        ocr_engine="paddleocr",
+        low_confidence_flags=[],
+    )
+
+
 # --- Taxonomy Tests ---
 
 
@@ -302,6 +341,25 @@ class TestExtractWordWork:
     def test_template_type_passed_through(self) -> None:
         model = extract_skill(_word_work_source())
         assert model.template_type == "ufli_word_work"
+
+    def test_garbled_concept_does_not_leak(self) -> None:
+        """A mis-OCR'd header must not become the skill descriptor or an
+        objective (it would otherwise reach the printed self-check line)."""
+        model = extract_skill(_garbled_concept_source())
+        garbage_markers = ("check out", "today", "learning", "were")
+        skill_lower = model.specific_skill.lower()
+        for marker in garbage_markers:
+            assert (
+                marker not in skill_lower
+            ), f"garbled concept leaked into specific_skill: {model.specific_skill!r}"
+        for objective in model.learning_objectives:
+            obj_lower = objective.lower()
+            for marker in garbage_markers:
+                assert (
+                    marker not in obj_lower
+                ), f"garbled concept leaked into objective: {objective!r}"
+        # Still a phonics model; garbage falls back to the safe generic skill.
+        assert model.domain == "phonics"
 
 
 class TestExtractDecodableStory:

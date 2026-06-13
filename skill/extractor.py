@@ -116,21 +116,26 @@ def _extract_word_work(source: SourceWorksheetModel) -> LiteracySkillModel:
     if lesson_number is None and concept_text:
         lesson_number = _infer_lesson_from_concept(concept_text)
 
+    # Guard against the vision step mis-tagging a worksheet header / handwriting
+    # as the concept label. Garbled text must not become the skill descriptor or
+    # a learning objective (it would reach prompts and the printed self-check).
+    concept_label = _sanitize_concept_text(concept_text)
+
     # Determine specific phonics skill from concept label
     specific_skill = "phonics_pattern"
-    if concept_text:
-        matched = match_phonics_pattern(concept_text)
+    if concept_label:
+        matched = match_phonics_pattern(concept_label)
         if matched:
             specific_skill = matched
         else:
             # Use the concept text itself as the skill description
-            specific_skill = _normalize_concept(concept_text)
+            specific_skill = _normalize_concept(concept_label)
 
     # Infer grade level from lesson number
     grade_level = _grade_from_lesson(lesson_number)
 
     # Build learning objectives
-    objectives = _build_word_work_objectives(specific_skill, concept_text, target_words)
+    objectives = _build_word_work_objectives(specific_skill, concept_label, target_words)
 
     # Response types for word work
     response_types = ["write", "read_aloud"]
@@ -230,9 +235,7 @@ def _extract_decodable_story(source: SourceWorksheetModel) -> LiteracySkillModel
 
     response_types = ["read_aloud"]
 
-    extraction_confidence = _compute_confidence(
-        confidences, has_concept=bool(target_pattern)
-    )
+    extraction_confidence = _compute_confidence(confidences, has_concept=bool(target_pattern))
 
     return LiteracySkillModel(
         grade_level=grade_level,
@@ -357,11 +360,19 @@ def _build_concept_cache() -> dict[str, int]:
 
 # IPA → descriptive text for concept matching
 _IPA_MAP = {
-    "/ī/": "long i", "/ē/": "long e", "/ā/": "long a",
-    "/ō/": "long o", "/ū/": "long u",
-    "/ă/": "short a", "/ĕ/": "short e", "/ĭ/": "short i",
-    "/ŏ/": "short o", "/ŭ/": "short u",
-    "/j/": "j sound", "/k/": "k sound", "/s/": "s sound",
+    "/ī/": "long i",
+    "/ē/": "long e",
+    "/ā/": "long a",
+    "/ō/": "long o",
+    "/ū/": "long u",
+    "/ă/": "short a",
+    "/ĕ/": "short e",
+    "/ĭ/": "short i",
+    "/ŏ/": "short o",
+    "/ŭ/": "short u",
+    "/j/": "j sound",
+    "/k/": "k sound",
+    "/s/": "s sound",
     "/z/": "z sound",
 }
 
@@ -381,9 +392,7 @@ _LESSON_HEADER_RE = re.compile(r"Lesson\s+\d+.*?\n", re.IGNORECASE)
 _ILLUSTRATE_RE = re.compile(r"Illustrate the story here:?\s*", re.IGNORECASE)
 
 
-def _enrich_from_corpus(
-    model: LiteracySkillModel, lesson_number: int
-) -> LiteracySkillModel:
+def _enrich_from_corpus(model: LiteracySkillModel, lesson_number: int) -> LiteracySkillModel:
     """Enrich a skill model with corpus data (decodable passage, Roll and Read)."""
     from corpus.ufli.lookup import lookup_lesson
 
@@ -461,6 +470,39 @@ def _extract_chain_words(text: str) -> list[str]:
     parts = re.split(r"[→\->]+", cleaned)
     words = [w.strip().lower() for w in parts if w.strip() and w.strip().isalpha()]
     return words
+
+
+# A real UFLI concept label is a terse pattern descriptor ("-all, -oll, -ull",
+# "a_e", "vowel teams"). The vision step occasionally mis-tags a worksheet
+# header or a child's handwriting as the concept label (e.g. "check out my new
+# were learning oll words today"). Such text must never reach a skill
+# descriptor, a learning objective, or the printed self-check line.
+_CONCEPT_PREFIXES = ("new concept and sample words", "new concept", "sample words")
+_CONCEPT_MAX_WORDS = 7
+_CONCEPT_HEADER_TOKENS = frozenset(
+    {"check", "today", "name", "date", "learning", "look", "remember", "lets"}
+)
+
+
+def _sanitize_concept_text(text: str) -> str:
+    """Return the concept label if it is a plausible phonics descriptor, or ""
+    when it looks like an OCR'd header/handwriting rather than a real label.
+
+    Trust is judged on a prefix-stripped, lowercased view, but the original
+    trimmed text is returned so legitimate labels flow through unchanged.
+    """
+    trimmed = text.strip()
+    if not trimmed:
+        return ""
+    analysis = trimmed.lower()
+    for prefix in _CONCEPT_PREFIXES:
+        analysis = analysis.replace(prefix, "")
+    words = re.findall(r"[a-z0-9_]+", analysis)
+    if len(words) > _CONCEPT_MAX_WORDS:
+        return ""
+    if any(word in _CONCEPT_HEADER_TOKENS for word in words):
+        return ""
+    return trimmed
 
 
 def _normalize_concept(text: str) -> str:
@@ -571,11 +613,52 @@ def _extract_passage_target_words(passage: str, pattern: str | None) -> list[str
 
     # Default: return content words (skip very short/common words)
     stop_words = {
-        "a", "an", "the", "is", "am", "are", "was", "were", "be", "been",
-        "has", "had", "have", "do", "did", "does", "to", "of", "in", "on",
-        "at", "by", "for", "and", "but", "or", "not", "no", "so", "if",
-        "it", "its", "he", "she", "we", "they", "i", "me", "my", "his",
-        "her", "our", "us", "them", "this", "that",
+        "a",
+        "an",
+        "the",
+        "is",
+        "am",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "has",
+        "had",
+        "have",
+        "do",
+        "did",
+        "does",
+        "to",
+        "of",
+        "in",
+        "on",
+        "at",
+        "by",
+        "for",
+        "and",
+        "but",
+        "or",
+        "not",
+        "no",
+        "so",
+        "if",
+        "it",
+        "its",
+        "he",
+        "she",
+        "we",
+        "they",
+        "i",
+        "me",
+        "my",
+        "his",
+        "her",
+        "our",
+        "us",
+        "them",
+        "this",
+        "that",
     }
     content_words = [w for w in words if w not in stop_words and len(w) >= 3]
     return _dedupe_preserve_order(content_words)
@@ -592,9 +675,7 @@ def _dedupe_preserve_order(items: list[str]) -> list[str]:
     return result
 
 
-def _compute_confidence(
-    region_confidences: list[float], has_concept: bool
-) -> float:
+def _compute_confidence(region_confidences: list[float], has_concept: bool) -> float:
     """Compute overall extraction confidence."""
     if not region_confidences:
         return 0.0
