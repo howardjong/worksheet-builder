@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import pytest
 from pydantic import ValidationError
 
@@ -13,8 +16,17 @@ from adapt.objective_ledger import (
     ObjectiveCell,
     ObjectiveLedger,
     PatternContext,
+    build_objective_ledger,
     classify_word_role,
 )
+from skill.schema import LiteracySkillModel
+
+_FIX = Path(__file__).parent / "fixtures" / "objective_ledger"
+
+
+def _load(name: str) -> LiteracySkillModel:
+    """Load a committed LiteracySkillModel fixture by stem (offline, no live artifacts)."""
+    return LiteracySkillModel(**json.loads((_FIX / f"{name}.json").read_text()))
 
 
 class TestObjectiveLedgerSchema:
@@ -490,3 +502,177 @@ class TestClassifyWordRoleOll:
         assert role == "target_pattern"
         assert conf == "high"
         assert src == "pattern_rule"
+
+
+# ----------------------------------------------------------------------------
+# T3 — build_objective_ledger (deterministic builder)
+# ----------------------------------------------------------------------------
+
+
+def _cell(ledger: ObjectiveLedger, objective_type: str) -> ObjectiveCell | None:
+    """Return the first objective cell of a given type, or None."""
+    return next((c for c in ledger.objectives if c.objective_type == objective_type), None)
+
+
+def _items_of_class(ledger: ObjectiveLedger, coverage_class: str) -> list[ClassifiedSourceItem]:
+    return [si for si in ledger.source_items if si.coverage_class == coverage_class]
+
+
+def _all_words(ledger: ObjectiveLedger) -> list[LedgerWord]:
+    return [w for si in ledger.source_items for w in si.word_roles]
+
+
+class TestBuildObjectiveLedgerCorpusMatched:
+    """RED — builder against the committed lesson-58 / lesson-59 fixtures (real corpus)."""
+
+    @pytest.mark.parametrize("name", ["lesson58", "lesson59"])
+    def test_manipulation_cell_and_required_chain_forms(self, name: str) -> None:
+        ledger = build_objective_ledger(_load(name))
+        cell = _cell(ledger, "phoneme_grapheme_manipulation")
+        assert cell is not None
+
+        chain_items = [
+            si for si in ledger.source_items if si.item_type in ("word_chain", "chain_script")
+        ]
+        assert chain_items, "expected word_chain / chain_script source items"
+        for si in chain_items:
+            assert si.coverage_class == "required_form"
+            assert si.required_form in ("word_chain", "chain_script")
+        # The form tag must match the item type.
+        for si in chain_items:
+            if si.item_type == "word_chain":
+                assert si.required_form == "word_chain"
+            else:
+                assert si.required_form == "chain_script"
+
+    @pytest.mark.parametrize("name", ["lesson58", "lesson59"])
+    def test_roll_and_read_samplable_pool_from_corpus(self, name: str) -> None:
+        ledger = build_objective_ledger(_load(name))
+        pools = _items_of_class(ledger, "samplable_pool")
+        assert pools, "expected a samplable_pool ClassifiedSourceItem"
+        # At least one pool must originate from the corpus Roll-and-Read additional_text.
+        assert any("roll" in si.item_type or "roll" in " ".join(si.notes).lower() for si in pools)
+
+    @pytest.mark.parametrize("name", ["lesson58", "lesson59"])
+    def test_connected_text_required_passage_from_corpus(self, name: str) -> None:
+        ledger = build_objective_ledger(_load(name))
+        cell = _cell(ledger, "connected_text_fluency")
+        assert cell is not None
+        passage_items = [
+            si for si in ledger.source_items if si.required_form == "decodable_passage"
+        ]
+        assert passage_items, "expected a decodable_passage required_form item"
+        assert all(si.coverage_class == "required_form" for si in passage_items)
+
+    @pytest.mark.parametrize("name", ["lesson58", "lesson59"])
+    def test_irregular_cell_words_and_no_leak_into_decode(self, name: str) -> None:
+        ledger = build_objective_ledger(_load(name))
+        irr = _cell(ledger, "irregular_word_reading")
+        assert irr is not None
+        assert irr.irregular_words, "irregular cell must list its irregular words"
+
+        # Every word attached to the sight_words item is role irregular_word.
+        sight_items = [si for si in ledger.source_items if si.item_type == "sight_words"]
+        assert sight_items
+        for si in sight_items:
+            for w in si.word_roles:
+                assert w.role == "irregular_word"
+
+        # None of the irregular words leak into the decode cell's target list.
+        decode = _cell(ledger, "decode_target_pattern")
+        assert decode is not None
+        decode_targets = set(decode.target_words)
+        for irr_word in irr.irregular_words:
+            assert irr_word not in decode_targets
+
+    def test_lesson58_decode_excludes_known_irregulars(self) -> None:
+        ledger = build_objective_ledger(_load("lesson58"))
+        decode = _cell(ledger, "decode_target_pattern")
+        assert decode is not None
+        # 'one'/'once' are sight words → never in the decode numerator.
+        assert "one" not in decode.target_words
+        assert "once" not in decode.target_words
+        # The decode cell must hold some genuine u_e targets.
+        assert any(w in decode.target_words for w in ("cube", "mute", "tune", "rule"))
+
+    def test_lesson59_decode_excludes_who_one(self) -> None:
+        ledger = build_objective_ledger(_load("lesson59"))
+        decode = _cell(ledger, "decode_target_pattern")
+        assert decode is not None
+        for irr in ("who", "by", "my", "one", "once"):
+            assert irr not in decode.target_words
+
+    def test_decode_target_words_are_only_target_pattern_role(self) -> None:
+        ledger = build_objective_ledger(_load("lesson58"))
+        decode = _cell(ledger, "decode_target_pattern")
+        assert decode is not None
+        target_set = set(decode.target_words)
+        # Build a role index from every classified word.
+        roles: dict[str, set[str]] = {}
+        for w in _all_words(ledger):
+            roles.setdefault(w.normalized, set()).add(w.role)
+        for tw in target_set:
+            assert "target_pattern" in roles.get(tw, set()), f"{tw} not target_pattern role"
+
+    @pytest.mark.parametrize("name", ["lesson58", "lesson59", "lesson43_oll"])
+    def test_corpus_version_stamped_and_status_matched(self, name: str) -> None:
+        ledger = build_objective_ledger(_load(name))
+        assert ledger.corpus_status == "matched"
+        assert isinstance(ledger.corpus_version, str)
+        assert ledger.corpus_version
+        assert ledger.corpus_version != "no_corpus"
+
+    @pytest.mark.parametrize("name", ["lesson58", "lesson59", "lesson43_oll"])
+    def test_stable_across_calls(self, name: str) -> None:
+        skill = _load(name)
+        a = build_objective_ledger(skill).model_dump_json()
+        b = build_objective_ledger(skill).model_dump_json()
+        assert a == b
+
+    def test_no_contrast_cell_for_fixtures(self) -> None:
+        # Lessons 58/59/43 have no deliberate contrast task → no contrast cell.
+        for name in ("lesson58", "lesson59", "lesson43_oll"):
+            ledger = build_objective_ledger(_load(name))
+            assert _cell(ledger, "contrast_discrimination") is None
+
+
+class TestBuildObjectiveLedgerOll:
+    """RED — the -all/-oll/-ull fixture (lesson 43): contrast WORDS must not count."""
+
+    def test_mop_jazz_not_in_decode_targets(self) -> None:
+        ledger = build_objective_ledger(_load("lesson43_oll"))
+        decode = _cell(ledger, "decode_target_pattern")
+        assert decode is not None
+        assert "mop" not in decode.target_words
+        assert "jazz" not in decode.target_words
+        # Genuine rime targets are present.
+        assert any(w in decode.target_words for w in ("doll", "roll", "toll"))
+
+    def test_manipulation_cell_exists(self) -> None:
+        ledger = build_objective_ledger(_load("lesson43_oll"))
+        assert _cell(ledger, "phoneme_grapheme_manipulation") is not None
+
+
+class TestBuildObjectiveLedgerGracefulDegrade:
+    """RED — corpus miss / non-UFLI input degrades to low-confidence, no_corpus sentinel."""
+
+    def test_corpus_miss_via_stub(self) -> None:
+        ledger = build_objective_ledger(_load("lesson58"), corpus_lookup=lambda n: None)
+        assert ledger.corpus_status == "missing"
+        assert ledger.corpus_version == "no_corpus"
+        words = _all_words(ledger)
+        assert words, "expected some classified words even on corpus miss"
+        assert all(w.role_confidence == "low" for w in words)
+
+    def test_no_lesson_number_is_not_applicable(self) -> None:
+        skill = _load("lesson58").model_copy(update={"lesson_number": None})
+        ledger = build_objective_ledger(skill)
+        assert ledger.corpus_status == "not_applicable"
+        assert ledger.corpus_version == "no_corpus"
+        assert all(w.role_confidence == "low" for w in _all_words(ledger))
+
+    def test_degraded_ledger_is_stable(self) -> None:
+        skill = _load("lesson58")
+        a = build_objective_ledger(skill, corpus_lookup=lambda n: None).model_dump_json()
+        b = build_objective_ledger(skill, corpus_lookup=lambda n: None).model_dump_json()
+        assert a == b
