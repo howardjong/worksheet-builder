@@ -868,6 +868,16 @@ def derive_objective_approval(
     if any(s.severe_defect_vote == "reject" for s in essential_scores):
         return "reject"
 
+    # COMPLETENESS GUARD — never auto-approve unless the judge scored EVERY
+    # essential cell. A cell the judge omitted (or an empty objective_scores)
+    # carries no quality signal; treating it as a pass is a false approve. The
+    # conservative, spec-consistent outcome is abstain (route to fallback). This
+    # sits after the reject checks (a genuine reject on a SCORED cell still wins)
+    # and before the abstain checks.
+    scored_ids = {s.objective_id for s in judge.objective_scores}
+    if not essential_ids.issubset(scored_ids):
+        return "abstain"
+
     # ABSTAIN
     if coverage.status == "needs_verification":
         return "abstain"

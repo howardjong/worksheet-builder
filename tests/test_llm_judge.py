@@ -670,6 +670,64 @@ def test_derive_reject_when_adhd_below_050() -> None:
     assert out == "reject"
 
 
+# --- completeness guard (C1: false-approve when judge omits essential cells) #
+#
+# derive_objective_approval must NOT auto-approve unless the judge actually
+# scored EVERY essential ledger cell. A missing essential cell carries no
+# quality signal, so the conservative, spec-consistent outcome is "abstain"
+# ("did not auto-approve; route to fallback"). All four degenerate verdicts
+# below otherwise satisfy the approve preconditions (overall>=0.70, adhd>=0.50,
+# gates pass, coverage pass) — only the missing essential cell(s) differ.
+
+
+def test_derive_abstain_when_judge_omits_one_essential_cell() -> None:
+    ledger = _ledger()
+    essential = _essential_ids(ledger)
+    # Score every essential cell EXCEPT the last one — that cell goes unscored.
+    cells = [_cell(oid, 0.80) for oid in essential[:-1]]
+    judge = aggregate_objective_verdicts([_obj_verdict(cells, overall=0.85, adhd=0.80)])
+    out = derive_objective_approval(judge, _pass_gate(), _coverage("pass"), ledger)  # type: ignore[arg-type]
+    assert out == "abstain"
+
+
+def test_derive_abstain_when_judge_returns_zero_scores() -> None:
+    ledger = _ledger()
+    # Empty objective_scores parses fine (defaults to []) but scores no cells.
+    judge = aggregate_objective_verdicts([_obj_verdict([], overall=0.85, adhd=0.80)])
+    out = derive_objective_approval(judge, _pass_gate(), _coverage("pass"), ledger)  # type: ignore[arg-type]
+    assert out == "abstain"
+
+
+def test_derive_abstain_when_judge_scores_only_unknown_objective() -> None:
+    ledger = _ledger()
+    # Only an objective_id not in the ledger is scored; real essentials go unscored.
+    judge = aggregate_objective_verdicts(
+        [_obj_verdict([_cell("obj_not_in_ledger", 0.80)], overall=0.85, adhd=0.80)]
+    )
+    out = derive_objective_approval(judge, _pass_gate(), _coverage("pass"), ledger)  # type: ignore[arg-type]
+    assert out == "abstain"
+
+
+def test_derive_abstain_when_judge_omits_the_cell_that_would_fail() -> None:
+    ledger = _ledger()
+    essential = _essential_ids(ledger)
+    # Score all essentials cleanly EXCEPT the first — the omitted cell is exactly
+    # the one that, had it been scored as failing, would have driven a reject.
+    cells = [_cell(oid, 0.80) for oid in essential[1:]]
+    judge = aggregate_objective_verdicts([_obj_verdict(cells, overall=0.85, adhd=0.80)])
+    out = derive_objective_approval(judge, _pass_gate(), _coverage("pass"), ledger)  # type: ignore[arg-type]
+    assert out == "abstain"
+
+
+def test_derive_approve_when_all_essential_cells_scored_clean() -> None:
+    # Positive guard: the completeness guard must NOT over-trigger when every
+    # essential cell is scored at/above the pass band with no defects.
+    ledger = _ledger()
+    judge = _clean_judge(ledger, quality=0.80)
+    out = derive_objective_approval(judge, _pass_gate(), _coverage("pass"), ledger)  # type: ignore[arg-type]
+    assert out == "approve"
+
+
 # --- samples plumbing ------------------------------------------------------ #
 
 
