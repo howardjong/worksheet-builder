@@ -26,7 +26,15 @@ from adapt.coverage_ledger import (
     verify_coverage,
 )
 from adapt.llm_adapt import LessonPlan, _call_gemini, _parse_lesson_plan, _translate_plan
-from adapt.llm_judge import JudgeVerdict, _call_openai, judge_adaptation_samples
+from adapt.llm_judge import (
+    JudgeVerdict,
+    ObjectiveJudgeVerdict,
+    _call_openai,
+    aggregate_objective_verdicts,
+    derive_objective_approval,
+    judge_adaptation_samples,
+    judge_objective_adaptation_samples,
+)
 from adapt.objective_ledger import ObjectiveCell, RequiredForm, build_objective_ledger
 from adapt.rules import AccommodationRules, build_rules
 from adapt.schema import AdaptedActivityModel
@@ -34,6 +42,8 @@ from adapt.section_cap import enforce_section_cap
 from companion.schema import LearnerProfile
 from corpus.ufli.lookup import lookup_lesson
 from skill.schema import LiteracySkillModel
+from validate.blocking_gates import run_blocking_gates
+from validate.objective_coverage import build_evidence_index, evaluate_objective_coverage
 
 logger = logging.getLogger(__name__)
 
@@ -418,12 +428,25 @@ def plan_lesson_llm(
     if not os.environ.get("WORKSHEET_LLM_ADAPT"):
         return None
 
+    # Flag mutual-exclusion: never run both coverage systems at once. No-op unless
+    # BOTH flags are set, so every existing path stays byte-identical.
+    if _objective_coverage_enabled() and _slot_contract_enabled():
+        raise RuntimeError(
+            "WORKSHEET_OBJECTIVE_COVERAGE and WORKSHEET_PLANNER_SLOT_CONTRACT are "
+            "mutually exclusive; enable at most one coverage system at a time"
+        )
+
     if rules is None:
         rules = build_rules(profile)
 
     if not (os.environ.get("OPENAI_API_KEY") or os.environ.get("GEMINI_API_KEY")):
         logger.info("  LLM planner: no API keys, falling back to deterministic")
         return None
+
+    if _objective_coverage_enabled():
+        return _plan_lesson_objective(
+            skill, profile, rules, theme_id, rag_curriculum_references, artifacts_dir
+        )
 
     base_prompt = _build_planner_prompt(skill, profile, rules, theme_id, rag_curriculum_references)
 
@@ -493,6 +516,182 @@ def plan_lesson_llm(
     )
     logger.info("  LLM planner: %s — deterministic engine takes over", outcome)
     return None
+
+
+def _plan_lesson_objective(
+    skill: LiteracySkillModel,
+    profile: LearnerProfile,
+    rules: AccommodationRules,
+    theme_id: str,
+    rag_curriculum_references: list[dict[str, object]] | None,
+    artifacts_dir: str | None,
+) -> list[AdaptedActivityModel] | None:
+    """Objective-sufficiency planning path (flag-gated WORKSHEET_OBJECTIVE_COVERAGE).
+
+    One planning call → clamp → deterministic blocking gates → deterministic
+    objective coverage → objective judge → tri-state approval. APPROVE ships;
+    gate-block / coverage-fail / judge-reject / judge-abstain all route to the
+    deterministic fallback (return None), each with a DISTINCT logged outcome.
+    A single planning attempt (no regen): regeneration cannot resolve an abstain's
+    uncertainty deterministically, so the deterministic engine takes over instead.
+    """
+    ledger = build_objective_ledger(skill)
+    prompt = _build_planner_prompt(skill, profile, rules, theme_id, rag_curriculum_references)
+
+    response_text, model_label = _call_planner(prompt)
+    if response_text is None:
+        return _objective_fallback(skill, "llm_unavailable", model_label, None, artifacts_dir)
+
+    plan = _parse_lesson_plan(response_text)
+    if plan is None:
+        logger.warning("  LLM planner (objective): failed to parse plan")
+        return _objective_fallback(
+            skill, "objective_parse_failure", model_label, None, artifacts_dir
+        )
+
+    worksheets = enforce_section_cap(_translate_plan(plan, skill, profile, theme_id, rules), rules)
+    if not worksheets:
+        logger.warning("  LLM planner (objective): translation produced no worksheets")
+        return _objective_fallback(
+            skill, "objective_no_worksheets", model_label, None, artifacts_dir
+        )
+
+    # 1. Deterministic blocking gates — block → reject, skip the judge entirely.
+    gates = run_blocking_gates(worksheets, ledger)
+    if not gates.passed:
+        logger.warning("  LLM planner (objective): blocking gate failed → reject")
+        return _objective_fallback(
+            skill, "objective_rejected_gate", model_label, None, artifacts_dir
+        )
+
+    # 2. Deterministic objective coverage — pass the SAME worksheets to both the
+    #    evidence index AND the evaluator (the evaluator silently skips the package
+    #    ADHD upper-bound checks if worksheets is omitted). det fail → reject.
+    evidence = build_evidence_index(worksheets, ledger)
+    coverage = evaluate_objective_coverage(ledger, evidence, worksheets)
+    if coverage.status == "fail":
+        logger.warning("  LLM planner (objective): deterministic coverage failed → reject")
+        return _objective_fallback(
+            skill, "objective_rejected_coverage", model_label, None, artifacts_dir
+        )
+
+    # 3. Objective judge (raw per-sample list; [] when unavailable).
+    samples = judge_objective_adaptation_samples(
+        ledger, gates, coverage, worksheets, evidence, _judge_samples()
+    )
+    if not samples:
+        # Mirror the old path: the deterministic gates + coverage already vetted it;
+        # ship unjudged.
+        outcome = "objective_planned_unjudged"
+        _write_verdict_artifact(_unjudged_payload(outcome), artifacts_dir)
+        _log_performance(
+            _objective_entry(skill, outcome, None, None, model_label, judged=False),
+            artifacts_dir,
+        )
+        logger.warning("  LLM planner (objective): judge unavailable, shipping unjudged")
+        return worksheets
+
+    # 4. Aggregate (raises on empty — guarded above) then derive the tri-state. The
+    #    AGGREGATED verdict carries the per-cell severe_defect_vote derive() reads.
+    aggregated = aggregate_objective_verdicts(samples)
+    decision = derive_objective_approval(aggregated, gates, coverage, ledger)
+
+    # 5. Route on the authoritative tri-state decision.
+    if decision == "approve":
+        outcome = "objective_approved"
+        _write_verdict_artifact(_objective_verdict_payload(aggregated, outcome), artifacts_dir)
+        _log_performance(
+            _objective_entry(skill, outcome, aggregated, aggregated.overall_score, model_label),
+            artifacts_dir,
+        )
+        logger.info(
+            "  LLM planner (objective): %s (overall=%.2f)", outcome, aggregated.overall_score
+        )
+        return worksheets
+
+    outcome = "objective_abstain_fallback" if decision == "abstain" else "objective_rejected_judge"
+    logger.info("  LLM planner (objective): judge decision=%s → fallback", decision)
+    return _objective_fallback(skill, outcome, model_label, aggregated, artifacts_dir)
+
+
+def _objective_fallback(
+    skill: LiteracySkillModel,
+    outcome: str,
+    model_label: str,
+    aggregated: ObjectiveJudgeVerdict | None,
+    artifacts_dir: str | None,
+) -> list[AdaptedActivityModel] | None:
+    """Route the objective path to the deterministic fallback (return None).
+
+    Mirrors the old fallback artifact policy: write planner_attempts.json, NOT
+    judge_verdict.json — the deterministic engine takes over and transform.py
+    judges what actually ships. The DISTINCT ``outcome`` keeps abstain, reject,
+    gate, and coverage failures separable in the log/attempts.
+    """
+    _write_objective_attempts(outcome, aggregated, artifacts_dir)
+    _log_performance(
+        _objective_entry(skill, outcome, aggregated, None, model_label, judged=False),
+        artifacts_dir,
+    )
+    logger.info("  LLM planner (objective): %s — deterministic engine takes over", outcome)
+    return None
+
+
+def _objective_verdict_payload(verdict: ObjectiveJudgeVerdict, outcome: str) -> dict[str, object]:
+    payload: dict[str, object] = dict(verdict.model_dump())
+    payload["outcome"] = outcome
+    payload["planner_version"] = 2
+    return payload
+
+
+def _write_objective_attempts(
+    outcome: str,
+    aggregated: ObjectiveJudgeVerdict | None,
+    artifacts_dir: str | None,
+) -> None:
+    """Record a non-approved objective attempt WITHOUT claiming a shipped verdict.
+
+    Deliberately not judge_verdict.json (mirrors ``_write_planner_attempts``): on
+    fallback the deterministic output ships and transform.py runs the advisory
+    judge on it. The aggregated verdict (when present) is serialized for telemetry.
+    """
+    if not artifacts_dir:
+        return
+    path = Path(artifacts_dir)
+    path.mkdir(parents=True, exist_ok=True)
+    (path / "planner_attempts.json").write_text(
+        json.dumps(
+            {
+                "outcome": outcome,
+                "planner_version": 2,
+                "objective_coverage": True,
+                "verdicts": [aggregated.model_dump()] if aggregated is not None else [],
+            },
+            indent=2,
+        )
+    )
+
+
+def _objective_entry(
+    skill: LiteracySkillModel,
+    outcome: str,
+    aggregated: ObjectiveJudgeVerdict | None,
+    final_score: float | None,
+    planning_model: str,
+    judged: bool = True,
+) -> PlannerLogEntry:
+    """Build a PlannerLogEntry for the objective path (aggregated verdict telemetry)."""
+    return PlannerLogEntry(
+        timestamp=datetime.now(UTC).isoformat(),
+        skill_domain=skill.domain,
+        specific_skill=skill.specific_skill,
+        template_type=skill.template_type,
+        outcome=outcome,
+        planning_model=planning_model,
+        judge_verdicts=[aggregated.model_dump()] if aggregated is not None else [],
+        final_score=final_score,
+        final_output_judged=judged,
+    )
 
 
 def _feedback_suffix(verdict: JudgeVerdict) -> str:

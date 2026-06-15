@@ -476,3 +476,267 @@ def test_prompt_authors_chain_in_required_form_when_flag_on(
     # 3. Do NOT dilute target-pattern cells with contrast/review/irregular words.
     assert "contrast" in lowered
     assert "must not pad" in lowered
+
+
+# --- T9: objective-sufficiency coverage path in plan_lesson_llm (flagged) ------
+
+from adapt.llm_judge import (  # noqa: E402
+    ObjectiveJudgeCellScore,
+    ObjectiveJudgeVerdict,
+    SevereDefect,
+)
+from adapt.objective_ledger import ObjectiveCell, ObjectiveLedger  # noqa: E402
+from validate.blocking_gates import BlockingGateResult, BlockingViolation  # noqa: E402
+from validate.objective_coverage import (  # noqa: E402
+    ObjectiveCoverageResult,
+    PackageBoundResult,
+)
+
+
+def _tiny_ledger() -> ObjectiveLedger:
+    """A controlled ledger with a single essential decode cell (obj_decode)."""
+    return ObjectiveLedger(
+        source_skill_hash="h",
+        lesson_number=84,
+        corpus_status="matched",
+        corpus_version="v",
+        primary_pattern="a_e",
+        objectives=[
+            ObjectiveCell(
+                objective_id="obj_decode",
+                objective_type="decode_target_pattern",
+                display_name="Decode a_e words",
+                concept="cvce",
+                target_pattern="a_e",
+                importance="essential",
+                required_forms=[],
+                target_words=["cake", "ride"],
+                min_practice_count=4,
+                max_recommended_count=12,
+                sufficiency_rule="rule",
+            )
+        ],
+        source_items=[],
+    )
+
+
+def _gates(passed: bool) -> BlockingGateResult:
+    violations = (
+        []
+        if passed
+        else [
+            BlockingViolation(
+                gate="answer_key",
+                severity="blocker",
+                item_id="ws0_chunk0_item0",
+                message="answer not in options",
+            )
+        ]
+    )
+    return BlockingGateResult(passed=passed, violations=violations)
+
+
+def _coverage(status: str) -> ObjectiveCoverageResult:
+    return ObjectiveCoverageResult(
+        status=status,  # type: ignore[arg-type]
+        passed=(status == "pass"),
+        objective_results=[],
+        package_bounds=PackageBoundResult(
+            passed=True,
+            total_estimated_minutes=4,
+            total_item_count=2,
+            dense_text_block_count=0,
+            max_objectives_in_a_worksheet=1,
+        ),
+    )
+
+
+def _obj_verdict(
+    cell_quality: float, defects: list[SevereDefect] | None = None
+) -> ObjectiveJudgeVerdict:
+    """A judge sample scoring obj_decode at the given quality (overall/adhd healthy)."""
+    return ObjectiveJudgeVerdict(
+        objective_scores=[
+            ObjectiveJudgeCellScore(
+                objective_id="obj_decode",
+                quality=cell_quality,
+                severe_defects=defects or [],
+                rationale="r",
+            )
+        ],
+        objective_sufficiency=0.8,
+        skill_form_fidelity=0.8,
+        structured_literacy_alignment=0.8,
+        adhd_cognitive_load_fit=0.8,
+        lesson_flow_and_usability=0.8,
+        overall_score=0.8,
+        approval_recommendation="approve",
+        feedback=["ok"],
+    )
+
+
+def _objective_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    _planner_env(monkeypatch)
+    monkeypatch.setenv("WORKSHEET_OBJECTIVE_COVERAGE", "1")
+    monkeypatch.delenv("WORKSHEET_PLANNER_SLOT_CONTRACT", raising=False)
+
+
+def test_objective_gate_block_rejects_and_skips_judge(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from adapt import llm_planner
+
+    _objective_env(monkeypatch)
+    monkeypatch.setattr(llm_planner, "build_objective_ledger", lambda s: _tiny_ledger())
+    monkeypatch.setattr(llm_planner, "_call_planner", lambda p: (_PLAN_JSON, "gpt-5.4"))
+    monkeypatch.setattr(llm_planner, "run_blocking_gates", lambda w, ld: _gates(False))
+
+    judged: list[bool] = []
+
+    def _no_judge(*args: object, **kwargs: object) -> list[ObjectiveJudgeVerdict]:
+        judged.append(True)
+        raise AssertionError("judge must not be called after a gate block")
+
+    monkeypatch.setattr(llm_planner, "judge_objective_adaptation_samples", _no_judge)
+
+    result = llm_planner.plan_lesson_llm(_skill(), _profile(), artifacts_dir=str(tmp_path))
+
+    assert result is None
+    assert judged == []
+    attempts = json.loads((tmp_path / "planner_attempts.json").read_text())
+    assert "gate" in attempts["outcome"]
+    assert not (tmp_path / "judge_verdict.json").exists()
+
+
+def test_objective_clean_plan_approved(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    from adapt import llm_planner
+
+    _objective_env(monkeypatch)
+    monkeypatch.setattr(llm_planner, "build_objective_ledger", lambda s: _tiny_ledger())
+    monkeypatch.setattr(llm_planner, "_call_planner", lambda p: (_PLAN_JSON, "gpt-5.4"))
+    monkeypatch.setattr(llm_planner, "run_blocking_gates", lambda w, ld: _gates(True))
+    monkeypatch.setattr(
+        llm_planner, "evaluate_objective_coverage", lambda ld, e, w: _coverage("pass")
+    )
+    monkeypatch.setattr(
+        llm_planner,
+        "judge_objective_adaptation_samples",
+        lambda ld, g, c, w, e, n: [_obj_verdict(0.8)],
+    )
+
+    result = llm_planner.plan_lesson_llm(_skill(), _profile(), artifacts_dir=str(tmp_path))
+
+    assert result is not None
+    assert [i.content for i in result[0].chunks[0].items] == ["cake", "ride"]
+    verdict = json.loads((tmp_path / "judge_verdict.json").read_text())
+    assert verdict["outcome"] == "objective_approved"
+    log_lines = (tmp_path / "llm_adaptation_log.jsonl").read_text().splitlines()
+    assert json.loads(log_lines[-1])["outcome"] == "objective_approved"
+
+
+def test_objective_ships_unjudged_when_judge_unavailable(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Empty judge samples → ship the deterministically-vetted plan unjudged.
+
+    This is the only NEW branch that SHIPS without a judge verdict. The gates +
+    coverage already passed; the empty-samples guard (judge unavailable) is what
+    routes here — NOT approve/abstain/reject.
+    """
+    from adapt import llm_planner
+
+    _objective_env(monkeypatch)
+    monkeypatch.setattr(llm_planner, "build_objective_ledger", lambda s: _tiny_ledger())
+    monkeypatch.setattr(llm_planner, "_call_planner", lambda p: (_PLAN_JSON, "gpt-5.4"))
+    monkeypatch.setattr(llm_planner, "run_blocking_gates", lambda w, ld: _gates(True))
+    monkeypatch.setattr(
+        llm_planner, "evaluate_objective_coverage", lambda ld, e, w: _coverage("pass")
+    )
+    # Judge unavailable: empty per-sample list. This is the guard that ships unjudged.
+    monkeypatch.setattr(
+        llm_planner,
+        "judge_objective_adaptation_samples",
+        lambda ld, g, c, w, e, n: [],
+    )
+
+    result = llm_planner.plan_lesson_llm(_skill(), _profile(), artifacts_dir=str(tmp_path))
+
+    assert result is not None  # worksheets shipped despite no verdict
+    assert [i.content for i in result[0].chunks[0].items] == ["cake", "ride"]
+    verdict = json.loads((tmp_path / "judge_verdict.json").read_text())
+    assert verdict["outcome"] == "objective_planned_unjudged"
+    assert verdict["unjudged"] is True
+    assert verdict["approved"] is None  # no approve verdict was claimed
+    assert verdict["pedagogical_judge_ran"] is False
+    assert verdict["planner_version"] == 2
+    log_lines = (tmp_path / "llm_adaptation_log.jsonl").read_text().splitlines()
+    last = json.loads(log_lines[-1])
+    assert last["outcome"] == "objective_planned_unjudged"
+    assert last["final_output_judged"] is False  # ship-path is unjudged
+
+
+def test_objective_low_quality_cell_abstains_to_fallback(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from adapt import llm_planner
+
+    _objective_env(monkeypatch)
+    monkeypatch.setattr(llm_planner, "build_objective_ledger", lambda s: _tiny_ledger())
+    monkeypatch.setattr(llm_planner, "_call_planner", lambda p: (_PLAN_JSON, "gpt-5.4"))
+    monkeypatch.setattr(llm_planner, "run_blocking_gates", lambda w, ld: _gates(True))
+    monkeypatch.setattr(
+        llm_planner, "evaluate_objective_coverage", lambda ld, e, w: _coverage("pass")
+    )
+    # Essential cell quality 0.58 (in [0.50, 0.65)), no severe defect → ABSTAIN.
+    monkeypatch.setattr(
+        llm_planner,
+        "judge_objective_adaptation_samples",
+        lambda ld, g, c, w, e, n: [_obj_verdict(0.58)],
+    )
+
+    result = llm_planner.plan_lesson_llm(_skill(), _profile(), artifacts_dir=str(tmp_path))
+
+    assert result is None  # routed to fallback
+    assert not (tmp_path / "judge_verdict.json").exists()
+    attempts = json.loads((tmp_path / "planner_attempts.json").read_text())
+    assert "abstain" in attempts["outcome"]  # distinct from a clean reject
+    assert "reject" not in attempts["outcome"]
+    log_lines = (tmp_path / "llm_adaptation_log.jsonl").read_text().splitlines()
+    assert "abstain" in json.loads(log_lines[-1])["outcome"]
+
+
+def test_objective_path_not_taken_when_flag_off(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from adapt import llm_planner
+
+    _planner_env(monkeypatch)
+    monkeypatch.delenv("WORKSHEET_OBJECTIVE_COVERAGE", raising=False)
+
+    def _no_obj_judge(*args: object, **kwargs: object) -> list[ObjectiveJudgeVerdict]:
+        raise AssertionError("objective judge must not run when the flag is off")
+
+    monkeypatch.setattr(llm_planner, "judge_objective_adaptation_samples", _no_obj_judge)
+    monkeypatch.setattr(llm_planner, "_call_planner", lambda p: (_PLAN_JSON, "gpt-5.4"))
+    monkeypatch.setattr(
+        llm_planner, "judge_adaptation_samples", lambda s, w, n: _verdict(True, 0.9)
+    )
+
+    result = llm_planner.plan_lesson_llm(_skill(), _profile(), artifacts_dir=str(tmp_path))
+
+    assert result is not None
+    verdict = json.loads((tmp_path / "judge_verdict.json").read_text())
+    assert verdict["outcome"] == "planned_approved"  # old path unchanged
+
+
+def test_objective_and_slot_contract_mutually_exclusive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from adapt import llm_planner
+
+    _planner_env(monkeypatch)
+    monkeypatch.setenv("WORKSHEET_OBJECTIVE_COVERAGE", "1")
+    monkeypatch.setenv("WORKSHEET_PLANNER_SLOT_CONTRACT", "1")
+
+    with pytest.raises((RuntimeError, ValueError)):
+        llm_planner.plan_lesson_llm(_skill(), _profile())
