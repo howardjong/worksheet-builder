@@ -65,6 +65,18 @@ RoleConfidence = Literal["high", "low"]
 
 RoleSource = Literal["corpus_exact", "pattern_rule", "source_context", "unknown"]
 
+# Practice-role vocabulary for typed evidence items (see EvidenceItem). Exported
+# here so the validator (validate/objective_coverage.py) and the judge-input
+# builder (adapt/llm_judge.py) share one source of truth without reaching across
+# packages. The string values are the same bare constants the validator already
+# uses; this alias just gives them a checked type.
+PracticeRole = Literal[
+    "student_practice",
+    "answer_key",
+    "distractor_option",
+    "worked_example",
+]
+
 
 # ============================================================================
 # Core Models
@@ -157,14 +169,21 @@ class EvidenceItem(BaseModel):
     validator and judge a clean typed surface without changing ActivityItem/planner/
     renderer schema. This model captures the visible text, practice role, answer key,
     response format, and whether the item is student production (vs. model/given).
+
+    ``evidence_item_id`` is a stable, deterministic provenance id (worksheet /
+    chunk / item position) populated by ``build_evidence_index``; it lets the
+    judge cite a specific item and lets the per-cell judge output (T8) carry
+    ``evidence_item_ids``. It is optional/defaulted so hand-built evidence (tests,
+    fixtures) stays valid.
     """
 
     visible_text: str
-    practice_role: str
+    practice_role: PracticeRole
     answer_key_text: str | None = None
     response_format: str
     is_student_production: bool
     objective_ids: list[str] = Field(default_factory=list)
+    evidence_item_id: str | None = None
 
 
 class ObjectiveLedger(BaseModel):

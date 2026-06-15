@@ -211,7 +211,7 @@ class TestObjectiveLedgerSchema:
         """EvidenceItem round-trips correctly."""
         evidence = EvidenceItem(
             visible_text="ship shop chop chip",
-            practice_role="decode_chain",
+            practice_role="student_practice",
             answer_key_text=None,
             response_format="read_aloud",
             is_student_production=True,
@@ -222,7 +222,7 @@ class TestObjectiveLedgerSchema:
         dumped = evidence.model_dump()
         restored = EvidenceItem.model_validate(dumped)
         assert restored.visible_text == "ship shop chop chip"
-        assert restored.practice_role == "decode_chain"
+        assert restored.practice_role == "student_practice"
         assert restored.answer_key_text is None
         assert restored.response_format == "read_aloud"
         assert restored.is_student_production is True

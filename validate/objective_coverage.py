@@ -39,6 +39,7 @@ from adapt.objective_ledger import (
     ObjectiveCell,
     ObjectiveLedger,
     PatternContext,
+    PracticeRole,
     classify_word_role,
 )
 from adapt.schema import ActivityChunk, ActivityItem, AdaptedActivityModel
@@ -116,10 +117,12 @@ _RECOGNITION_FORMATS = frozenset({"read_aloud", "circle", "match", "verbal"})
 # WRONG options are distractors that must not count.
 _SELECTION_FORMATS = frozenset({"circle", "match", "fill_blank"})
 
-PRACTICE_STUDENT = "student_practice"
-PRACTICE_KEY = "answer_key"
-PRACTICE_DISTRACTOR = "distractor_option"
-PRACTICE_WORKED_EXAMPLE = "worked_example"
+# These reuse the exported PracticeRole vocabulary (one source of truth) — the
+# string values are unchanged, the annotation just keeps them typed.
+PRACTICE_STUDENT: PracticeRole = "student_practice"
+PRACTICE_KEY: PracticeRole = "answer_key"
+PRACTICE_DISTRACTOR: PracticeRole = "distractor_option"
+PRACTICE_WORKED_EXAMPLE: PracticeRole = "worked_example"
 
 _ARROW_RE = re.compile(r"[→\-]+>?|>")
 _WORD_RE = re.compile(r"[A-Za-z]+")
@@ -288,13 +291,24 @@ def build_evidence_index(
     """
     index = _LedgerIndex(ledger)
     out: list[EvidenceItem] = []
-    for ws in worksheets:
+    for ws_index, ws in enumerate(worksheets):
         for chunk in ws.chunks:
-            out.extend(_evidence_for_chunk(chunk, ledger, index))
+            out.extend(_evidence_for_chunk(ws_index, chunk, ledger, index))
     return out
 
 
+def _chunk_provenance(ws_index: int, chunk: ActivityChunk) -> str:
+    """Stable provenance prefix for a chunk (mirrors blocking_gates id style)."""
+    return f"ws{ws_index}_chunk{chunk.chunk_id}"
+
+
+def _item_provenance(ws_index: int, chunk: ActivityChunk, item: ActivityItem) -> str:
+    """Stable provenance prefix for an item (mirrors blocking_gates::_item_id)."""
+    return f"ws{ws_index}_chunk{chunk.chunk_id}_item{item.item_id}"
+
+
 def _evidence_for_chunk(
+    ws_index: int,
     chunk: ActivityChunk,
     ledger: ObjectiveLedger,
     index: _LedgerIndex,
@@ -311,21 +325,25 @@ def _evidence_for_chunk(
                 response_format=chunk.response_format,
                 is_student_production=False,
                 objective_ids=[],
+                evidence_item_id=f"{_chunk_provenance(ws_index, chunk)}_worked_example",
             )
         )
 
     for item in chunk.items:
-        out.extend(_evidence_for_item(item, ledger, index))
+        out.extend(_evidence_for_item(ws_index, chunk, item, ledger, index))
     return out
 
 
 def _evidence_for_item(
+    ws_index: int,
+    chunk: ActivityChunk,
     item: ActivityItem,
     ledger: ObjectiveLedger,
     index: _LedgerIndex,
 ) -> list[EvidenceItem]:
     fmt = item.response_format
     is_production = _is_production(fmt)
+    base_id = _item_provenance(ws_index, chunk, item)
     out: list[EvidenceItem] = []
 
     # 1. The item content is always student practice.
@@ -338,6 +356,7 @@ def _evidence_for_item(
             response_format=fmt,
             is_student_production=is_production,
             objective_ids=_match_cells(content_words, fmt, ledger, index, practice=True),
+            evidence_item_id=f"{base_id}_content",
         )
     )
 
@@ -345,7 +364,7 @@ def _evidence_for_item(
     if fmt in _SELECTION_FORMATS and item.options:
         answer_parts = re.split(r"[,/]", item.answer or "")
         answer_norms = {_normalize(p) for p in answer_parts if _normalize(p)}
-        for opt in item.options:
+        for opt_index, opt in enumerate(item.options):
             opt_words = _words(opt)
             opt_norms = set(opt_words)
             is_correct = bool(answer_norms) and opt_norms <= answer_norms and opt_norms
@@ -358,6 +377,7 @@ def _evidence_for_item(
                         response_format=fmt,
                         is_student_production=is_production,
                         objective_ids=_match_cells(opt_words, fmt, ledger, index, practice=True),
+                        evidence_item_id=f"{base_id}_opt{opt_index}",
                     )
                 )
             else:
@@ -369,6 +389,7 @@ def _evidence_for_item(
                         response_format=fmt,
                         is_student_production=False,
                         objective_ids=[],
+                        evidence_item_id=f"{base_id}_opt{opt_index}",
                     )
                 )
         # The answer field for a selection item is carried only for transparency;
@@ -385,6 +406,7 @@ def _evidence_for_item(
                 response_format=fmt,
                 is_student_production=False,
                 objective_ids=[],
+                evidence_item_id=f"{base_id}_key",
             )
         )
 
