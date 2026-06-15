@@ -16,7 +16,7 @@ import os
 import statistics
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from adapt.objective_ledger import EvidenceItem, ObjectiveLedger
 from adapt.schema import AdaptedActivityModel
@@ -451,6 +451,7 @@ def _build_objective_judge_prompt(
     severe_defect_lines = "\n".join(
         f"  - {name}: {_SEVERE_DEFECT_GLOSS[name]}" for name in SEVERE_DEFECT_TYPES
     )
+    severe_defect_enum = " / ".join(SEVERE_DEFECT_TYPES)
 
     objectives = ", ".join(c.objective_id for c in ledger.objectives) or "(none)"
 
@@ -526,4 +527,353 @@ A severe defect with cited evidence on an essential cell is a real block. A low 
 score alone is not.
 
 Score each on 0.0-1.0 (do NOT use a 0-5 scale). Be rigorous but fair: the \
-worksheet should teach each objective effectively for a child ages 5-8."""
+worksheet should teach each objective effectively for a child ages 5-8.
+
+## Output Format
+
+Respond with ONLY this JSON (no markdown fences). Give one entry in \
+``objective_scores`` for EACH objective cell handed above (matched by \
+``objective_id``). ``severe_defects`` is a (possibly empty) list of typed \
+defects, each citing its ``evidence`` (the evidence_item_id(s) + why). The five \
+criteria and ``overall_score`` are package-level 0.0-1.0 scores.
+{{
+  "objective_scores": [
+    {{
+      "objective_id": "obj_decode",
+      "quality": 0.0-1.0,
+      "severe_defects": [
+        {{"defect_type": "one of {severe_defect_enum}", "evidence": "evidence_item_id(s) + why"}}
+      ],
+      "evidence_item_ids": ["evidence_item_id", "..."],
+      "rationale": "1-2 sentence per-cell assessment"
+    }}
+  ],
+  "objective_sufficiency": 0.0-1.0,
+  "skill_form_fidelity": 0.0-1.0,
+  "structured_literacy_alignment": 0.0-1.0,
+  "adhd_cognitive_load_fit": 0.0-1.0,
+  "lesson_flow_and_usability": 0.0-1.0,
+  "overall_score": 0.0-1.0,
+  "approval_recommendation": "approve" | "abstain" | "reject",
+  "feedback": ["specific feedback item 1", "specific feedback item 2"]
+}}"""
+
+
+# =========================================================================== #
+# Objective-sufficiency judge OUTPUT schema + per-cell aggregation +
+# AUTHORITATIVE tri-state derivation (T8)
+#
+# Lives alongside the OLD judge. The LLM emits per-cell quality (advisory) and a
+# typed severe-defect list per essential cell. We aggregate N samples PER cell:
+# numeric quality by median, severe defects by a CONSERVATIVE vote (2/3 -> reject
+# that cell, 1/3 with cited evidence -> abstain, never silently ignored). The
+# authoritative tri-state (approve/abstain/reject) is derived from the AGGREGATED
+# verdict plus the deterministic facts (blocking gates + coverage + ledger).
+# Built but NOT wired into production until T9 (flag-gated).
+# =========================================================================== #
+
+
+class SevereDefect(BaseModel):
+    """One typed severe defect the judge asserts against an essential cell.
+
+    ``evidence`` must cite the supporting evidence_item_id(s) and say why — a
+    severe defect without cited evidence is not a real block (see the prompt).
+    """
+
+    defect_type: SevereDefectType
+    evidence: str
+
+
+class ObjectiveJudgeCellScore(BaseModel):
+    """Per-objective-cell judge output.
+
+    ``quality`` is ADVISORY / diagnostic confidence, NOT a hard gate. The hard
+    veto on an essential cell is the typed ``severe_defects`` list.
+    ``severe_defect_vote`` is NOT emitted by the LLM — it is derived during
+    aggregation (the conservative vote across N samples). The default keeps a
+    single-sample parse valid.
+    """
+
+    objective_id: str
+    quality: float = Field(ge=0.0, le=1.0)
+    severe_defects: list[SevereDefect] = Field(default_factory=list)
+    evidence_item_ids: list[str] = Field(default_factory=list)
+    rationale: str = ""
+    severe_defect_vote: Literal["none", "abstain", "reject"] = "none"
+
+
+class ObjectiveJudgeVerdict(BaseModel):
+    """Objective-sufficiency judge verdict (per-cell scores + 5 criteria).
+
+    ``objective_sufficiency`` is the transition rename of the OLD judge's
+    ``content_coverage``. ``contract_version`` is fixed by us, not the LLM;
+    everything else except each cell's ``severe_defect_vote`` is emitted by the
+    judge. ``approval_recommendation`` here is DIAGNOSTIC — the authoritative
+    tri-state is ``derive_objective_approval``.
+    """
+
+    contract_version: Literal["objective_sufficiency_judge_v1"] = "objective_sufficiency_judge_v1"
+    objective_scores: list[ObjectiveJudgeCellScore] = Field(default_factory=list)
+    objective_sufficiency: float = Field(ge=0.0, le=1.0)
+    skill_form_fidelity: float = Field(ge=0.0, le=1.0)
+    structured_literacy_alignment: float = Field(ge=0.0, le=1.0)
+    adhd_cognitive_load_fit: float = Field(ge=0.0, le=1.0)
+    lesson_flow_and_usability: float = Field(ge=0.0, le=1.0)
+    overall_score: float = Field(ge=0.0, le=1.0)
+    approval_recommendation: Literal["approve", "abstain", "reject"] = "abstain"
+    feedback: list[str] = Field(default_factory=list)
+
+
+def _parse_objective_verdict(text: str) -> ObjectiveJudgeVerdict | None:
+    """Parse a GPT 5.4 response into an ObjectiveJudgeVerdict (mirror old parse)."""
+    try:
+        data = json.loads(_extract_json(text))
+        return ObjectiveJudgeVerdict.model_validate(data)
+    except (json.JSONDecodeError, Exception) as e:
+        logger.warning("Failed to parse objective judge verdict: %s", e)
+        return None
+
+
+def judge_objective_adaptation(
+    ledger: ObjectiveLedger,
+    blocking_gates: BlockingGateResult,
+    deterministic_coverage: ObjectiveCoverageResult,
+    worksheets: list[AdaptedActivityModel],
+    evidence: list[EvidenceItem],
+) -> ObjectiveJudgeVerdict | None:
+    """Evaluate a package with the objective-sufficiency judge (one call).
+
+    Returns an ObjectiveJudgeVerdict on success, or None if the judge is
+    unavailable (no key), the call fails, or the response cannot be parsed.
+    """
+    if not os.environ.get("OPENAI_API_KEY"):
+        logger.info("  Objective judge: no OPENAI_API_KEY, skipping")
+        return None
+
+    prompt = _build_objective_judge_prompt(
+        ledger, blocking_gates, deterministic_coverage, worksheets, evidence
+    )
+
+    logger.info("  Objective judge: calling GPT 5.4...")
+    response_text = _call_openai(prompt)
+    if response_text is None:
+        return None
+
+    verdict = _parse_objective_verdict(response_text)
+    if verdict is None:
+        return None
+
+    logger.info(
+        "  Objective judge: recommendation=%s (overall=%.2f, sufficiency=%.2f, adhd=%.2f, cells=%d)",
+        verdict.approval_recommendation,
+        verdict.overall_score,
+        verdict.objective_sufficiency,
+        verdict.adhd_cognitive_load_fit,
+        len(verdict.objective_scores),
+    )
+    for fb in verdict.feedback:
+        logger.info("    - %s", fb)
+
+    return verdict
+
+
+def judge_objective_adaptation_samples(
+    ledger: ObjectiveLedger,
+    blocking_gates: BlockingGateResult,
+    deterministic_coverage: ObjectiveCoverageResult,
+    worksheets: list[AdaptedActivityModel],
+    evidence: list[EvidenceItem],
+    samples: int,
+) -> list[ObjectiveJudgeVerdict]:
+    """Call the objective judge ``samples`` times; return the RAW per-sample list.
+
+    Failed calls are dropped. Returns ``[]`` if every call failed. Aggregation is
+    deliberately separate (``aggregate_objective_verdicts``) — the conservative
+    severe-defect vote needs the per-sample data, so this does not aggregate.
+    """
+    collected: list[ObjectiveJudgeVerdict] = []
+    for _ in range(max(1, samples)):
+        verdict = judge_objective_adaptation(
+            ledger, blocking_gates, deterministic_coverage, worksheets, evidence
+        )
+        if verdict is not None:
+            collected.append(verdict)
+    return collected
+
+
+def _resolve_cell_vote(
+    defect_sample_count: int, n_samples: int
+) -> Literal["none", "abstain", "reject"]:
+    """Conservative per-defect-type vote: 2/3 -> reject, >=1 -> abstain, else none."""
+    if defect_sample_count * 3 >= 2 * n_samples:
+        return "reject"
+    if defect_sample_count >= 1:
+        return "abstain"
+    return "none"
+
+
+def _aggregate_cell(
+    objective_id: str,
+    per_sample_cells: list[ObjectiveJudgeCellScore],
+    n_samples: int,
+) -> ObjectiveJudgeCellScore:
+    """Aggregate one objective cell across the samples that scored it.
+
+    ``quality`` is the median across samples that reported the cell. The
+    ``severe_defect_vote`` is the most severe vote across defect types (reject >
+    abstain > none), counted per defect_type across the N total samples.
+    """
+    quality = statistics.median(c.quality for c in per_sample_cells)
+
+    # Count, per defect_type, how many samples carried at least one such defect.
+    defect_sample_counts: dict[str, int] = {}
+    representative_evidence: dict[str, str] = {}
+    for cell in per_sample_cells:
+        seen_here: set[str] = set()
+        for defect in cell.severe_defects:
+            if defect.defect_type in seen_here:
+                continue
+            seen_here.add(defect.defect_type)
+            defect_sample_counts[defect.defect_type] = (
+                defect_sample_counts.get(defect.defect_type, 0) + 1
+            )
+            representative_evidence.setdefault(defect.defect_type, defect.evidence)
+
+    vote: Literal["none", "abstain", "reject"] = "none"
+    severe_defects: list[SevereDefect] = []
+    _rank = {"none": 0, "abstain": 1, "reject": 2}
+    for defect_type in SEVERE_DEFECT_TYPES:
+        count = defect_sample_counts.get(defect_type, 0)
+        type_vote = _resolve_cell_vote(count, n_samples)
+        if type_vote == "none":
+            continue
+        # Defect reached at least abstain-level — carry it with a representative
+        # evidence string from a sample that reported it.
+        severe_defects.append(
+            SevereDefect(
+                defect_type=defect_type,  # type: ignore[arg-type]
+                evidence=representative_evidence[defect_type],
+            )
+        )
+        if _rank[type_vote] > _rank[vote]:
+            vote = type_vote
+
+    # rationale / evidence_item_ids from a representative sample (the first one
+    # that reported the cell, stable across runs).
+    representative = per_sample_cells[0]
+    return ObjectiveJudgeCellScore(
+        objective_id=objective_id,
+        quality=quality,
+        severe_defects=severe_defects,
+        evidence_item_ids=representative.evidence_item_ids,
+        rationale=representative.rationale,
+        severe_defect_vote=vote,
+    )
+
+
+def aggregate_objective_verdicts(
+    verdicts: list[ObjectiveJudgeVerdict],
+) -> ObjectiveJudgeVerdict:
+    """Combine N objective-judge samples into one aggregated verdict.
+
+    Per objective cell (matched by ``objective_id``): ``quality`` is the median
+    across samples; ``severe_defect_vote`` is the conservative vote per
+    defect_type (>= 2/3 of samples -> reject, >= 1 sample with cited evidence ->
+    abstain, else none). For N=1 a single credible defect on a cell -> reject
+    (conservative for safety, by design). The five criteria + ``overall_score``
+    are the median across samples; ``feedback`` and ``approval_recommendation``
+    come from the representative (closest-to-median overall) sample.
+
+    A single verdict returns a COPY with each cell's ``severe_defect_vote``
+    resolved. The authoritative tri-state is ``derive_objective_approval``.
+    """
+    if not verdicts:
+        raise ValueError("aggregate_objective_verdicts requires at least one verdict")
+
+    n_samples = len(verdicts)
+
+    # Gather each cell's per-sample scores, preserving first-seen objective order.
+    ordered_ids: list[str] = []
+    per_cell: dict[str, list[ObjectiveJudgeCellScore]] = {}
+    for verdict in verdicts:
+        for cell in verdict.objective_scores:
+            if cell.objective_id not in per_cell:
+                per_cell[cell.objective_id] = []
+                ordered_ids.append(cell.objective_id)
+            per_cell[cell.objective_id].append(cell)
+
+    aggregated_cells = [_aggregate_cell(oid, per_cell[oid], n_samples) for oid in ordered_ids]
+
+    objective_sufficiency = statistics.median(v.objective_sufficiency for v in verdicts)
+    skill_form = statistics.median(v.skill_form_fidelity for v in verdicts)
+    structured = statistics.median(v.structured_literacy_alignment for v in verdicts)
+    adhd = statistics.median(v.adhd_cognitive_load_fit for v in verdicts)
+    flow = statistics.median(v.lesson_flow_and_usability for v in verdicts)
+    overall = statistics.median(v.overall_score for v in verdicts)
+    representative = min(verdicts, key=lambda v: abs(v.overall_score - overall))
+
+    return ObjectiveJudgeVerdict(
+        objective_scores=aggregated_cells,
+        objective_sufficiency=objective_sufficiency,
+        skill_form_fidelity=skill_form,
+        structured_literacy_alignment=structured,
+        adhd_cognitive_load_fit=adhd,
+        lesson_flow_and_usability=flow,
+        overall_score=overall,
+        approval_recommendation=representative.approval_recommendation,
+        feedback=representative.feedback,
+    )
+
+
+# Objective-sufficiency tri-state bands (mirror the OLD judge's
+# _APPROVE_OVERALL_MIN 0.70 / _APPROVE_CRITERION_MIN 0.50). Named so the policy
+# reads without scattered magic numbers.
+_OBJ_OVERALL_MIN = 0.70  # overall_score below this -> reject
+_OBJ_ADHD_MIN = 0.50  # adhd_cognitive_load_fit below this -> reject
+_OBJ_CELL_FAIL = 0.50  # essential-cell quality below this -> reject
+_OBJ_CELL_PASS = 0.65  # essential-cell quality in [FAIL, PASS) -> abstain
+
+
+def derive_objective_approval(
+    judge: ObjectiveJudgeVerdict | None,
+    blocking: BlockingGateResult,
+    coverage: ObjectiveCoverageResult,
+    ledger: ObjectiveLedger,
+) -> Literal["approve", "abstain", "reject"]:
+    """AUTHORITATIVE tri-state approval for the objective-sufficiency path.
+
+    The caller MUST pass the AGGREGATED verdict (the one whose cells carry a
+    resolved ``severe_defect_vote``) — the per-cell vote is read here. Policy:
+    deterministic / missing-judge rejects short-circuit; then judge-side rejects
+    (overall / adhd / essential-cell quality floor / a 2-of-3 severe-defect
+    veto); then abstains (coverage needs verification, an essential cell in the
+    [0.50, 0.65) quality band, or a 1-of-3 severe-defect on an essential cell);
+    else approve.
+    """
+    if judge is None or not blocking.passed or coverage.status == "fail":
+        return "reject"
+
+    essential_ids = {
+        cell.objective_id for cell in ledger.objectives if cell.importance == "essential"
+    }
+    essential_scores = [s for s in judge.objective_scores if s.objective_id in essential_ids]
+
+    # judge-side REJECT
+    if judge.overall_score < _OBJ_OVERALL_MIN:
+        return "reject"
+    if judge.adhd_cognitive_load_fit < _OBJ_ADHD_MIN:
+        return "reject"
+    if any(s.quality < _OBJ_CELL_FAIL for s in essential_scores):
+        return "reject"
+    if any(s.severe_defect_vote == "reject" for s in essential_scores):
+        return "reject"
+
+    # ABSTAIN
+    if coverage.status == "needs_verification":
+        return "abstain"
+    if any(_OBJ_CELL_FAIL <= s.quality < _OBJ_CELL_PASS for s in essential_scores):
+        return "abstain"
+    if any(s.severe_defect_vote == "abstain" for s in essential_scores):
+        return "abstain"
+
+    return "approve"

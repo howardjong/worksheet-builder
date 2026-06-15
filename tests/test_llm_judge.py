@@ -370,3 +370,352 @@ def test_evidence_item_practice_role_is_typed_literal() -> None:
             response_format="read_aloud",
             is_student_production=False,
         )
+
+
+# =========================================================================== #
+# T8: objective-sufficiency judge OUTPUT schema + per-cell aggregation +
+# the AUTHORITATIVE tri-state derivation.
+#
+# These pin: per-cell median quality across N samples; the CONSERVATIVE
+# severe-defect vote (2/3 -> reject, 1/3 -> abstain, never ignored); and the
+# tri-state approval policy. No LLM needed — verdicts are constructed directly.
+# =========================================================================== #
+
+from adapt.llm_judge import (  # noqa: E402
+    ObjectiveJudgeCellScore,
+    ObjectiveJudgeVerdict,
+    SevereDefect,
+    aggregate_objective_verdicts,
+    derive_objective_approval,
+    judge_objective_adaptation_samples,
+)
+from validate.blocking_gates import BlockingGateResult  # noqa: E402
+from validate.objective_coverage import (  # noqa: E402
+    ObjectiveCoverageResult,
+    PackageBoundResult,
+)
+
+
+def _cell(
+    objective_id: str,
+    quality: float,
+    *,
+    defects: list[str] | None = None,
+) -> ObjectiveJudgeCellScore:
+    severe = [
+        SevereDefect(defect_type=d, evidence=f"ws0_chunk1_item0: {d}")  # type: ignore[arg-type]
+        for d in (defects or [])
+    ]
+    return ObjectiveJudgeCellScore(
+        objective_id=objective_id,
+        quality=quality,
+        severe_defects=severe,
+        evidence_item_ids=["ws0_chunk1_item0"],
+        rationale=f"rat-{objective_id}-{quality}",
+    )
+
+
+def _obj_verdict(
+    cells: list[ObjectiveJudgeCellScore],
+    *,
+    overall: float = 0.80,
+    objective_sufficiency: float = 0.80,
+    skill_form: float = 0.80,
+    structured: float = 0.80,
+    adhd: float = 0.80,
+    flow: float = 0.80,
+    recommendation: str = "approve",
+) -> ObjectiveJudgeVerdict:
+    return ObjectiveJudgeVerdict(
+        objective_scores=cells,
+        objective_sufficiency=objective_sufficiency,
+        skill_form_fidelity=skill_form,
+        structured_literacy_alignment=structured,
+        adhd_cognitive_load_fit=adhd,
+        lesson_flow_and_usability=flow,
+        overall_score=overall,
+        approval_recommendation=recommendation,  # type: ignore[arg-type]
+        feedback=[f"fb-{overall}"],
+    )
+
+
+# --- output schema / parse ------------------------------------------------- #
+
+
+def test_objective_verdict_fixes_contract_version() -> None:
+    v = _obj_verdict([_cell("obj_decode", 0.8)])
+    assert v.contract_version == "objective_sufficiency_judge_v1"
+
+
+def test_objective_cell_default_vote_is_none() -> None:
+    c = _cell("obj_decode", 0.8)
+    assert c.severe_defect_vote == "none"
+
+
+# --- per-cell median quality + conservative severe-defect vote ------------- #
+
+
+def test_aggregate_per_cell_median_quality_across_three_samples() -> None:
+    samples = [
+        _obj_verdict([_cell("obj_decode", 0.40)], overall=0.70),
+        _obj_verdict([_cell("obj_decode", 0.60)], overall=0.75),
+        _obj_verdict([_cell("obj_decode", 0.90)], overall=0.80),
+    ]
+    agg = aggregate_objective_verdicts(samples)
+    cell = next(c for c in agg.objective_scores if c.objective_id == "obj_decode")
+    assert cell.quality == 0.60  # median of 0.40 / 0.60 / 0.90
+    assert agg.overall_score == 0.75  # median overall
+
+
+def test_aggregate_severe_defect_two_of_three_votes_reject() -> None:
+    samples = [
+        _obj_verdict([_cell("obj_decode", 0.8, defects=["wrong_cognitive_task"])]),
+        _obj_verdict([_cell("obj_decode", 0.8, defects=["wrong_cognitive_task"])]),
+        _obj_verdict([_cell("obj_decode", 0.8)]),
+    ]
+    agg = aggregate_objective_verdicts(samples)
+    cell = next(c for c in agg.objective_scores if c.objective_id == "obj_decode")
+    assert cell.severe_defect_vote == "reject"
+    assert any(d.defect_type == "wrong_cognitive_task" for d in cell.severe_defects)
+
+
+def test_aggregate_severe_defect_one_of_three_votes_abstain_not_ignored() -> None:
+    samples = [
+        _obj_verdict([_cell("obj_decode", 0.8, defects=["wrong_cognitive_task"])]),
+        _obj_verdict([_cell("obj_decode", 0.8)]),
+        _obj_verdict([_cell("obj_decode", 0.8)]),
+    ]
+    agg = aggregate_objective_verdicts(samples)
+    cell = next(c for c in agg.objective_scores if c.objective_id == "obj_decode")
+    assert cell.severe_defect_vote == "abstain"  # NOT ignored, NOT none
+    assert any(d.defect_type == "wrong_cognitive_task" for d in cell.severe_defects)
+
+
+def test_aggregate_single_sample_reject_when_cell_has_defect() -> None:
+    agg = aggregate_objective_verdicts(
+        [_obj_verdict([_cell("obj_decode", 0.8, defects=["child_cannot_reasonably_answer"])])]
+    )
+    cell = next(c for c in agg.objective_scores if c.objective_id == "obj_decode")
+    assert cell.severe_defect_vote == "reject"  # N=1, c/N=1 >= 2/3
+
+
+def test_aggregate_single_sample_none_when_no_defect() -> None:
+    agg = aggregate_objective_verdicts([_obj_verdict([_cell("obj_decode", 0.8)])])
+    cell = next(c for c in agg.objective_scores if c.objective_id == "obj_decode")
+    assert cell.severe_defect_vote == "none"
+
+
+# --- tri-state derivation -------------------------------------------------- #
+
+
+def _ledger() -> object:
+    return build_objective_ledger(_obj_skill())
+
+
+def _essential_ids(ledger: object) -> list[str]:
+    return [c.objective_id for c in ledger.objectives if c.importance == "essential"]  # type: ignore[attr-defined]
+
+
+def _pass_gate() -> BlockingGateResult:
+    return BlockingGateResult(passed=True, violations=[])
+
+
+def _fail_gate() -> BlockingGateResult:
+    return BlockingGateResult(passed=False, violations=[])
+
+
+def _coverage(status: str) -> ObjectiveCoverageResult:
+    return ObjectiveCoverageResult(
+        status=status,  # type: ignore[arg-type]
+        passed=(status == "pass"),
+        objective_results=[],
+        package_bounds=PackageBoundResult(
+            passed=True,
+            total_estimated_minutes=10,
+            total_item_count=5,
+            dense_text_block_count=0,
+            max_objectives_in_a_worksheet=1,
+        ),
+    )
+
+
+def _clean_judge(ledger: object, *, quality: float = 0.8) -> ObjectiveJudgeVerdict:
+    cells = [_cell(oid, quality) for oid in _essential_ids(ledger)]
+    agg = aggregate_objective_verdicts([_obj_verdict(cells, overall=0.85, adhd=0.80)])
+    return agg
+
+
+def test_derive_approve_when_everything_clean() -> None:
+    ledger = _ledger()
+    judge = _clean_judge(ledger, quality=0.80)
+    out = derive_objective_approval(judge, _pass_gate(), _coverage("pass"), ledger)  # type: ignore[arg-type]
+    assert out == "approve"
+
+
+def test_derive_reject_when_judge_none() -> None:
+    ledger = _ledger()
+    out = derive_objective_approval(None, _pass_gate(), _coverage("pass"), ledger)  # type: ignore[arg-type]
+    assert out == "reject"
+
+
+def test_derive_reject_when_blocking_failed() -> None:
+    ledger = _ledger()
+    judge = _clean_judge(ledger, quality=0.80)
+    out = derive_objective_approval(judge, _fail_gate(), _coverage("pass"), ledger)  # type: ignore[arg-type]
+    assert out == "reject"
+
+
+def test_derive_reject_when_coverage_fail() -> None:
+    ledger = _ledger()
+    judge = _clean_judge(ledger, quality=0.80)
+    out = derive_objective_approval(judge, _pass_gate(), _coverage("fail"), ledger)  # type: ignore[arg-type]
+    assert out == "reject"
+
+
+def test_derive_abstain_when_coverage_needs_verification() -> None:
+    ledger = _ledger()
+    judge = _clean_judge(ledger, quality=0.80)
+    out = derive_objective_approval(
+        judge,
+        _pass_gate(),
+        _coverage("needs_verification"),
+        ledger,  # type: ignore[arg-type]
+    )
+    assert out == "abstain"
+
+
+def test_derive_abstain_essential_cell_quality_058_no_defect() -> None:
+    ledger = _ledger()
+    essential = _essential_ids(ledger)
+    # one essential cell at 0.58 (in [0.50, 0.65) abstain band), rest clean.
+    cells = [_cell(oid, 0.80) for oid in essential[1:]]
+    cells.insert(0, _cell(essential[0], 0.58))
+    judge = aggregate_objective_verdicts([_obj_verdict(cells, overall=0.85, adhd=0.80)])
+    out = derive_objective_approval(judge, _pass_gate(), _coverage("pass"), ledger)  # type: ignore[arg-type]
+    assert out == "abstain"
+
+
+def test_derive_reject_essential_cell_quality_045() -> None:
+    ledger = _ledger()
+    essential = _essential_ids(ledger)
+    cells = [_cell(oid, 0.80) for oid in essential[1:]]
+    cells.insert(0, _cell(essential[0], 0.45))  # < 0.50 -> reject
+    judge = aggregate_objective_verdicts([_obj_verdict(cells, overall=0.85, adhd=0.80)])
+    out = derive_objective_approval(judge, _pass_gate(), _coverage("pass"), ledger)  # type: ignore[arg-type]
+    assert out == "reject"
+
+
+def test_derive_reject_severe_defect_two_of_three_on_essential_cell() -> None:
+    ledger = _ledger()
+    essential = _essential_ids(ledger)
+    eid = essential[0]
+    samples = [
+        _obj_verdict(
+            [_cell(eid, 0.80, defects=["wrong_cognitive_task"])]
+            + [_cell(o, 0.80) for o in essential[1:]],
+            overall=0.85,
+            adhd=0.80,
+        ),
+        _obj_verdict(
+            [_cell(eid, 0.80, defects=["wrong_cognitive_task"])]
+            + [_cell(o, 0.80) for o in essential[1:]],
+            overall=0.85,
+            adhd=0.80,
+        ),
+        _obj_verdict(
+            [_cell(o, 0.80) for o in essential],
+            overall=0.85,
+            adhd=0.80,
+        ),
+    ]
+    judge = aggregate_objective_verdicts(samples)
+    out = derive_objective_approval(judge, _pass_gate(), _coverage("pass"), ledger)  # type: ignore[arg-type]
+    assert out == "reject"
+
+
+def test_derive_abstain_severe_defect_one_of_three_on_essential_cell() -> None:
+    ledger = _ledger()
+    essential = _essential_ids(ledger)
+    eid = essential[0]
+    samples = [
+        _obj_verdict(
+            [_cell(eid, 0.80, defects=["wrong_cognitive_task"])]
+            + [_cell(o, 0.80) for o in essential[1:]],
+            overall=0.85,
+            adhd=0.80,
+        ),
+        _obj_verdict([_cell(o, 0.80) for o in essential], overall=0.85, adhd=0.80),
+        _obj_verdict([_cell(o, 0.80) for o in essential], overall=0.85, adhd=0.80),
+    ]
+    judge = aggregate_objective_verdicts(samples)
+    out = derive_objective_approval(judge, _pass_gate(), _coverage("pass"), ledger)  # type: ignore[arg-type]
+    assert out == "abstain"
+
+
+def test_derive_reject_when_overall_below_070() -> None:
+    ledger = _ledger()
+    judge = aggregate_objective_verdicts(
+        [_obj_verdict([_cell(o, 0.80) for o in _essential_ids(ledger)], overall=0.65, adhd=0.80)]
+    )
+    out = derive_objective_approval(judge, _pass_gate(), _coverage("pass"), ledger)  # type: ignore[arg-type]
+    assert out == "reject"
+
+
+def test_derive_reject_when_adhd_below_050() -> None:
+    ledger = _ledger()
+    judge = aggregate_objective_verdicts(
+        [_obj_verdict([_cell(o, 0.80) for o in _essential_ids(ledger)], overall=0.85, adhd=0.40)]
+    )
+    out = derive_objective_approval(judge, _pass_gate(), _coverage("pass"), ledger)  # type: ignore[arg-type]
+    assert out == "reject"
+
+
+# --- samples plumbing ------------------------------------------------------ #
+
+
+def test_judge_objective_samples_calls_n_times_returns_raw_list(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    seq = iter(
+        [
+            _obj_verdict([_cell("obj_decode", 0.40)]),
+            _obj_verdict([_cell("obj_decode", 0.60)]),
+            _obj_verdict([_cell("obj_decode", 0.90)]),
+        ]
+    )
+    calls: list[int] = []
+
+    def fake(*args: object, **kwargs: object) -> ObjectiveJudgeVerdict:
+        calls.append(1)
+        return next(seq)
+
+    monkeypatch.setattr("adapt.llm_judge.judge_objective_adaptation", fake)
+    out = judge_objective_adaptation_samples(None, None, None, None, None, 3)  # type: ignore[arg-type]
+
+    assert len(calls) == 3
+    assert len(out) == 3  # RAW list, not aggregated
+    assert [c.objective_scores[0].quality for c in out] == [0.40, 0.60, 0.90]
+
+
+def test_judge_objective_samples_drops_failures(monkeypatch: pytest.MonkeyPatch) -> None:
+    seq = iter([_obj_verdict([_cell("obj_decode", 0.5)]), None, None])
+    monkeypatch.setattr("adapt.llm_judge.judge_objective_adaptation", lambda *a, **k: next(seq))
+    out = judge_objective_adaptation_samples(None, None, None, None, None, 3)  # type: ignore[arg-type]
+    assert len(out) == 1
+
+
+def test_objective_output_format_section_names_required_fields() -> None:
+    prompt = _build_objective_prompt()
+    for field in (
+        "objective_scores",
+        "quality",
+        "severe_defects",
+        "objective_sufficiency",
+        "skill_form_fidelity",
+        "structured_literacy_alignment",
+        "adhd_cognitive_load_fit",
+        "lesson_flow_and_usability",
+        "overall_score",
+        "approval_recommendation",
+    ):
+        assert field in prompt
