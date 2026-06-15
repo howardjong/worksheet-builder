@@ -9,6 +9,7 @@ from skill.schema import LiteracySkillModel, SourceItem
 from skill.taxonomy import match_phonics_pattern
 
 _LESSON_PATTERN = re.compile(r"lesson\s+(\d+)", re.IGNORECASE)
+_MARKER_PATTERN = re.compile(r"(\w+[*♥❤])", re.UNICODE)
 
 
 def extract_skill(source: SourceWorksheetModel) -> LiteracySkillModel:
@@ -52,11 +53,13 @@ def _extract_word_work(source: SourceWorksheetModel) -> LiteracySkillModel:
         elif region.type == "sample_words":
             words = _extract_words(region.content)
             target_words.extend(words)
+            cleaned_content, markers = _strip_source_notation(region.content)
             source_items.append(
                 SourceItem(
                     item_type="word_list",
-                    content=region.content,
+                    content=cleaned_content,
                     source_region_index=i,
+                    metadata={"notation_markers": ",".join(markers)} if markers else {},
                 )
             )
 
@@ -84,20 +87,24 @@ def _extract_word_work(source: SourceWorksheetModel) -> LiteracySkillModel:
         elif region.type == "sight_word_list":
             words = _extract_words(region.content)
             target_words.extend(words)
+            cleaned_content, markers = _strip_source_notation(region.content)
             source_items.append(
                 SourceItem(
                     item_type="sight_words",
-                    content=region.content,
+                    content=cleaned_content,
                     source_region_index=i,
+                    metadata={"notation_markers": ",".join(markers)} if markers else {},
                 )
             )
 
         elif region.type == "practice_sentences":
+            cleaned_content, markers = _strip_source_notation(region.content)
             source_items.append(
                 SourceItem(
                     item_type="sentence",
-                    content=region.content,
+                    content=cleaned_content,
                     source_region_index=i,
+                    metadata={"notation_markers": ",".join(markers)} if markers else {},
                 )
             )
 
@@ -263,19 +270,23 @@ def _extract_generic(source: SourceWorksheetModel) -> LiteracySkillModel:
         if region.type == "word_list":
             words = _extract_words(region.content)
             target_words.extend(words)
+            cleaned_content, markers = _strip_source_notation(region.content)
             source_items.append(
                 SourceItem(
                     item_type="word_list",
-                    content=region.content,
+                    content=cleaned_content,
                     source_region_index=i,
+                    metadata={"notation_markers": ",".join(markers)} if markers else {},
                 )
             )
         elif region.type == "question":
+            cleaned_content, markers = _strip_source_notation(region.content)
             source_items.append(
                 SourceItem(
                     item_type="sentence",
-                    content=region.content,
+                    content=cleaned_content,
                     source_region_index=i,
+                    metadata={"notation_markers": ",".join(markers)} if markers else {},
                 )
             )
 
@@ -503,6 +514,58 @@ def _sanitize_concept_text(text: str) -> str:
     if any(word in _CONCEPT_HEADER_TOKENS for word in words):
         return ""
     return trimmed
+
+
+def _strip_source_notation(content: str) -> tuple[str, list[str]]:
+    """Strip source-notation artifacts from student-facing text.
+
+    Removes trailing markers (*,♥,❤) from tokens and bracketed/parenthesized
+    annotation segments, preserving natural spacing. Returns the cleaned
+    content and a list of the original marked tokens and annotations.
+
+    Note: Processes brackets/parens first, then markers, so tokens inside
+    removed annotations are not double-counted. Nested brackets and math-style
+    parens (e.g., "(2 + 3)") are not specially handled (acceptable: out of
+    scope for the three student-facing item types).
+
+    Example:
+        "who, by*, my*, one" → ("who, by, my, one", ["by*", "my*"])
+        "who [heart word], by*, my" → ("who, by, my", ["[heart word]", "by*"])
+        "Run to the den. (sight: the)" → ("Run to the den.", ["(sight: the)"])
+        "the, was, said" → ("the, was, said", [])
+    """
+    markers_found: list[str] = []
+    cleaned = content
+
+    # Strip bracketed annotations: [...] and (...)
+    # Conservative: only strip when brackets/parens are balanced and contain text
+    # Process brackets first so markers inside annotations are not double-counted
+    bracket_pattern = re.compile(r"\[[^\]]+\]")
+    paren_pattern = re.compile(r"\([^)]+\)")
+
+    for pattern in [bracket_pattern, paren_pattern]:
+        for match in pattern.finditer(content):
+            annotation = match.group(0)
+            markers_found.append(annotation)
+            cleaned = cleaned.replace(annotation, "")
+
+    # Collapse multiple spaces and fix dangling separators
+    cleaned = re.sub(r"\s+", " ", cleaned)
+    # Remove leading/trailing comma or space
+    cleaned = re.sub(r"^[,\s]+|[,\s]+$", "", cleaned)
+    # Fix multiple adjacent commas → single comma (e.g., ", , ," → ",")
+    cleaned = re.sub(r",(\s*,)+", ",", cleaned)
+
+    # Find all marked tokens (word followed by marker) that survived bracket removal
+    for match in _MARKER_PATTERN.finditer(cleaned):
+        marked_token = match.group(1)
+        markers_found.append(marked_token)
+        # Strip the marker (last character)
+        clean_token = marked_token[:-1]
+        # Replace in the content
+        cleaned = cleaned.replace(marked_token, clean_token)
+
+    return (cleaned, markers_found)
 
 
 def _normalize_concept(text: str) -> str:
