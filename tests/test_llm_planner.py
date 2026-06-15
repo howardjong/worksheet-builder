@@ -8,7 +8,11 @@ from pathlib import Path
 import pytest
 
 from adapt.llm_judge import JudgeVerdict
-from adapt.llm_planner import _build_planner_prompt, _corpus_block
+from adapt.llm_planner import (
+    _build_planner_prompt,
+    _corpus_block,
+    _objective_authoring_block,
+)
 from adapt.rules import build_rules
 from companion.schema import Accommodations, LearnerProfile
 from corpus.ufli.lookup import CorpusLookupResult
@@ -415,3 +419,60 @@ def test_contract_off_leaves_dropped_source_absent(
     contents = [i.content for ws in result for chunk in ws.chunks for i in chunk.items]
     assert "home" not in contents
     assert contents == ["cake", "ride"]
+
+
+# --- T8.5: objective-authoring block (author IN the required forms) -----------
+
+_OBJ_HEADER = "## Objective coverage (author each objective IN its required form)"
+
+
+def test_objective_block_empty_when_flag_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("WORKSHEET_OBJECTIVE_COVERAGE", raising=False)
+    assert _objective_authoring_block(_skill()) == ""
+
+
+def test_objective_block_nonempty_with_header_when_flag_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("WORKSHEET_OBJECTIVE_COVERAGE", "1")
+    block = _objective_authoring_block(_skill())
+    assert block != ""
+    assert _OBJ_HEADER in block
+
+
+def test_prompt_omits_objective_authoring_when_flag_off(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("WORKSHEET_OBJECTIVE_COVERAGE", raising=False)
+    prompt = _build_planner_prompt(_skill(), _profile(), build_rules(_profile()), "default", None)
+
+    assert _OBJ_HEADER not in prompt
+    assert "ordered build/transformation" not in prompt
+    assert "do not include every" not in prompt
+
+
+def test_prompt_authors_chain_in_required_form_when_flag_on(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("WORKSHEET_OBJECTIVE_COVERAGE", "1")
+    prompt = _build_planner_prompt(_skill(), _profile(), build_rules(_profile()), "default", None)
+
+    assert _OBJ_HEADER in prompt
+    # An objective_id from the built ledger appears so the model can target the cell.
+    assert "obj_manipulation" in prompt
+
+    # 1. Author the chain IN its form: an ordered build/transformation, with the
+    #    chain's own words present in the step guidance (not scattered write items).
+    lowered = prompt.lower()
+    assert "transformation" in lowered
+    assert "ordered" in lowered
+    assert "change" in lowered
+    assert "tone" in prompt  # chain step word surfaced in the chain-form guidance
+
+    # 2. Sample samplable pools to threshold, not exhaustively.
+    assert "sample" in lowered
+    assert "do not include every" in lowered
+
+    # 3. Do NOT dilute target-pattern cells with contrast/review/irregular words.
+    assert "contrast" in lowered
+    assert "must not pad" in lowered

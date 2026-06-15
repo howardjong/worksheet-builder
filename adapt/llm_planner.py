@@ -27,6 +27,7 @@ from adapt.coverage_ledger import (
 )
 from adapt.llm_adapt import LessonPlan, _call_gemini, _parse_lesson_plan, _translate_plan
 from adapt.llm_judge import JudgeVerdict, _call_openai, judge_adaptation_samples
+from adapt.objective_ledger import ObjectiveCell, RequiredForm, build_objective_ledger
 from adapt.rules import AccommodationRules, build_rules
 from adapt.schema import AdaptedActivityModel
 from adapt.section_cap import enforce_section_cap
@@ -132,6 +133,104 @@ def _covered_ids_schema_line() -> str:
     return ',\n              "covered_source_item_ids": ["id1", "id2"]'
 
 
+def _objective_coverage_enabled() -> bool:
+    """Whether objective-sufficiency authoring guidance is active (default OFF)."""
+    return bool(os.environ.get("WORKSHEET_OBJECTIVE_COVERAGE"))
+
+
+# Maps each required pedagogical form to concrete "author IN this form" guidance.
+# Keyed on RequiredForm Literal values; the load-bearing phrases (e.g. "ordered
+# build/transformation") are pinned by tests/test_llm_planner.py.
+_FORM_GUIDANCE: dict[RequiredForm, str] = {
+    "word_chain": (
+        "author an ordered build/transformation sequence — each step changes ONE "
+        "letter/sound from the previous word, with explicit step language (e.g. "
+        '"Make `tune`. Change the `u` to `o`. What word? ...`tone`"). Do NOT scatter '
+        "the chain's words across separate write items."
+    ),
+    "chain_script": (
+        "author an ordered build/transformation sequence — each step changes ONE "
+        "letter/sound from the previous word, with explicit step language (e.g. "
+        '"Make `tune`. Change the `u` to `o`. What word?"). Do NOT scatter the '
+        "chain's words across separate write items."
+    ),
+    "decodable_passage": (
+        "author real CONNECTED TEXT (a short passage), not a title or a lone sentence."
+    ),
+    "encoding_or_spelling": (
+        "author WRITTEN PRODUCTION (the child writes/spells the word), not reading."
+    ),
+    "decodable_sentence": (
+        "author PRODUCTION (the child writes the sentence), not just reading it."
+    ),
+    "irregular_word_practice": ("practice the irregular/heart words as whole words."),
+    "contrast_sort_or_discrimination": (
+        "author a deliberate sort / discrimination task that separates the target "
+        "pattern from the contrast words."
+    ),
+}
+
+
+def _objective_cell_block(cell: ObjectiveCell, content_by_id: dict[str, str]) -> str:
+    """Render one objective cell: its identity, words, threshold, and form guidance."""
+    lines = [
+        f"### {cell.objective_id} — {cell.display_name} ({cell.importance})",
+        f"- Required forms: {', '.join(cell.required_forms) or '(none)'}",
+        f"- Target-pattern words (these exercise the pattern): "
+        f"{', '.join(cell.target_words) or '(see source items below)'}",
+        f"- Practice threshold (min): {cell.min_practice_count}",
+    ]
+    if cell.contrast_words:
+        lines.append(
+            f"- Contrast words (do NOT count toward this cell): {', '.join(cell.contrast_words)}"
+        )
+    if cell.irregular_words:
+        lines.append(
+            f"- Irregular words (do NOT count toward this cell): {', '.join(cell.irregular_words)}"
+        )
+    for fid in cell.source_item_ids:
+        content = content_by_id.get(fid)
+        if content:
+            lines.append(f"- Source ({fid}): {content}")
+    for form in cell.required_forms:
+        lines.append(f"- For `{form}`: {_FORM_GUIDANCE[form]}")
+    return "\n".join(lines)
+
+
+def _objective_authoring_block(skill: LiteracySkillModel) -> str:
+    """Render per-objective authoring guidance: author each objective IN its form.
+
+    Empty string when the flag is off (guarded FIRST, so no ledger is built) — the
+    prompt stays byte-identical to today. When on, the ledger's objective cells +
+    required forms + sampling/dilution rules are rendered for the planner.
+    """
+    if not _objective_coverage_enabled():
+        return ""
+    ledger = build_objective_ledger(skill)
+    content_by_id = {si.source_item_id: si.content for si in ledger.source_items}
+    cell_blocks = "\n\n".join(_objective_cell_block(c, content_by_id) for c in ledger.objectives)
+    return f"""
+## Objective coverage (author each objective IN its required form)
+
+Each objective below MUST be exercised IN its required pedagogical form (not merely
+mentioned). Follow these three rules:
+
+1. AUTHOR EACH REQUIRED FORM IN ITS FORM. A word chain is an ordered \
+build/transformation sequence (change one letter/sound per step, with explicit step \
+language) — NOT the chain's words scattered across separate write items. A passage is \
+connected text. An encode/spell objective is written production. A sentence-write \
+objective is production (the child writes it).
+2. SAMPLE samplable pools to the threshold, not exhaustively. For large pools \
+(Roll-and-Read lists, long word lists) practice a representative sample up to the \
+cell's threshold — do not include every pool word; you need not include all of them.
+3. Do NOT dilute a target-pattern cell with contrast/review/irregular words. A \
+target-pattern objective's practice MUST use the pattern's own words; contrast, \
+review, and irregular words do not count toward it and must not pad it.
+
+{cell_blocks}
+"""
+
+
 def _build_planner_prompt(
     skill: LiteracySkillModel,
     profile: LearnerProfile,
@@ -147,6 +246,7 @@ def _build_planner_prompt(
 
     corpus_text = _corpus_block(skill)
     contract_block = _coverage_contract_block(skill)
+    objective_block = _objective_authoring_block(skill)
     covered_ids_schema = _covered_ids_schema_line()
 
     curriculum_text = ""
@@ -174,7 +274,7 @@ Source sections:
 
 {corpus_text}
 {curriculum_text}
-{contract_block}
+{contract_block}{objective_block}
 ## Learner Profile
 
 Name: {profile.name}
