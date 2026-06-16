@@ -148,6 +148,15 @@ def _objective_coverage_enabled() -> bool:
     return bool(os.environ.get("WORKSHEET_OBJECTIVE_COVERAGE"))
 
 
+def _allow_unjudged_objective_plan() -> bool:
+    """Whether to ship an objective plan unjudged when the judge is down (default OFF).
+
+    Safe default: the objective path abstains to the deterministic fallback when the
+    judge is unavailable. Set this flag to opt back into the old ship-unjudged behavior.
+    """
+    return bool(os.environ.get("WORKSHEET_ALLOW_UNJUDGED_OBJECTIVE_PLAN"))
+
+
 # Maps each required pedagogical form to concrete "author IN this form" guidance.
 # Keyed on RequiredForm Literal values; the load-bearing phrases (e.g. "ordered
 # build/transformation") are pinned by tests/test_llm_planner.py.
@@ -580,8 +589,16 @@ def _plan_lesson_objective(
         ledger, gates, coverage, worksheets, evidence, _judge_samples()
     )
     if not samples:
-        # Mirror the old path: the deterministic gates + coverage already vetted it;
-        # ship unjudged.
+        if not _allow_unjudged_objective_plan():
+            # Safe default: the judge is the Phase-2 quality review; gates + coverage
+            # do not substitute for it. Abstain to the deterministic fallback so
+            # transform.py judges what actually ships.
+            logger.warning("  LLM planner (objective): judge unavailable → abstain to fallback")
+            return _objective_fallback(
+                skill, "objective_abstain_judge_unavailable", model_label, None, artifacts_dir
+            )
+        # Opt-in (WORKSHEET_ALLOW_UNJUDGED_OBJECTIVE_PLAN): the deterministic gates +
+        # coverage already vetted it; ship unjudged.
         outcome = "objective_planned_unjudged"
         _write_verdict_artifact(_unjudged_payload(outcome), artifacts_dir)
         _log_performance(

@@ -634,25 +634,66 @@ def test_objective_clean_plan_approved(monkeypatch: pytest.MonkeyPatch, tmp_path
     assert json.loads(log_lines[-1])["outcome"] == "objective_approved"
 
 
-def test_objective_ships_unjudged_when_judge_unavailable(
+def test_objective_abstains_to_fallback_when_judge_unavailable_by_default(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Empty judge samples → ship the deterministically-vetted plan unjudged.
+    """DEFAULT (no opt-in flag): empty judge samples → abstain to deterministic fallback.
 
-    This is the only NEW branch that SHIPS without a judge verdict. The gates +
-    coverage already passed; the empty-samples guard (judge unavailable) is what
-    routes here — NOT approve/abstain/reject.
+    The judge being unavailable must NOT ship LLM-authored material unjudged by
+    default. Gates + coverage passing is not a substitute for the Phase-2 quality
+    review, so the path abstains (return None) and the deterministic engine takes
+    over — transform.py then judges what actually ships.
     """
     from adapt import llm_planner
 
     _objective_env(monkeypatch)
+    monkeypatch.delenv("WORKSHEET_ALLOW_UNJUDGED_OBJECTIVE_PLAN", raising=False)
     monkeypatch.setattr(llm_planner, "build_objective_ledger", lambda s: _tiny_ledger())
     monkeypatch.setattr(llm_planner, "_call_planner", lambda p: (_PLAN_JSON, "gpt-5.4"))
     monkeypatch.setattr(llm_planner, "run_blocking_gates", lambda w, ld: _gates(True))
     monkeypatch.setattr(
         llm_planner, "evaluate_objective_coverage", lambda ld, e, w: _coverage("pass")
     )
-    # Judge unavailable: empty per-sample list. This is the guard that ships unjudged.
+    # Judge unavailable: empty per-sample list. By default this now ABSTAINS.
+    monkeypatch.setattr(
+        llm_planner,
+        "judge_objective_adaptation_samples",
+        lambda ld, g, c, w, e, n: [],
+    )
+
+    result = llm_planner.plan_lesson_llm(_skill(), _profile(), artifacts_dir=str(tmp_path))
+
+    assert result is None  # routed to deterministic fallback, not shipped unjudged
+    # No judge_verdict.json: nothing shipped, transform must judge what does ship.
+    assert not (tmp_path / "judge_verdict.json").exists()
+    attempts = json.loads((tmp_path / "planner_attempts.json").read_text())
+    assert attempts["outcome"] == "objective_abstain_judge_unavailable"
+    log_lines = (tmp_path / "llm_adaptation_log.jsonl").read_text().splitlines()
+    last = json.loads(log_lines[-1])
+    assert last["outcome"] == "objective_abstain_judge_unavailable"
+    assert last["final_output_judged"] is False
+
+
+def test_objective_ships_unjudged_when_judge_unavailable_opt_in(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """OPT-IN (WORKSHEET_ALLOW_UNJUDGED_OBJECTIVE_PLAN=1): ship unjudged when judge down.
+
+    With the explicit opt-in flag, the old behavior is preserved: gates + coverage
+    passed, the empty-samples guard (judge unavailable) ships the deterministically
+    vetted plan with an unjudged verdict artifact.
+    """
+    from adapt import llm_planner
+
+    _objective_env(monkeypatch)
+    monkeypatch.setenv("WORKSHEET_ALLOW_UNJUDGED_OBJECTIVE_PLAN", "1")
+    monkeypatch.setattr(llm_planner, "build_objective_ledger", lambda s: _tiny_ledger())
+    monkeypatch.setattr(llm_planner, "_call_planner", lambda p: (_PLAN_JSON, "gpt-5.4"))
+    monkeypatch.setattr(llm_planner, "run_blocking_gates", lambda w, ld: _gates(True))
+    monkeypatch.setattr(
+        llm_planner, "evaluate_objective_coverage", lambda ld, e, w: _coverage("pass")
+    )
+    # Judge unavailable: empty per-sample list. Opt-in flag keeps the ship-unjudged path.
     monkeypatch.setattr(
         llm_planner,
         "judge_objective_adaptation_samples",
