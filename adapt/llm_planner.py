@@ -35,7 +35,12 @@ from adapt.llm_judge import (
     judge_adaptation_samples,
     judge_objective_adaptation_samples,
 )
-from adapt.objective_ledger import ObjectiveCell, RequiredForm, build_objective_ledger
+from adapt.objective_ledger import (
+    ObjectiveCell,
+    ObjectiveLedger,
+    RequiredForm,
+    build_objective_ledger,
+)
 from adapt.rules import AccommodationRules, build_rules
 from adapt.schema import AdaptedActivityModel
 from adapt.section_cap import enforce_section_cap
@@ -216,16 +221,21 @@ def _objective_cell_block(cell: ObjectiveCell, content_by_id: dict[str, str]) ->
     return "\n".join(lines)
 
 
-def _objective_authoring_block(skill: LiteracySkillModel) -> str:
+def _objective_authoring_block(
+    skill: LiteracySkillModel, ledger: ObjectiveLedger | None = None
+) -> str:
     """Render per-objective authoring guidance: author each objective IN its form.
 
     Empty string when the flag is off (guarded FIRST, so no ledger is built) — the
     prompt stays byte-identical to today. When on, the ledger's objective cells +
-    required forms + sampling/dilution rules are rendered for the planner.
+    required forms + sampling/dilution rules are rendered for the planner. A caller
+    may pass a prebuilt ``ledger`` to guarantee the prompt-ledger and the
+    validation-ledger share identical facts; if None, it is built internally.
     """
     if not _objective_coverage_enabled():
         return ""
-    ledger = build_objective_ledger(skill)
+    if ledger is None:
+        ledger = build_objective_ledger(skill)
     content_by_id = {si.source_item_id: si.content for si in ledger.source_items}
     cell_blocks = "\n\n".join(_objective_cell_block(c, content_by_id) for c in ledger.objectives)
     return f"""
@@ -256,6 +266,7 @@ def _build_planner_prompt(
     rules: AccommodationRules,
     theme_id: str,
     rag_curriculum_references: list[dict[str, object]] | None,
+    objective_ledger: ObjectiveLedger | None = None,
 ) -> str:
     """Build the single planning prompt: full source, corpus truth, ADHD limits."""
     source_sections: list[str] = []
@@ -265,7 +276,7 @@ def _build_planner_prompt(
 
     corpus_text = _corpus_block(skill)
     contract_block = _coverage_contract_block(skill)
-    objective_block = _objective_authoring_block(skill)
+    objective_block = _objective_authoring_block(skill, objective_ledger)
     covered_ids_schema = _covered_ids_schema_line()
 
     curriculum_text = ""
@@ -545,7 +556,9 @@ def _plan_lesson_objective(
     uncertainty deterministically, so the deterministic engine takes over instead.
     """
     ledger = build_objective_ledger(skill)
-    prompt = _build_planner_prompt(skill, profile, rules, theme_id, rag_curriculum_references)
+    prompt = _build_planner_prompt(
+        skill, profile, rules, theme_id, rag_curriculum_references, objective_ledger=ledger
+    )
 
     response_text, model_label = _call_planner(prompt)
     if response_text is None:

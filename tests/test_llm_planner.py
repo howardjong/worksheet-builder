@@ -520,6 +520,54 @@ def _tiny_ledger() -> ObjectiveLedger:
     )
 
 
+def test_build_planner_prompt_uses_passed_objective_ledger(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A supplied ledger is threaded through and used as-is — no internal rebuild."""
+    from adapt import llm_planner
+
+    monkeypatch.setenv("WORKSHEET_OBJECTIVE_COVERAGE", "1")
+
+    def _boom(*_args: object, **_kwargs: object) -> ObjectiveLedger:
+        raise AssertionError("build_objective_ledger must not be called when a ledger is supplied")
+
+    monkeypatch.setattr(llm_planner, "build_objective_ledger", _boom)
+
+    prompt = _build_planner_prompt(
+        _skill(),
+        _profile(),
+        build_rules(_profile()),
+        "default",
+        None,
+        objective_ledger=_tiny_ledger(),
+    )
+
+    assert _OBJ_HEADER in prompt
+    assert "obj_decode" in prompt  # the PASSED ledger's objective id, not a rebuilt one
+
+
+def test_build_planner_prompt_builds_ledger_when_none_passed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With no ledger supplied and the flag on, the block builds internally."""
+    from adapt import llm_planner
+
+    monkeypatch.setenv("WORKSHEET_OBJECTIVE_COVERAGE", "1")
+    monkeypatch.setattr(llm_planner, "build_objective_ledger", lambda s: _tiny_ledger())
+
+    prompt = _build_planner_prompt(
+        _skill(),
+        _profile(),
+        build_rules(_profile()),
+        "default",
+        None,
+        objective_ledger=None,
+    )
+
+    assert _OBJ_HEADER in prompt
+    assert "obj_decode" in prompt
+
+
 def _gates(passed: bool) -> BlockingGateResult:
     violations = (
         []
