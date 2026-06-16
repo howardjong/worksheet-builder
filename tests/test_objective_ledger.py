@@ -20,6 +20,7 @@ from adapt.objective_ledger import (
     classify_word_role,
 )
 from skill.schema import LiteracySkillModel
+from tests.objective_corpus_fixture import fixture_corpus_lookup
 
 _FIX = Path(__file__).parent / "fixtures" / "objective_ledger"
 
@@ -527,7 +528,7 @@ class TestBuildObjectiveLedgerCorpusMatched:
 
     @pytest.mark.parametrize("name", ["lesson58", "lesson59"])
     def test_manipulation_cell_and_required_chain_forms(self, name: str) -> None:
-        ledger = build_objective_ledger(_load(name))
+        ledger = build_objective_ledger(_load(name), corpus_lookup=fixture_corpus_lookup)
         cell = _cell(ledger, "phoneme_grapheme_manipulation")
         assert cell is not None
 
@@ -547,7 +548,7 @@ class TestBuildObjectiveLedgerCorpusMatched:
 
     @pytest.mark.parametrize("name", ["lesson58", "lesson59"])
     def test_roll_and_read_samplable_pool_from_corpus(self, name: str) -> None:
-        ledger = build_objective_ledger(_load(name))
+        ledger = build_objective_ledger(_load(name), corpus_lookup=fixture_corpus_lookup)
         pools = _items_of_class(ledger, "samplable_pool")
         assert pools, "expected a samplable_pool ClassifiedSourceItem"
         # At least one pool must originate from the corpus Roll-and-Read additional_text.
@@ -555,7 +556,7 @@ class TestBuildObjectiveLedgerCorpusMatched:
 
     @pytest.mark.parametrize("name", ["lesson58", "lesson59"])
     def test_connected_text_required_passage_from_corpus(self, name: str) -> None:
-        ledger = build_objective_ledger(_load(name))
+        ledger = build_objective_ledger(_load(name), corpus_lookup=fixture_corpus_lookup)
         cell = _cell(ledger, "connected_text_fluency")
         assert cell is not None
         passage_items = [
@@ -566,7 +567,7 @@ class TestBuildObjectiveLedgerCorpusMatched:
 
     @pytest.mark.parametrize("name", ["lesson58", "lesson59"])
     def test_irregular_cell_words_and_no_leak_into_decode(self, name: str) -> None:
-        ledger = build_objective_ledger(_load(name))
+        ledger = build_objective_ledger(_load(name), corpus_lookup=fixture_corpus_lookup)
         irr = _cell(ledger, "irregular_word_reading")
         assert irr is not None
         assert irr.irregular_words, "irregular cell must list its irregular words"
@@ -586,7 +587,7 @@ class TestBuildObjectiveLedgerCorpusMatched:
             assert irr_word not in decode_targets
 
     def test_lesson58_decode_excludes_known_irregulars(self) -> None:
-        ledger = build_objective_ledger(_load("lesson58"))
+        ledger = build_objective_ledger(_load("lesson58"), corpus_lookup=fixture_corpus_lookup)
         decode = _cell(ledger, "decode_target_pattern")
         assert decode is not None
         # 'one'/'once' are sight words → never in the decode numerator.
@@ -596,14 +597,14 @@ class TestBuildObjectiveLedgerCorpusMatched:
         assert any(w in decode.target_words for w in ("cube", "mute", "tune", "rule"))
 
     def test_lesson59_decode_excludes_who_one(self) -> None:
-        ledger = build_objective_ledger(_load("lesson59"))
+        ledger = build_objective_ledger(_load("lesson59"), corpus_lookup=fixture_corpus_lookup)
         decode = _cell(ledger, "decode_target_pattern")
         assert decode is not None
         for irr in ("who", "by", "my", "one", "once"):
             assert irr not in decode.target_words
 
     def test_decode_target_words_are_only_target_pattern_role(self) -> None:
-        ledger = build_objective_ledger(_load("lesson58"))
+        ledger = build_objective_ledger(_load("lesson58"), corpus_lookup=fixture_corpus_lookup)
         decode = _cell(ledger, "decode_target_pattern")
         assert decode is not None
         target_set = set(decode.target_words)
@@ -616,7 +617,7 @@ class TestBuildObjectiveLedgerCorpusMatched:
 
     @pytest.mark.parametrize("name", ["lesson58", "lesson59", "lesson43_oll"])
     def test_corpus_version_stamped_and_status_matched(self, name: str) -> None:
-        ledger = build_objective_ledger(_load(name))
+        ledger = build_objective_ledger(_load(name), corpus_lookup=fixture_corpus_lookup)
         assert ledger.corpus_status == "matched"
         assert isinstance(ledger.corpus_version, str)
         assert ledger.corpus_version
@@ -625,14 +626,14 @@ class TestBuildObjectiveLedgerCorpusMatched:
     @pytest.mark.parametrize("name", ["lesson58", "lesson59", "lesson43_oll"])
     def test_stable_across_calls(self, name: str) -> None:
         skill = _load(name)
-        a = build_objective_ledger(skill).model_dump_json()
-        b = build_objective_ledger(skill).model_dump_json()
+        a = build_objective_ledger(skill, corpus_lookup=fixture_corpus_lookup).model_dump_json()
+        b = build_objective_ledger(skill, corpus_lookup=fixture_corpus_lookup).model_dump_json()
         assert a == b
 
     def test_no_contrast_cell_for_fixtures(self) -> None:
         # Lessons 58/59/43 have no deliberate contrast task → no contrast cell.
         for name in ("lesson58", "lesson59", "lesson43_oll"):
-            ledger = build_objective_ledger(_load(name))
+            ledger = build_objective_ledger(_load(name), corpus_lookup=fixture_corpus_lookup)
             assert _cell(ledger, "contrast_discrimination") is None
 
 
@@ -640,7 +641,7 @@ class TestBuildObjectiveLedgerOll:
     """RED — the -all/-oll/-ull fixture (lesson 43): contrast WORDS must not count."""
 
     def test_mop_jazz_not_in_decode_targets(self) -> None:
-        ledger = build_objective_ledger(_load("lesson43_oll"))
+        ledger = build_objective_ledger(_load("lesson43_oll"), corpus_lookup=fixture_corpus_lookup)
         decode = _cell(ledger, "decode_target_pattern")
         assert decode is not None
         assert "mop" not in decode.target_words
@@ -649,7 +650,7 @@ class TestBuildObjectiveLedgerOll:
         assert any(w in decode.target_words for w in ("doll", "roll", "toll"))
 
     def test_manipulation_cell_exists(self) -> None:
-        ledger = build_objective_ledger(_load("lesson43_oll"))
+        ledger = build_objective_ledger(_load("lesson43_oll"), corpus_lookup=fixture_corpus_lookup)
         assert _cell(ledger, "phoneme_grapheme_manipulation") is not None
 
 
@@ -666,7 +667,7 @@ class TestBuildObjectiveLedgerGracefulDegrade:
 
     def test_no_lesson_number_is_not_applicable(self) -> None:
         skill = _load("lesson58").model_copy(update={"lesson_number": None})
-        ledger = build_objective_ledger(skill)
+        ledger = build_objective_ledger(skill, corpus_lookup=fixture_corpus_lookup)
         assert ledger.corpus_status == "not_applicable"
         assert ledger.corpus_version == "no_corpus"
         assert all(w.role_confidence == "low" for w in _all_words(ledger))

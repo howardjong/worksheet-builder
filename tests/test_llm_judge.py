@@ -26,6 +26,7 @@ from adapt.schema import (
     Step,
 )
 from skill.schema import LiteracySkillModel, SourceItem
+from tests.objective_corpus_fixture import fixture_corpus_lookup
 from validate.blocking_gates import run_blocking_gates
 from validate.objective_coverage import (
     PRACTICE_STUDENT,
@@ -254,7 +255,7 @@ def _obj_worksheet(words: list[str]) -> AdaptedActivityModel:
 
 def _build_objective_prompt() -> str:
     skill = _obj_skill()
-    ledger = build_objective_ledger(skill)
+    ledger = build_objective_ledger(skill, corpus_lookup=fixture_corpus_lookup)
     decode = next(o for o in ledger.objectives if o.objective_id == "obj_decode")
     package = [_obj_worksheet(decode.target_words[:7])]
     gates = run_blocking_gates(package, ledger)
@@ -265,7 +266,7 @@ def _build_objective_prompt() -> str:
 
 def test_objective_prompt_contains_every_objective_id() -> None:
     skill = _obj_skill()
-    ledger = build_objective_ledger(skill)
+    ledger = build_objective_ledger(skill, corpus_lookup=fixture_corpus_lookup)
     prompt = _build_objective_prompt()
     for cell in ledger.objectives:
         assert cell.objective_id in prompt
@@ -345,7 +346,7 @@ def test_evidence_item_id_defaults_to_none() -> None:
 
 def test_build_evidence_index_populates_stable_ids() -> None:
     skill = _obj_skill()
-    ledger = build_objective_ledger(skill)
+    ledger = build_objective_ledger(skill, corpus_lookup=fixture_corpus_lookup)
     decode = next(o for o in ledger.objectives if o.objective_id == "obj_decode")
     package = [_obj_worksheet(decode.target_words[:5])]
 
@@ -509,7 +510,7 @@ def test_aggregate_single_sample_none_when_no_defect() -> None:
 
 
 def _ledger() -> object:
-    return build_objective_ledger(_obj_skill())
+    return build_objective_ledger(_obj_skill(), corpus_lookup=fixture_corpus_lookup)
 
 
 def _essential_ids(ledger: object) -> list[str]:

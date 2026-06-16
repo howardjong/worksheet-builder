@@ -27,6 +27,7 @@ from adapt.schema import (
     Step,
 )
 from skill.schema import LiteracySkillModel
+from tests.objective_corpus_fixture import fixture_corpus_lookup
 from validate.objective_coverage import (
     build_evidence_index,
     evaluate_objective_coverage,
@@ -196,7 +197,7 @@ def test_case1_roll_and_read_sampled_but_threshold_met_passes() -> None:
     """The S5 false-rejection must not recur: a samplable pool is satisfied at the
     distinct high-confidence threshold, NOT exhausted."""
     skill = _load_skill("lesson58")
-    ledger = build_objective_ledger(skill)
+    ledger = build_objective_ledger(skill, corpus_lookup=fixture_corpus_lookup)
     decode = next(o for o in ledger.objectives if o.objective_id == "obj_decode")
     pool = decode.target_words  # high-confidence u_e words from the corpus pool
     assert len(pool) >= 12
@@ -523,7 +524,7 @@ def test_case9b_package_bound_items_breach_fails() -> None:
 
 def test_determinism_identical_json() -> None:
     skill = _load_skill("lesson58")
-    ledger = build_objective_ledger(skill)
+    ledger = build_objective_ledger(skill, corpus_lookup=fixture_corpus_lookup)
     decode = next(o for o in ledger.objectives if o.objective_id == "obj_decode")
     items = [_item(i, w, "read_aloud") for i, w in enumerate(decode.target_words[:7])]
     package = [_worksheet([_chunk(1, items)])]
