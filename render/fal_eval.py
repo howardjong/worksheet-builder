@@ -8,6 +8,7 @@ import importlib
 import json
 import os
 import re
+import ssl
 import time
 import urllib.request
 from collections.abc import Callable, Mapping
@@ -16,6 +17,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, cast
 
+import certifi
 from dotenv import load_dotenv
 
 DEFAULT_MODEL_ALIASES: dict[str, str] = {
@@ -192,7 +194,8 @@ def download_image_bytes(url: str) -> bytes:
         return base64.b64decode(encoded)
 
     request = urllib.request.Request(url, headers={"User-Agent": "worksheet-builder-eval/1.0"})
-    with urllib.request.urlopen(request, timeout=120) as response:
+    context = ssl.create_default_context(cafile=certifi.where())
+    with urllib.request.urlopen(request, timeout=120, context=context) as response:
         return cast(bytes, response.read())
 
 
