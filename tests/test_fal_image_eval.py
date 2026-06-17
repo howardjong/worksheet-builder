@@ -10,11 +10,39 @@ import pytest
 def test_fal_model_aliases_expand_to_model_ids() -> None:
     from render.fal_eval import expand_model_ids
 
-    assert expand_model_ids(["gpt-image-2", "recraft-v4", "qwen-image-2512"]) == [
-        "openai/gpt-image-2",
+    assert expand_model_ids(["gemini-3-pro-image", "recraft-v4", "qwen-image-2512"]) == [
+        "fal-ai/gemini-3-pro-image-preview",
         "fal-ai/recraft/v4/text-to-image",
         "fal-ai/qwen-image-2512",
     ]
+
+
+def test_model_arguments_use_aspect_ratio_for_gemini() -> None:
+    from render.fal_eval import FalEvalConfig, build_model_arguments
+
+    assert build_model_arguments(
+        "fal-ai/gemini-3-pro-image-preview",
+        "worksheet prompt",
+        FalEvalConfig(output_dir=Path("unused")),
+    ) == {
+        "prompt": "worksheet prompt",
+        "aspect_ratio": "3:4",
+        "num_images": 1,
+    }
+
+
+def test_model_arguments_use_image_size_for_other_models() -> None:
+    from render.fal_eval import FalEvalConfig, build_model_arguments
+
+    assert build_model_arguments(
+        "openai/gpt-image-2",
+        "worksheet prompt",
+        FalEvalConfig(output_dir=Path("unused"), image_size="portrait_4_3"),
+    ) == {
+        "prompt": "worksheet prompt",
+        "image_size": "portrait_4_3",
+        "num_images": 1,
+    }
 
 
 def test_load_fal_env_accepts_fal_api_key_alias(

@@ -22,6 +22,9 @@ from dotenv import load_dotenv
 
 DEFAULT_MODEL_ALIASES: dict[str, str] = {
     "gpt-image-2": "openai/gpt-image-2",
+    "gemini-3-pro-image": "fal-ai/gemini-3-pro-image-preview",
+    "gemini-3-pro-image-preview": "fal-ai/gemini-3-pro-image-preview",
+    "nano-banana-pro": "fal-ai/nano-banana-pro",
     "recraft-v4": "fal-ai/recraft/v4/text-to-image",
     "recraft-v4-pro": "fal-ai/recraft/v4/pro/text-to-image",
     "qwen-image-2512": "fal-ai/qwen-image-2512",
@@ -118,6 +121,7 @@ class FalEvalConfig:
 
     output_dir: Path
     image_size: str = "portrait_4_3"
+    aspect_ratio: str = "3:4"
     num_images: int = 1
     extra_arguments: dict[str, Any] = field(default_factory=dict)
     with_logs: bool = False
@@ -186,6 +190,21 @@ def extract_image_url(result: Mapping[str, Any]) -> str | None:
     return None
 
 
+def build_model_arguments(model_id: str, prompt: str, config: FalEvalConfig) -> dict[str, Any]:
+    """Build fal arguments, using each model family's size parameter."""
+
+    arguments: dict[str, Any] = {
+        "prompt": prompt,
+        "num_images": config.num_images,
+    }
+    if _uses_aspect_ratio(model_id):
+        arguments["aspect_ratio"] = config.aspect_ratio
+    else:
+        arguments["image_size"] = config.image_size
+    arguments.update(config.extra_arguments)
+    return arguments
+
+
 def download_image_bytes(url: str) -> bytes:
     """Download a generated image URL or decode a data URI."""
 
@@ -212,12 +231,7 @@ def run_one_model(
     started = time.monotonic()
     created_at = datetime.now(UTC).isoformat()
     prompt_hash = _sha256_text(prompt)
-    arguments = {
-        "prompt": prompt,
-        "image_size": config.image_size,
-        "num_images": config.num_images,
-        **config.extra_arguments,
-    }
+    arguments = build_model_arguments(model_id, prompt, config)
     safe_model = _safe_slug(model_id)
     run_dir = config.output_dir / safe_model
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -317,6 +331,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="fal image_size argument. Use portrait_4_3 for the 3:4 sandbox test.",
     )
     parser.add_argument(
+        "--aspect-ratio",
+        default="3:4",
+        help='fal aspect_ratio argument for Gemini/Nano Banana models. Defaults to "3:4".',
+    )
+    parser.add_argument(
         "--extra-arguments",
         default="{}",
         help='JSON object merged into fal arguments, e.g. \'{"output_format":"png"}\'.',
@@ -337,6 +356,7 @@ def main(argv: list[str] | None = None) -> int:
     config = FalEvalConfig(
         output_dir=output_dir,
         image_size=args.image_size,
+        aspect_ratio=args.aspect_ratio,
         extra_arguments=extra_arguments,
         with_logs=args.with_logs,
     )
@@ -373,6 +393,10 @@ def _queue_logger(update: object) -> None:
             message = log.get("message")
             if isinstance(message, str):
                 print(message)
+
+
+def _uses_aspect_ratio(model_id: str) -> bool:
+    return any(token in model_id for token in ("gemini-3-pro-image", "nano-banana-pro"))
 
 
 def _parse_extra_arguments(raw: str) -> dict[str, Any]:
