@@ -471,16 +471,14 @@ class TestClassifyWordRoleOll:
     def test_mop_is_not_target_high(self) -> None:
         ctx = _oll_context(corpus_target_words=frozenset({"doll", "roll", "toll"}))
         role, conf, src = classify_word_role("mop", ctx)
-        assert role in ("review_word", "contrast_word")
-        assert role != "target_pattern"
+        assert role == "review_word"
         assert conf == "high"
         assert src == "pattern_rule"
 
     def test_jazz_is_not_target_high(self) -> None:
         ctx = _oll_context(corpus_target_words=frozenset({"doll", "roll", "toll"}))
         role, conf, src = classify_word_role("jazz", ctx)
-        assert role in ("review_word", "contrast_word")
-        assert role != "target_pattern"
+        assert role == "review_word"
         assert conf == "high"
         assert src == "pattern_rule"
 

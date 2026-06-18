@@ -8,6 +8,12 @@
 
 ## Current State
 
+### Session 52 — 2026-06-18 (CI typecheck repair)
+
+**Status:** Fixed the GitHub Actions failure on branch `feature/objective-sufficiency-coverage`. The failing run `27729549613` stopped at `make typecheck`; public GitHub job logs were permission-blocked, so the failure was reproduced locally in a fresh Python 3.11 venv with the current `requirements.txt` dependency set. Root cause was mypy `2.1.0` flagging redundant non-overlap comparisons in `tests/test_objective_ledger.py` after `role in ("review_word", "contrast_word")` narrowed the type away from `"target_pattern"`. The tests now assert the concrete default behavior (`"mop"` and `"jazz"` classify as `review_word` under non-contrast `-oll` framing), while the existing contrast-framing test still covers `contrast_word`.
+
+**Verification:** CI-like checks now pass locally: `/tmp/wsb-ci311/bin/mypy .` (`Success: no issues found in 168 source files`), `/tmp/wsb-ci311/bin/pytest -q tests/test_objective_ledger.py` (`53 passed`), and `/tmp/wsb-ci311/bin/ruff check tests/test_objective_ledger.py`.
+
 ### Session 51 — 2026-06-17 (fal.ai image-model eval harness)
 
 **Status:** Implemented a small fal.ai API eval harness for worksheet image-model candidates, isolated from the production renderer. The harness lives in `render/fal_eval.py` with a thin CLI wrapper `eval_fal_image_models.py`; tests live in `tests/test_fal_image_eval.py`. It loads `.env`, normalizes `FAL_API_KEY` to fal's expected `FAL_KEY`, runs models sequentially with `fal_client.subscribe(model_id, arguments={...})`, downloads the first returned image URL, and writes per-model `output.png` + `metadata.json` plus aggregate `prompt.txt`, `results.jsonl`, and `summary.json` under timestamped `samples/output/fal_image_eval/<timestamp>/`.
