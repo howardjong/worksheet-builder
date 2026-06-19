@@ -8,6 +8,34 @@
 
 ## Current State
 
+### Session 54 — 2026-06-19 (experiments refactor: branch + baseline)
+
+**Status:** Started the refactor to separate experiment code (RAG, UFLI audio companion, eval batteries) into an `experiments/` package, per `plans/lexical-exploring-castle.md`. Completed plan Step 0 (branch hygiene) and Step 1 (green baseline). No files moved yet.
+
+**Done:**
+- New working branch `refactor/separate-experiments` created off `feature/objective-sufficiency-coverage` HEAD (`6ec6b30`). The old branch stays as the archive. `feature/worksheet-quality-redesign` was already deleted in a prior session.
+- `.claude/settings.json` added to `.gitignore` (local settings).
+- **Green baseline recorded** (the regression reference for later steps):
+  - `make lint` (ruff) → clean.
+  - `make typecheck` (mypy strict) → clean, 168 source files.
+  - `make test` (pytest) → **803 passed, 0 failed, 0 skipped**, 7 warnings.
+  - Production smoke (`WORKSHEET_SKIP_ASSET_GEN=1` → `pdf_classic` fallback) → PDF produced (`lesson_*.pdf`, cover + 5 worksheets, 13 pages).
+  - `python -c "import transform, batch, complete"` → clean.
+
+**Gotchas:**
+- `WORKSHEET_SKIP_ASSET_GEN=1` only skips image/asset generation and forces the `pdf_classic` renderer; it does NOT disable the AI quality-review pass, so the smoke still makes a live Gemini call. Expect network traffic during smokes.
+- `python` is not on PATH in this shell; use `.venv/bin/python`.
+
+**Next:** Plan Step 2 — create the `experiments/` package skeleton (`experiments/__init__.py`, `experiments/rag/`, `experiments/corpus_ufli/`, `experiments/batteries/`), then Steps 3–5 (move batteries, RAG, UFLI corpus experiments) each gated by the Step 6 verification gate. Do NOT touch the `adapt/` ledger/planner/judge machinery (out of scope). Keep `corpus/ufli/lookup.py` in production.
+
+### Session 53 — 2026-06-19 (model architecture synthesis note)
+
+**Status:** Added `plans/2026-06-19-model-architecture-synthesis.md` to preserve the useful recommendations from a multi-model architecture comparison exercise. The note ranks the evaluated model outputs and captures the reusable design ideas: objective-centered contract, lightweight `AdaptPolicy` boundary, governed skill taxonomy, golden eval fixtures, standardized run bundles, role-specific provider configuration, and anti-overbuild discipline.
+
+**Decision:** Do not treat the model comparison as a reason to restart the app. The useful synthesis is to evolve the existing `LiteracySkillModel` / objective-sufficiency work into a more explicit objective-centered contract, then connect it to adaptation policy, planner output, deterministic validators, judge calibration, and rendering. This is consistent with the existing ObjectiveLedger direction.
+
+**Next:** If implementation follows, start with a narrow design/implementation pass around `LiteracySkillModel` / ObjectiveLedger fields and fixture coverage rather than changing provider orchestration or renderer behavior first.
+
 ### Session 52 — 2026-06-18 (CI typecheck repair)
 
 **Status:** Fixed the GitHub Actions failure on branch `feature/objective-sufficiency-coverage`. The failing run `27729549613` stopped at `make typecheck`; public GitHub job logs were permission-blocked, so the failure was reproduced locally in a fresh Python 3.11 venv with the current `requirements.txt` dependency set. Root cause was mypy `2.1.0` flagging redundant non-overlap comparisons in `tests/test_objective_ledger.py` after `role in ("review_word", "contrast_word")` narrowed the type away from `"target_pattern"`. The tests now assert the concrete default behavior (`"mop"` and `"jazz"` classify as `review_word` under non-contrast `-oll` framing), while the existing contrast-framing test still covers `contrast_word`.
