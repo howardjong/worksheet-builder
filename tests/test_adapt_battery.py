@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from adapt_battery import (
+from experiments.batteries.adapt_battery import (
     AdaptBatteryRow,
     GateResult,
     build_scorecard,

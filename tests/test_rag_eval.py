@@ -9,8 +9,8 @@ from typing import Any
 
 import pytest
 
+from experiments.rag_eval import evaluate
 from extract.schema import PIPELINE_VERSION, SourceRegion, SourceWorksheetModel
-from rag.eval import evaluate
 from rag.retrieval import RAGContext, RetrievalResult
 from skill.schema import LiteracySkillModel, SourceItem
 
@@ -62,7 +62,7 @@ def test_evaluate_builds_report_with_aggregate_metrics(
 
     monkeypatch.delenv("WORKSHEET_USE_RAG", raising=False)
     monkeypatch.setattr(
-        "rag.eval._freeze_source_and_skill",
+        "experiments.rag_eval._freeze_source_and_skill",
         lambda input_path, freeze_dir, extract_mode="vision_only": {
             "input_path": str(input_path),
             "preprocessed_path": str(freeze_dir / "preprocessed.png"),
@@ -71,8 +71,12 @@ def test_evaluate_builds_report_with_aggregate_metrics(
             "skill_model": skill,
         },
     )
-    monkeypatch.setattr("rag.eval.load_profile", lambda _path: SimpleNamespace(name="Ian"))
-    monkeypatch.setattr("rag.eval.load_theme", lambda _theme: SimpleNamespace(multi_worksheet=True))
+    monkeypatch.setattr(
+        "experiments.rag_eval.load_profile", lambda _path: SimpleNamespace(name="Ian")
+    )
+    monkeypatch.setattr(
+        "experiments.rag_eval.load_theme", lambda _theme: SimpleNamespace(multi_worksheet=True)
+    )
 
     def fake_retrieve_context(**kwargs: object) -> RAGContext:
         retrieval_calls.append(kwargs)
@@ -101,9 +105,9 @@ def test_evaluate_builds_report_with_aggregate_metrics(
             ],
         )
 
-    monkeypatch.setattr("rag.eval.retrieve_context", fake_retrieve_context)
+    monkeypatch.setattr("experiments.rag_eval.retrieve_context", fake_retrieve_context)
     monkeypatch.setattr(
-        "rag.eval._run_variant_from_frozen",
+        "experiments.rag_eval._run_variant_from_frozen",
         lambda variant, case_dir, **kwargs: _variant_result(variant, case_dir),
     )
 

@@ -41,7 +41,7 @@ def _spec() -> WorksheetDesignSpec:
 
 
 def test_benchmark_blocks_image_prompt_without_pdf(tmp_path: Path) -> None:
-    from render.benchmark import evaluate_renderer_artifacts
+    from experiments.batteries.render_benchmark import evaluate_renderer_artifacts
 
     prompt_path = tmp_path / "worksheet_image_prompt.md"
     prompt_path.write_text("OFFLINE PROMPT ONLY\nVowel Team Adventure\nrain\nplay")
@@ -62,7 +62,7 @@ def test_benchmark_blocks_image_prompt_without_pdf(tmp_path: Path) -> None:
 
 
 def test_benchmark_blocks_missing_required_text(tmp_path: Path) -> None:
-    from render.benchmark import evaluate_renderer_artifacts
+    from experiments.batteries.render_benchmark import evaluate_renderer_artifacts
 
     prompt_path = tmp_path / "worksheet_image_prompt.md"
     prompt_path.write_text("OFFLINE PROMPT ONLY\nVowel Team Adventure\nrain")
@@ -82,7 +82,7 @@ def test_benchmark_blocks_missing_required_text(tmp_path: Path) -> None:
 
 
 def test_benchmark_blocks_missing_answer_zone_affordance(tmp_path: Path) -> None:
-    from render.benchmark import evaluate_renderer_artifacts
+    from experiments.batteries.render_benchmark import evaluate_renderer_artifacts
 
     prompt_path = tmp_path / "worksheet_image_prompt.md"
     prompt_path.write_text("OFFLINE PROMPT ONLY\nVowel Team Adventure\nrain\nplay")
@@ -122,7 +122,7 @@ def test_benchmark_blocks_missing_answer_zone_affordance(tmp_path: Path) -> None
 
 
 def test_benchmark_passes_pdf_renderer_with_required_text_contract(tmp_path: Path) -> None:
-    from render.benchmark import evaluate_renderer_artifacts
+    from experiments.batteries.render_benchmark import evaluate_renderer_artifacts
 
     pdf_path = tmp_path / "worksheet.pdf"
     pdf_path.write_text("pdf placeholder")

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 
 def test_scorecard_table_includes_rows_and_verdicts() -> None:
-    from render_battery import BatteryRow, build_scorecard
+    from experiments.batteries.render_battery import BatteryRow, build_scorecard
 
     rows = [
         BatteryRow(

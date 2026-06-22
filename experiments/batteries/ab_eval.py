@@ -436,9 +436,7 @@ def _run_variant_from_frozen(
         int(summary.get("curriculum_supported_items", 0))
         for summary in run_artifacts.adapted_summaries
     )
-    curriculum_support_rate = (
-        curriculum_supported_items / total_items if total_items > 0 else 0.0
-    )
+    curriculum_support_rate = curriculum_supported_items / total_items if total_items > 0 else 0.0
 
     return {
         "variant": variant,

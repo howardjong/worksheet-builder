@@ -18,9 +18,13 @@ try:
 except ImportError:
     pass
 
-from ab_eval import ExtractionMode, _freeze_source_and_skill, _run_variant_from_frozen
 from adapt.schema import AdaptedActivityModel
 from companion.schema import load_profile
+from experiments.batteries.ab_eval import (
+    ExtractionMode,
+    _freeze_source_and_skill,
+    _run_variant_from_frozen,
+)
 from rag.retrieval import RAGContext, RetrievalResult, retrieve_context
 from theme.engine import load_theme
 from transform import _select_rag_adaptation_context
@@ -157,17 +161,13 @@ def evaluate(
                 specific_skill=skill_model.specific_skill,
                 retrieval_at_3=_retrieval_at_k(rag_context, skill_model.domain, k=3),
                 retrieval_latency_ms=retrieval_latency_ms,
-                baseline_all_validators_passed=bool(
-                    baseline.get("all_validators_passed", False)
-                ),
+                baseline_all_validators_passed=bool(baseline.get("all_validators_passed", False)),
                 rag_all_validators_passed=bool(rag_result.get("all_validators_passed", False)),
                 baseline_formats=[str(x) for x in baseline.get("response_formats", [])],
                 rag_formats=[str(x) for x in rag_result.get("response_formats", [])],
                 format_diversity_delta=int(rag_result.get("response_format_count", 0))
                 - int(baseline.get("response_format_count", 0)),
-                format_changed=_format_set(
-                    [str(x) for x in baseline.get("response_formats", [])]
-                )
+                format_changed=_format_set([str(x) for x in baseline.get("response_formats", [])])
                 != _format_set([str(x) for x in rag_result.get("response_formats", [])]),
                 baseline_curriculum_support_rate=float(
                     baseline.get("curriculum_support_rate", 0.0)
@@ -380,9 +380,7 @@ def _render_markdown_report(
         f"- Baseline validator pass rate: {report.baseline_validator_pass_rate:.2f}",
         f"- RAG validator pass rate: {report.rag_validator_pass_rate:.2f}",
         f"- Validator pass rate delta: {report.validator_pass_rate_delta:.2f}",
-        (
-            f"- Curriculum support delta mean: {report.curriculum_support_delta_mean:.2f}"
-        ),
+        (f"- Curriculum support delta mean: {report.curriculum_support_delta_mean:.2f}"),
         f"- Mean RAG runtime overhead (s): {report.rag_runtime_delta_mean_s:.2f}",
         "",
         "## Per Case",

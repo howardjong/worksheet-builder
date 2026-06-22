@@ -8,7 +8,7 @@ from typing import Any
 
 import pytest
 
-from ab_eval import (
+from experiments.batteries.ab_eval import (
     _build_pair_summary,
     _extract_source_model,
     _run_variant_from_frozen,
@@ -63,7 +63,9 @@ def _skill_model() -> LiteracySkillModel:
 def test_extract_source_model_vision_only_fails_fast(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr("ab_eval.extract_with_vision", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(
+        "experiments.batteries.ab_eval.extract_with_vision", lambda *_args, **_kwargs: None
+    )
 
     with pytest.raises(RuntimeError, match="Gemini vision extraction is unavailable"):
         _extract_source_model("unused.png", "hash123", extract_mode="vision_only")
@@ -75,16 +77,18 @@ def test_extract_source_model_auto_falls_back_to_ocr(
     ocr_result = OCRResult(blocks=[], engine="paddleocr", raw_text="grade chase")
     expected = _source_model()
 
-    monkeypatch.setattr("ab_eval.extract_with_vision", lambda *_args, **_kwargs: None)
     monkeypatch.setattr(
-        "ab_eval.extract_text_with_fallback",
+        "experiments.batteries.ab_eval.extract_with_vision", lambda *_args, **_kwargs: None
+    )
+    monkeypatch.setattr(
+        "experiments.batteries.ab_eval.extract_text_with_fallback",
         lambda image_path: ocr_result if image_path == "unused.png" else None,
     )
     monkeypatch.setattr(
-        "ab_eval.map_to_source_model",
-        lambda result, source_hash: expected
-        if result is ocr_result and source_hash == "hash123"
-        else None,
+        "experiments.batteries.ab_eval.map_to_source_model",
+        lambda result, source_hash: (
+            expected if result is ocr_result and source_hash == "hash123" else None
+        ),
     )
 
     result = _extract_source_model("unused.png", "hash123", extract_mode="auto")
@@ -99,16 +103,16 @@ def test_extract_source_model_tesseract_uses_requested_engine(
     expected = _source_model()
 
     monkeypatch.setattr(
-        "ab_eval.extract_text",
-        lambda image_path, engine: ocr_result
-        if image_path == "unused.png" and engine == "tesseract"
-        else None,
+        "experiments.batteries.ab_eval.extract_text",
+        lambda image_path, engine: (
+            ocr_result if image_path == "unused.png" and engine == "tesseract" else None
+        ),
     )
     monkeypatch.setattr(
-        "ab_eval.map_to_source_model",
-        lambda result, source_hash: expected
-        if result is ocr_result and source_hash == "hash123"
-        else None,
+        "experiments.batteries.ab_eval.map_to_source_model",
+        lambda result, source_hash: (
+            expected if result is ocr_result and source_hash == "hash123" else None
+        ),
     )
 
     result = _extract_source_model("unused.png", "hash123", extract_mode="tesseract")
@@ -153,7 +157,7 @@ def test_run_variant_with_rag_does_not_require_live_rag_env(
     captured: dict[str, Any] = {}
     retrieval_calls: list[dict[str, object]] = []
     monkeypatch.delenv("WORKSHEET_USE_RAG", raising=False)
-    monkeypatch.setattr("ab_eval.rag_available", lambda: True)
+    monkeypatch.setattr("experiments.batteries.ab_eval.rag_available", lambda: True)
 
     def fake_retrieve_context(**kwargs: object) -> RAGContext:
         retrieval_calls.append(kwargs)
@@ -190,7 +194,9 @@ def test_run_variant_with_rag_does_not_require_live_rag_env(
             profile_name="Ian",
         )
 
-    monkeypatch.setattr("ab_eval._run_single_worksheet_pipeline", fake_single_pipeline)
+    monkeypatch.setattr(
+        "experiments.batteries.ab_eval._run_single_worksheet_pipeline", fake_single_pipeline
+    )
 
     result = _run_variant_from_frozen(
         variant="B_with_rag",
