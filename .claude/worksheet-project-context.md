@@ -8,6 +8,27 @@
 
 ## Current State
 
+### Session 55 — 2026-06-22 (experiments refactor: batteries + rag_eval moved)
+
+**Status:** Continued `plans/lexical-exploring-castle.md`. Completed the package skeleton (partial) + the **batteries move** and relocated the RAG eval harness. Scope this session was deliberately **batteries-only** (owner choice); the UFLI corpus move (Step 5) and the rest of the RAG package (Step 4) are still deferred.
+
+**Done (commit `669f7e4` on `refactor/separate-experiments`):**
+- Moved `ab_eval.py`, `adapt_battery.py`, `render_battery.py`, `render/benchmark.py` → `experiments/batteries/` (as `render_benchmark.py`); added `experiments/__init__.py` + `experiments/batteries/__init__.py`.
+- Relocated `rag/eval.py` → `experiments/rag_eval.py` so production no longer imports an experiment (owner-approved). Its `from ab_eval import …` now points at `experiments.batteries.ab_eval`.
+- Repointed every importer: `tests/test_ab_eval.py`, `test_adapt_battery.py`, `test_render_battery.py`, `test_renderer_benchmark.py`, `test_rag_eval.py` (both the `import` lines AND the `monkeypatch.setattr("ab_eval.…")` / `"rag.eval.…"` string targets — the string targets were the non-obvious part). Updated 5 README usage refs to `-m experiments.batteries.ab_eval` / `-m experiments.rag_eval`.
+- **Verified green under Python 3.11** (the CI version, not just local 3.13): `make lint` clean, `make typecheck` clean (170 files), `make test` **803 passed**. `git grep` confirms no old-path imports remain. Local 3.13 also green.
+
+**Decisions:**
+- Placed the RAG eval at `experiments/rag_eval.py` (top-level), NOT `experiments/rag/` as the plan's Step-2 skeleton sketched. **Flag for the deferred Step 4:** if the rest of the RAG experiments move into `experiments/rag/`, reconcile this (e.g. `experiments/rag/eval.py`) for consistency.
+- `corpus.ufli` move confirmed clean to do later: `lookup.py` (stays in production) has no sibling deps, and **no production code** imports the ~16 non-lookup corpus modules — only ~10 `tests/test_corpus_*` files do.
+
+**Gotchas:**
+- **ruff version skew:** the `ruff-format` pre-commit hook pins **v0.8.4**, but local ruff is **0.15.5**. They format differently (0.8.4 collapses a wrapped ternary in `ab_eval.py` to one line), so the commit bounced a few times. Workaround used: `uvx ruff@0.8.4 format …` to match the hook. Worth aligning local ruff to 0.8.4 or bumping the hook pin.
+- `refactor/separate-experiments` is **local-only** (no upstream) — not pushed.
+- `experiments/corpus_ufli/` exists as an untracked skeleton (just `__init__.py`) for the deferred Step 5; intentionally not committed yet.
+
+**Next:** deferred per owner — Step 4 (rest of RAG package) and Step 5 (move `corpus/ufli/` non-lookup modules → `experiments/corpus_ufli/`, repoint the `tests/test_corpus_*` importers), each behind the Step-6 verification gate (lint + mypy + 803-test baseline, verified under 3.11). Do NOT touch `adapt/` ledger/planner/judge or `corpus/ufli/lookup.py`.
+
 ### Session 54 — 2026-06-19 (experiments refactor: branch + baseline)
 
 **Status:** Started the refactor to separate experiment code (RAG, UFLI audio companion, eval batteries) into an `experiments/` package, per `plans/lexical-exploring-castle.md`. Completed plan Step 0 (branch hygiene) and Step 1 (green baseline). No files moved yet.
