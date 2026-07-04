@@ -8,14 +8,32 @@
 
 ## Current State
 
-### Session 56 — 2026-07-04 (experiments refactor: strategy reconciled, no code moved yet)
+### Session 56 — 2026-07-04 (experiments refactor: reconciled AND executed)
 
-**Status:** Strategy/planning session. Reviewed refactor state against the owner's real
-objective (un-overengineer, don't just relocate) and **reconciled the plan** so the
-artifacts are the source of truth again. **No code moved this session** — the working-tree
-rag-eval extraction from a prior uncommitted session is still uncommitted. Plan lives at
-`~/.claude/plans/lexical-exploring-castle.md` (session-plans dir, outside the repo — it was
-never checked in; see its 2026-07-04 revision block for the authoritative decisions).
+**Status:** Reconciled the plan against the owner's real objective (un-overengineer, don't
+just relocate), then **executed the revised Steps 4/5/5b**. The experiments refactor is now
+functionally complete: RAG eval harness extracted, UFLI corpus experiments relocated, and
+all experiment tests dropped from CI. Plan lives at
+`~/.claude/plans/lexical-exploring-castle.md` (session-plans dir, outside the repo — never
+checked in; see its 2026-07-04 revision block for the authoritative decisions).
+
+**Done this session (commits on `refactor/separate-experiments`):**
+- `2e41812` — reconciled plan + handoff (docs).
+- `06c355e` — Step 4: extract RAG eval harness → `experiments/rag/eval.py`. `rag/` stays
+  production.
+- `f64af45` — Step 5/5b: `git mv` 15 non-lookup `corpus/ufli/*` → `experiments/corpus_ufli/`
+  (lookup + `__init__` stay); repoint intra-cluster imports + `python -m ...ingest` help
+  strings + README/AGENTS; relocate all experiment tests under `experiments/*/tests/` so
+  `testpaths=["tests"]` stops collecting them. Also bumped `ruff-pre-commit` v0.8.4 →
+  v0.15.5 to match CI/local and end the hook skew (see gotcha below).
+
+**Final verification (all green):** `ruff check .` clean; `mypy .` clean under **Python 3.11**
+(CI version, 175 files); production CI subset **687 passed** (was 803 — the **116** relocated
+experiment tests now live under `experiments/` and pass when run directly, `687+116=803`, no
+coverage lost); `import transform, batch, complete` OK; lesson-pick path
+(`corpus.ufli.lookup` + `adapt/`, `extract/`, `skill/` consumers) imports clean; production
+`pdf_classic` smoke produced `lesson_*.pdf` (cover + 5 worksheets, 13 pages, exit 0, one
+live Gemini quality-review call as expected).
 
 **Decisions locked (owner, 2026-07-04):**
 - **Nothing gets deleted.** Experiments (UFLI audio companion, corpus tooling, batteries)
@@ -53,15 +71,26 @@ never checked in; see its 2026-07-04 revision block for the authoritative decisi
   `experiments/batteries/ab_eval.py`, `experiments/rag/eval.py`, `rag/__init__.py`.
 - `ruff`/`mypy`/`test_rag_eval.py` pass; full 3.11 gate not yet re-run.
 
-**Next (execution sequence per revised plan, not yet started):** (1) commit the green
-rag-eval extraction after the full 3.11 gate; (2) Step 5 — `git mv` non-lookup
-`corpus/ufli/*` → `experiments/corpus_ufli/`, repoint intra-cluster imports, leave
-`lookup.py`; (3) Step 5b — relocate experiment test files (`test_corpus_*`, `test_pacing`,
-`test_remediate`, `test_ab_eval`, `test_adapt_battery`, `test_render_battery`,
-`test_renderer_benchmark`, `test_rag_eval`) under `experiments/` to drop them from CI; keep
-`test_llm_planner`/`objective_corpus_fixture` in `tests/`; (4) gate under 3.11, report which
-tests left CI, smoke a `pdf_classic` transform. Do NOT touch `adapt/` or
-`corpus/ufli/lookup.py`. Mind the ruff 0.8.4-vs-local format skew when committing.
+**Gotchas (execution):**
+- **pip supply-chain env var breaks fresh pre-commit hook installs.** The sandbox sets
+  `PIP_UPLOADED_PRIOR_TO=P14D` (a duration), which stock pip inside pre-commit's isolated
+  env can't parse (`Invalid isoformat string: 'P14D'`) → any *new* hook env install fails.
+  The old v0.8.4 env was cached so it worked; bumping ruff forced a fresh install that
+  failed. Workaround: `env -u PIP_UPLOADED_PRIOR_TO git commit …` for commits that build a
+  new hook env. Once the v0.15.5 env is cached, normal commits work again.
+- **ruff hook skew is now resolved** (bumped to v0.15.5) — the old v0.8.4 flagged UP038
+  (removed in modern ruff) and E402 on imports after `pytest.importorskip` (modern ruff
+  exempts these). The `uvx ruff@0.8.4 format` dance from Session 55 is no longer needed.
+
+**Next:** The experiments refactor (RAG/corpus/batteries relocation) is essentially done.
+Remaining from the original plan, still deferred: nothing required. Larger simplification
+levers, per the 2026-07-04 objective discussion — NOT part of this refactor:
+- **`adapt/` planner/judge/ledger** (~6.8k LoC) — the reviews' real overengineering target;
+  needs a measured quality baseline before any pruning. Do NOT blind-delete.
+- **The image→worksheet capability gap** — the owner's actual product priority (photo →
+  worksheet is not working yet; lesson-pick → worksheet works). This is a capability build,
+  not cleanup.
+Do NOT touch `corpus/ufli/lookup.py` (production).
 
 ### Session 55 — 2026-06-22 (experiments refactor: batteries + rag_eval moved)
 
