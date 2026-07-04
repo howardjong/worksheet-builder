@@ -29,7 +29,7 @@ python batch.py ... --dry-run      # list only
 # RAG
 python -m corpus.ufli.ingest index --data-dir ./data/ufli
 python -m rag.backfill --artifacts-dir ./samples/output --output-dir ./samples/output
-python -m rag.eval --test-dir ./samples/input --profile profiles/ian.yaml
+python -m experiments.rag.eval --test-dir ./samples/input --profile profiles/ian.yaml
 ```
 
 ## Architecture

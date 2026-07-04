@@ -359,7 +359,7 @@ def _render_markdown_report(
         "",
         "## Aggregate",
         "",
-        "- `rag/eval.py` is the primary experiment harness.",
+        "- `experiments/rag/eval.py` is the primary experiment harness.",
         f"- Cases: {report.case_count}",
         f"- retrieval@3 mean: {report.retrieval_at_3_mean:.2f}",
         f"- Retrieval latency mean (ms): {report.retrieval_latency_ms_mean:.1f}",

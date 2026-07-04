@@ -55,7 +55,7 @@ python complete.py --profile profiles/ian.yaml --lesson 5
 python -m rag.backfill --artifacts-dir ./samples/output --output-dir ./samples/output
 
 # Evaluate retrieval and baseline-vs-RAG behavior
-python -m experiments.rag_eval --test-dir ./samples/input --profile profiles/ian.yaml
+python -m experiments.rag.eval --test-dir ./samples/input --profile profiles/ian.yaml
 
 # Build UFLI audio companion lesson bundles (pilot_rep: 6 lessons)
 python -m corpus.ufli.ingest build-audio
@@ -330,7 +330,7 @@ python -m rag.backfill \
   --db-path vector_store
 
 # Evaluate retrieval quality and baseline-vs-RAG differences
-python -m experiments.rag_eval \
+python -m experiments.rag.eval \
   --test-dir ./samples/input \
   --profile profiles/ian.yaml \
   --theme roblox_obby \
@@ -344,8 +344,8 @@ python -m experiments.rag_eval \
 PDFs, then reconstructs indexing payloads using the same `index_run()` path as
 live pipeline runs.
 
-`experiments.rag_eval` and `experiments.batteries.ab_eval` call `retrieve_context()` directly and do not depend
-on `WORKSHEET_USE_RAG`. `experiments.rag_eval` freezes extraction and skill inference per input, measures
+`experiments.rag.eval` and `experiments.batteries.ab_eval` call `retrieve_context()` directly and do not depend
+on `WORKSHEET_USE_RAG`. `experiments.rag.eval` freezes extraction and skill inference per input, measures
 `retrieval@3`, compares baseline vs RAG validator pass rate, tracks whether the
 RAG variant changes response-format sets, and estimates distractor novelty from
 retrieved prior adaptations.

@@ -4,7 +4,6 @@ __all__ = [
     "backfill",
     "client",
     "embeddings",
-    "eval",
     "indexer",
     "retrieval",
     "store",

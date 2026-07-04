@@ -607,7 +607,7 @@ def _build_scorecard(
             "## Notes",
             "",
             (
-                "- `rag/eval.py` is the primary experiment harness; "
+                "- `experiments/rag/eval.py` is the primary experiment harness; "
                 "this command is the narrow causal check."
             ),
             "- This protocol freezes Stage 1-4 (capture/extraction/skill) once per target.",
