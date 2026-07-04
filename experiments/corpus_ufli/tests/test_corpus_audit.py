@@ -13,13 +13,13 @@ from PIL import Image
 
 pytest.importorskip("chromadb")
 
-from corpus.ufli.audit import (
+from experiments.corpus_ufli.audit import (
     load_audio_companion_records,
     load_image_companion_records,
     run_audit,
 )
-from corpus.ufli.audit_schema import AuditFlag
-from corpus.ufli.ingest import cli
+from experiments.corpus_ufli.audit_schema import AuditFlag
+from experiments.corpus_ufli.ingest import cli
 from rag.store import CURRICULUM, add_document, get_or_create_collection, get_store
 
 

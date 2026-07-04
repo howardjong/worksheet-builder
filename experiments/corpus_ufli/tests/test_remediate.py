@@ -11,14 +11,14 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from corpus.ufli.audit_schema import (
+from experiments.corpus_ufli.audit_schema import (
     AuditFlag,
     AuditSeverity,
     CorpusAuditSummary,
     RecordType,
 )
-from corpus.ufli.extract import LessonContent
-from corpus.ufli.remediate import (
+from experiments.corpus_ufli.extract import LessonContent
+from experiments.corpus_ufli.remediate import (
     STRATEGY_AUDIO_REGEN,
     STRATEGY_CONCEPT_BACKFILL,
     STRATEGY_DELETE_STALE,
@@ -119,9 +119,7 @@ class TestPlanRemediations:
             _make_flag("very_short_record", severity="warn"),
         ]
         summary = _make_summary(flags)
-        actions = plan_remediations(
-            summary, code_filter={"empty_extracted_text"}
-        )
+        actions = plan_remediations(summary, code_filter={"empty_extracted_text"})
         assert len(actions) == 1
         assert actions[0].flag.code == "empty_extracted_text"
 
@@ -146,22 +144,19 @@ class TestExecuteRemediations:
         data_dir = str(tmp_path)
         normalized = tmp_path / "normalized.jsonl"
         normalized.write_text(
-            json.dumps({"lesson_id": "43", "concept": "", "slide_text": "test"})
-            + "\n"
+            json.dumps({"lesson_id": "43", "concept": "", "slide_text": "test"}) + "\n"
         )
         file_hash_before = hashlib.md5(normalized.read_bytes()).hexdigest()
 
         flag = _make_flag("empty_extracted_text", lesson_id="43")
-        actions = [
-            RemediationAction(flag=flag, strategy=STRATEGY_REEXTRACT, status="pending")
-        ]
+        actions = [RemediationAction(flag=flag, strategy=STRATEGY_REEXTRACT, status="pending")]
         report = execute_remediations(actions, data_dir=data_dir, dry_run=True)
 
         file_hash_after = hashlib.md5(normalized.read_bytes()).hexdigest()
         assert file_hash_before == file_hash_after
         assert report.fixed_count == 0
 
-    @patch("corpus.ufli.remediate.extract_lesson")
+    @patch("experiments.corpus_ufli.remediate.extract_lesson")
     def test_reextract_failed_when_raw_dir_missing(
         self, mock_extract: MagicMock, tmp_path: Path
     ) -> None:
@@ -169,25 +164,18 @@ class TestExecuteRemediations:
         mock_extract.return_value = None
         data_dir = str(tmp_path)
         normalized = tmp_path / "normalized.jsonl"
-        normalized.write_text(
-            json.dumps({"lesson_id": "43", "slide_text": "old"}) + "\n"
-        )
+        normalized.write_text(json.dumps({"lesson_id": "43", "slide_text": "old"}) + "\n")
         (tmp_path / "manifest.jsonl").write_text(
-            json.dumps({"lesson_id": "43", "lesson_group": "G", "concept": "c"})
-            + "\n"
+            json.dumps({"lesson_id": "43", "lesson_group": "G", "concept": "c"}) + "\n"
         )
 
         flag = _make_flag("empty_extracted_text", lesson_id="43")
-        actions = [
-            RemediationAction(flag=flag, strategy=STRATEGY_REEXTRACT, status="pending")
-        ]
-        execute_remediations(
-            actions, data_dir=data_dir, dry_run=False, skip_reindex=True
-        )
+        actions = [RemediationAction(flag=flag, strategy=STRATEGY_REEXTRACT, status="pending")]
+        execute_remediations(actions, data_dir=data_dir, dry_run=False, skip_reindex=True)
         assert actions[0].status == "failed"
         assert "raw directory missing" in actions[0].detail
 
-    @patch("corpus.ufli.remediate.extract_lesson")
+    @patch("experiments.corpus_ufli.remediate.extract_lesson")
     def test_reextract_needs_manifest_metadata(
         self, mock_extract: MagicMock, tmp_path: Path
     ) -> None:
@@ -204,23 +192,14 @@ class TestExecuteRemediations:
         )
         data_dir = str(tmp_path)
         normalized = tmp_path / "normalized.jsonl"
-        normalized.write_text(
-            json.dumps({"lesson_id": "43", "slide_text": "old"}) + "\n"
-        )
+        normalized.write_text(json.dumps({"lesson_id": "43", "slide_text": "old"}) + "\n")
         (tmp_path / "manifest.jsonl").write_text(
-            json.dumps(
-                {"lesson_id": "43", "lesson_group": "G", "concept": "short vowels"}
-            )
-            + "\n"
+            json.dumps({"lesson_id": "43", "lesson_group": "G", "concept": "short vowels"}) + "\n"
         )
 
         flag = _make_flag("empty_extracted_text", lesson_id="43")
-        actions = [
-            RemediationAction(flag=flag, strategy=STRATEGY_REEXTRACT, status="pending")
-        ]
-        execute_remediations(
-            actions, data_dir=data_dir, dry_run=False, skip_reindex=True
-        )
+        actions = [RemediationAction(flag=flag, strategy=STRATEGY_REEXTRACT, status="pending")]
+        execute_remediations(actions, data_dir=data_dir, dry_run=False, skip_reindex=True)
         mock_extract.assert_called_once_with("43", "G", "short vowels", data_dir)
         assert actions[0].status == "fixed"
 
@@ -256,22 +235,16 @@ class TestExecuteRemediations:
 
         flag = _make_flag("missing_concept", lesson_id="43", severity="warn")
         actions = [
-            RemediationAction(
-                flag=flag, strategy=STRATEGY_CONCEPT_BACKFILL, status="pending"
-            )
+            RemediationAction(flag=flag, strategy=STRATEGY_CONCEPT_BACKFILL, status="pending")
         ]
-        execute_remediations(
-            actions, data_dir=data_dir, dry_run=False, skip_reindex=True
-        )
+        execute_remediations(actions, data_dir=data_dir, dry_run=False, skip_reindex=True)
         assert actions[0].status == "fixed"
 
         # Verify normalized.jsonl was patched
         rec = json.loads(normalized.read_text().strip())
         assert rec["concept"] == "short a"
 
-    def test_concept_backfill_skipped_for_empty_manifest(
-        self, tmp_path: Path
-    ) -> None:
+    def test_concept_backfill_skipped_for_empty_manifest(self, tmp_path: Path) -> None:
         """missing_concept for lesson A (manifest concept also empty) -> skipped."""
         data_dir = str(tmp_path)
         normalized = tmp_path / "normalized.jsonl"
@@ -296,17 +269,13 @@ class TestExecuteRemediations:
 
         flag = _make_flag("missing_concept", lesson_id="A", severity="warn")
         actions = [
-            RemediationAction(
-                flag=flag, strategy=STRATEGY_CONCEPT_BACKFILL, status="pending"
-            )
+            RemediationAction(flag=flag, strategy=STRATEGY_CONCEPT_BACKFILL, status="pending")
         ]
-        execute_remediations(
-            actions, data_dir=data_dir, dry_run=False, skip_reindex=True
-        )
+        execute_remediations(actions, data_dir=data_dir, dry_run=False, skip_reindex=True)
         assert actions[0].status == "skipped"
         assert "pre-phonics" in actions[0].detail
 
-    @patch("corpus.ufli.remediate.extract_lesson")
+    @patch("experiments.corpus_ufli.remediate.extract_lesson")
     def test_concept_backfill_skipped_when_reextract_handled_lesson(
         self, mock_extract: MagicMock, tmp_path: Path
     ) -> None:
@@ -327,10 +296,7 @@ class TestExecuteRemediations:
             json.dumps({"lesson_id": "43", "slide_text": "old", "concept": ""}) + "\n"
         )
         (tmp_path / "manifest.jsonl").write_text(
-            json.dumps(
-                {"lesson_id": "43", "lesson_group": "G", "concept": "short vowels"}
-            )
-            + "\n"
+            json.dumps({"lesson_id": "43", "lesson_group": "G", "concept": "short vowels"}) + "\n"
         )
 
         actions = [
@@ -345,9 +311,7 @@ class TestExecuteRemediations:
                 status="pending",
             ),
         ]
-        execute_remediations(
-            actions, data_dir=data_dir, dry_run=False, skip_reindex=True
-        )
+        execute_remediations(actions, data_dir=data_dir, dry_run=False, skip_reindex=True)
         assert actions[0].status == "fixed"  # re-extract worked
         assert actions[1].status == "skipped"  # concept backfill skipped
         assert "already re-extracted" in actions[1].detail
@@ -480,11 +444,7 @@ class TestStaleIndexDeletion:
         mock_collection = MagicMock()
 
         flag = _make_flag("stale_curriculum_index", lesson_id="99", severity="warn")
-        actions = [
-            RemediationAction(
-                flag=flag, strategy=STRATEGY_DELETE_STALE, status="pending"
-            )
-        ]
+        actions = [RemediationAction(flag=flag, strategy=STRATEGY_DELETE_STALE, status="pending")]
 
         with (
             patch("rag.store.get_store") as mock_get_store,
@@ -495,13 +455,9 @@ class TestStaleIndexDeletion:
             patch("rag.store.delete_document") as mock_delete,
         ):
             mock_get_store.return_value = MagicMock()
-            execute_remediations(
-                actions, data_dir=data_dir, dry_run=False, skip_reindex=True
-            )
+            execute_remediations(actions, data_dir=data_dir, dry_run=False, skip_reindex=True)
 
-        mock_delete.assert_called_once_with(
-            mock_collection, "curriculum_ufli_99"
-        )
+        mock_delete.assert_called_once_with(mock_collection, "curriculum_ufli_99")
         assert actions[0].status == "fixed"
 
 
@@ -519,19 +475,11 @@ class TestReindex:
         )
         (tmp_path / "manifest.jsonl").write_text("")
 
-        flag = _make_flag(
-            "missing_curriculum_index", lesson_id="43", severity="warn"
-        )
-        actions = [
-            RemediationAction(
-                flag=flag, strategy=STRATEGY_REINDEX, status="pending"
-            )
-        ]
+        flag = _make_flag("missing_curriculum_index", lesson_id="43", severity="warn")
+        actions = [RemediationAction(flag=flag, strategy=STRATEGY_REINDEX, status="pending")]
 
         with patch("rag.client.rag_available", return_value=False):
-            execute_remediations(
-                actions, data_dir=data_dir, dry_run=False, skip_reindex=False
-            )
+            execute_remediations(actions, data_dir=data_dir, dry_run=False, skip_reindex=False)
 
         assert actions[0].status == "skipped"
         assert "API" in actions[0].detail or "api" in actions[0].detail.lower()
@@ -552,14 +500,8 @@ class TestReindex:
         )
         (tmp_path / "manifest.jsonl").write_text("")
 
-        flag = _make_flag(
-            "missing_curriculum_index", lesson_id="43", severity="warn"
-        )
-        actions = [
-            RemediationAction(
-                flag=flag, strategy=STRATEGY_REINDEX, status="pending"
-            )
-        ]
+        flag = _make_flag("missing_curriculum_index", lesson_id="43", severity="warn")
+        actions = [RemediationAction(flag=flag, strategy=STRATEGY_REINDEX, status="pending")]
 
         mock_embed_result = MagicMock()
         mock_embed_result.values = [0.1] * 768
@@ -575,9 +517,7 @@ class TestReindex:
             ),
             patch("rag.store.add_document") as mock_add,
         ):
-            execute_remediations(
-                actions, data_dir=data_dir, dry_run=False, skip_reindex=False
-            )
+            execute_remediations(actions, data_dir=data_dir, dry_run=False, skip_reindex=False)
 
         mock_add.assert_called_once()
         call_kwargs = mock_add.call_args
@@ -591,26 +531,16 @@ class TestReindex:
 
 
 class TestAudioRegen:
-    def test_audio_regen_calls_generate_audio_companion(
-        self, tmp_path: Path
-    ) -> None:
+    def test_audio_regen_calls_generate_audio_companion(self, tmp_path: Path) -> None:
         """Audio flag for pilot lesson routes to generate_audio_companion."""
         data_dir = str(tmp_path)
         (tmp_path / "normalized.jsonl").write_text("")
         (tmp_path / "manifest.jsonl").write_text("")
 
-        flag = _make_flag(
-            "missing_audio_file", lesson_id="14", record_type="audio"
-        )
-        actions = [
-            RemediationAction(
-                flag=flag, strategy=STRATEGY_AUDIO_REGEN, status="pending"
-            )
-        ]
+        flag = _make_flag("missing_audio_file", lesson_id="14", record_type="audio")
+        actions = [RemediationAction(flag=flag, strategy=STRATEGY_AUDIO_REGEN, status="pending")]
 
-        with patch(
-            "corpus.ufli.audio_companion.generate_audio_companion"
-        ) as mock_gen:
+        with patch("experiments.corpus_ufli.audio_companion.generate_audio_companion") as mock_gen:
             mock_gen.return_value = {"planned": 1, "generated": 1, "skipped": 0}
             execute_remediations(
                 actions,
@@ -628,25 +558,15 @@ class TestAudioRegen:
         )
         assert actions[0].status == "fixed"
 
-    def test_audio_regen_skipped_for_non_pilot_lesson(
-        self, tmp_path: Path
-    ) -> None:
+    def test_audio_regen_skipped_for_non_pilot_lesson(self, tmp_path: Path) -> None:
         """Audio flag for lesson 43 (not pilot) produces skipped status."""
         data_dir = str(tmp_path)
         (tmp_path / "normalized.jsonl").write_text("")
         (tmp_path / "manifest.jsonl").write_text("")
 
-        flag = _make_flag(
-            "missing_audio_file", lesson_id="43", record_type="audio"
-        )
-        actions = [
-            RemediationAction(
-                flag=flag, strategy=STRATEGY_AUDIO_REGEN, status="pending"
-            )
-        ]
-        execute_remediations(
-            actions, data_dir=data_dir, dry_run=False, skip_reindex=True
-        )
+        flag = _make_flag("missing_audio_file", lesson_id="43", record_type="audio")
+        actions = [RemediationAction(flag=flag, strategy=STRATEGY_AUDIO_REGEN, status="pending")]
+        execute_remediations(actions, data_dir=data_dir, dry_run=False, skip_reindex=True)
         assert actions[0].status == "skipped"
         assert "pilot scope" in actions[0].detail
 
@@ -656,17 +576,11 @@ class TestAudioRegen:
         (tmp_path / "normalized.jsonl").write_text("")
         (tmp_path / "manifest.jsonl").write_text("")
 
-        flag = _make_flag(
-            "missing_audio_file", lesson_id="1", record_type="audio"
-        )
-        actions = [
-            RemediationAction(
-                flag=flag, strategy=STRATEGY_AUDIO_REGEN, status="pending"
-            )
-        ]
+        flag = _make_flag("missing_audio_file", lesson_id="1", record_type="audio")
+        actions = [RemediationAction(flag=flag, strategy=STRATEGY_AUDIO_REGEN, status="pending")]
 
         with patch(
-            "corpus.ufli.audio_companion.generate_audio_companion",
+            "experiments.corpus_ufli.audio_companion.generate_audio_companion",
             side_effect=RuntimeError("ELEVENLABS_API_KEY not set"),
         ):
             execute_remediations(

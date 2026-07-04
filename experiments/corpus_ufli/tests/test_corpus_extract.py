@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from corpus.ufli.extract import extract_pptx_text
+from experiments.corpus_ufli.extract import extract_pptx_text
 
 
 def test_extract_pptx_text(tmp_path: Path) -> None:
@@ -55,7 +55,7 @@ def test_extract_pptx_multiple_slides(tmp_path: Path) -> None:
 def test_extract_pdf_text(tmp_path: Path) -> None:
     """PDF text extraction returns page content."""
     fitz = pytest.importorskip("fitz")
-    from corpus.ufli.extract import extract_pdf_text
+    from experiments.corpus_ufli.extract import extract_pdf_text
 
     # Create a minimal PDF with PyMuPDF
     doc = fitz.open()

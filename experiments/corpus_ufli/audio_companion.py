@@ -21,7 +21,7 @@ from typing import Any, cast
 
 import yaml
 
-from corpus.ufli.audio_companion_schema import (
+from experiments.corpus_ufli.audio_companion_schema import (
     AudioClipDefinition,
     AudioClipKind,
     AudioGenerationLogEntry,
@@ -39,8 +39,8 @@ from corpus.ufli.audio_companion_schema import (
     VoiceProfile,
     VoiceProfileCatalog,
 )
-from corpus.ufli.extract import LessonContent
-from corpus.ufli.grade_levels import derive_grade
+from experiments.corpus_ufli.extract import LessonContent
+from experiments.corpus_ufli.grade_levels import derive_grade
 from rag.embeddings import embed_text
 from rag.store import (
     AUDIO_COMPANION_CLIPS,
@@ -208,13 +208,8 @@ def build_audio_companion_manifests(
         bundle = _derive_lesson_bundle(lesson, lesson_number, lexicon)
         bundle_issues = _validate_bundle(bundle, lexicon)
         if bundle_issues:
-            summary = "; ".join(
-                f"{issue.code}: {issue.message}"
-                for issue in bundle_issues[:3]
-            )
-            raise RuntimeError(
-                f"Audio bundle validation failed for {bundle.lesson_key}: {summary}"
-            )
+            summary = "; ".join(f"{issue.code}: {issue.message}" for issue in bundle_issues[:3])
+            raise RuntimeError(f"Audio bundle validation failed for {bundle.lesson_key}: {summary}")
         bundles.append(bundle)
 
     bundles.sort(key=lambda bundle: bundle.lesson_number)
@@ -269,8 +264,7 @@ def generate_audio_companion(
     )
     if not validation_report.passed:
         summary = "; ".join(
-            f"{issue.bundle_key}:{issue.code}"
-            for issue in validation_report.issues[:3]
+            f"{issue.bundle_key}:{issue.code}" for issue in validation_report.issues[:3]
         )
         raise RuntimeError(
             "Audio bundle validation failed before generation: "
@@ -288,8 +282,7 @@ def generate_audio_companion(
 
     if dry_run:
         estimates = [
-            _estimate_voice_profile(voice_catalog.profiles[name], bundles)
-            for name in voice_names
+            _estimate_voice_profile(voice_catalog.profiles[name], bundles) for name in voice_names
         ]
         review_packet_dir = ""
         if review_packet:
@@ -362,9 +355,7 @@ def generate_audio_companion(
             except RuntimeError as exc:
                 clip.status = "failed"
                 failed += 1
-                logger.error(
-                    "Clip %s failed after retries: %s", clip.segment_id, exc
-                )
+                logger.error("Clip %s failed after retries: %s", clip.segment_id, exc)
                 continue
             target_path.write_bytes(audio_bytes)
             clip.duration_ms = _measured_or_estimated_duration_ms(
@@ -418,9 +409,7 @@ def generate_audio_companion(
         "generated": generated,
         "skipped": skipped,
         "failed": failed,
-        "voice_profiles": {
-            estimate.voice_profile: estimate.model_dump() for estimate in estimates
-        },
+        "voice_profiles": {estimate.voice_profile: estimate.model_dump() for estimate in estimates},
         "review_packet_dir": review_packet_dir,
         "dry_run": False,
     }
@@ -470,20 +459,24 @@ def index_audio_companion(
     if index_clips:
         clips_collection = get_or_create_collection(store, AUDIO_COMPANION_CLIPS)
         indexed += _index_clips(
-            bundles, clips_collection, companion_dir, voice_profile,
+            bundles,
+            clips_collection,
+            companion_dir,
+            voice_profile,
             include_pending=include_pending,
         )
 
     if index_lessons:
         lessons_collection = get_or_create_collection(store, AUDIO_COMPANION_LESSONS)
         indexed += _index_lessons(
-            bundles, lessons_collection, companion_dir, voice_profile,
+            bundles,
+            lessons_collection,
+            companion_dir,
+            voice_profile,
             include_pending=include_pending,
         )
 
-    logger.info(
-        "Indexed %s audio companion documents (granularity=%s)", indexed, granularity
-    )
+    logger.info("Indexed %s audio companion documents (granularity=%s)", indexed, granularity)
     return indexed
 
 
@@ -505,9 +498,7 @@ def _index_clips(
             if not include_pending and clip.review_status != "approved":
                 continue
             if not (companion_dir / clip.audio_path).exists():
-                logger.warning(
-                    "Audio file missing for %s, skipping indexing", clip.segment_id
-                )
+                logger.warning("Audio file missing for %s, skipping indexing", clip.segment_id)
                 continue
 
             document = _build_clip_document(clip, bundle)
@@ -568,7 +559,9 @@ def _index_lessons(
     indexed = 0
     for bundle in bundles:
         aggregate = build_lesson_aggregate(
-            bundle, companion_dir, voice_profile,
+            bundle,
+            companion_dir,
+            voice_profile,
             include_pending=include_pending,
         )
         if aggregate is None:
@@ -1061,10 +1054,7 @@ def _extract_sample_words(text: str) -> list[str]:
             continue
         if re.search(r"[.!?]", line) and len(line.split()) > 8:
             continue
-        tokens = [
-            token.strip("'")
-            for token in re.findall(r"[A-Za-z][A-Za-z'-]{1,14}", line)
-        ]
+        tokens = [token.strip("'") for token in re.findall(r"[A-Za-z][A-Za-z'-]{1,14}", line)]
         if not tokens:
             continue
         for token in tokens:
@@ -1244,8 +1234,7 @@ def _review_focus_text(
 
 def _concept_focus_text(concept_targets: list[_ConceptTarget]) -> str:
     parts = [
-        f"{target.grapheme_display} saying {target.phoneme_display}"
-        for target in concept_targets
+        f"{target.grapheme_display} saying {target.phoneme_display}" for target in concept_targets
     ]
     if not parts:
         return "the target sound"
@@ -1303,9 +1292,9 @@ def _clause_pause_only_tts(text: str) -> str:
     if not shaped:
         return ""
     pause_marker = "[[pause]]"
-    shaped = re.sub(r',(["”\']?)\s+', rf',\1 {pause_marker} ', shaped)
-    shaped = re.sub(r'([;:])(["”\']?)\s+', rf'\1\2 {pause_marker} ', shaped)
-    shaped = re.sub(r'([.!?]["”\']?)\s+', rf'\1 {pause_marker} ', shaped)
+    shaped = re.sub(r',(["”\']?)\s+', rf",\1 {pause_marker} ", shaped)
+    shaped = re.sub(r'([;:])(["”\']?)\s+', rf"\1\2 {pause_marker} ", shaped)
+    shaped = re.sub(r'([.!?]["”\']?)\s+', rf"\1 {pause_marker} ", shaped)
     if re.search(r'[.!?]["”\']?$', shaped):
         shaped = f"{shaped} {pause_marker}"
     shaped = re.sub(rf"(?:\s*{re.escape(pause_marker)}\s*)+", " ... ", shaped)
@@ -1393,9 +1382,7 @@ def _split_passage_sentences(text: str) -> list[str]:
 def _frequent_content_words(text: str) -> list[str]:
     tokens = re.findall(r"[A-Za-z]+(?:'[A-Za-z]+)?", text)
     filtered = [
-        token
-        for token in tokens
-        if token.casefold() not in _COMMON_WORDS and 2 <= len(token) <= 12
+        token for token in tokens if token.casefold() not in _COMMON_WORDS and 2 <= len(token) <= 12
     ]
     counts = Counter(token.casefold() for token in filtered)
     ordered: list[str] = []
@@ -1479,8 +1466,7 @@ def _validate_bundle(
                     bundle=bundle,
                     code="contaminated_word_target",
                     message=(
-                        f"Word target {word!r} looks like teacher metadata, "
-                        "not student content."
+                        f"Word target {word!r} looks like teacher metadata, not student content."
                     ),
                 )
             )
@@ -1540,9 +1526,7 @@ def _validate_bundle(
                 or clip.transcript_text.casefold().endswith(word.casefold())
                 for word in bundle.word_targets
             ) and not any(
-                clip.transcript_text.casefold().endswith(
-                    entry.anchor_word.casefold() + "."
-                )
+                clip.transcript_text.casefold().endswith(entry.anchor_word.casefold() + ".")
                 or clip.transcript_text.casefold().endswith(entry.anchor_word.casefold())
                 for entry in lexicon.graphemes.values()
                 if entry.anchor_word
@@ -1777,19 +1761,16 @@ def _request_elevenlabs_audio(
                 audio_bytes = cast(bytes, response.read())
             if len(audio_bytes) < 100:
                 raise RuntimeError(
-                    f"ElevenLabs returned suspiciously small audio "
-                    f"({len(audio_bytes)} bytes)"
+                    f"ElevenLabs returned suspiciously small audio ({len(audio_bytes)} bytes)"
                 )
             return audio_bytes
         except urllib.error.HTTPError as exc:  # pragma: no cover - exercised live only
             body = exc.read().decode("utf-8", errors="ignore")
-            last_error = RuntimeError(
-                f"ElevenLabs TTS failed ({exc.code}): {body}"
-            )
+            last_error = RuntimeError(f"ElevenLabs TTS failed ({exc.code}): {body}")
             last_error.__cause__ = exc
             if exc.code not in retryable_codes:
                 raise last_error from exc
-            delay = min(2 ** attempt + 0.5, 10.0)
+            delay = min(2**attempt + 0.5, 10.0)
             logger.warning(
                 "ElevenLabs %d error (attempt %d/%d), retrying in %.1fs",
                 exc.code,
@@ -1801,7 +1782,7 @@ def _request_elevenlabs_audio(
         except urllib.error.URLError as exc:  # pragma: no cover - network errors
             last_error = RuntimeError(f"ElevenLabs network error: {exc}")
             last_error.__cause__ = exc
-            delay = min(2 ** attempt + 0.5, 10.0)
+            delay = min(2**attempt + 0.5, 10.0)
             logger.warning(
                 "ElevenLabs network error (attempt %d/%d), retrying in %.1fs",
                 attempt + 1,
@@ -1946,10 +1927,7 @@ def _write_review_csv(path: Path, voice_profile: str, bundles: list[LessonAudioB
         writer.writeheader()
         for row in rows:
             writer.writerow(
-                {
-                    key: "" if value is None else value
-                    for key, value in row.model_dump().items()
-                }
+                {key: "" if value is None else value for key, value in row.model_dump().items()}
             )
 
 
@@ -1973,11 +1951,7 @@ def _review_rows(voice_profile: str, bundles: list[LessonAudioBundle]) -> list[P
 
 
 def _write_clips_json(path: Path, bundles: list[LessonAudioBundle]) -> None:
-    payload = [
-        clip.model_dump()
-        for bundle in bundles
-        for clip in bundle.clips
-    ]
+    payload = [clip.model_dump() for bundle in bundles for clip in bundle.clips]
     path.write_text(json.dumps(payload, indent=2, sort_keys=True))
 
 

@@ -10,19 +10,22 @@ import pytest
 
 pytest.importorskip("chromadb")
 
-from corpus.ufli.audio_companion import build_audio_companion_manifests, load_audio_bundles
-from corpus.ufli.audio_companion_schema import (
+from experiments.corpus_ufli.audio_companion import (
+    build_audio_companion_manifests,
+    load_audio_bundles,
+)
+from experiments.corpus_ufli.audio_companion_schema import (
     AudioJudgeClipResult,
     AudioJudgeSummary,
     JudgeRecommendation,
 )
-from corpus.ufli.audio_judge import (
+from experiments.corpus_ufli.audio_judge import (
     _judge_clip_with_gemini,
     _parse_judge_response,
     apply_judge_verdicts,
     judge_audio_companion,
 )
-from corpus.ufli.extract import LessonContent
+from experiments.corpus_ufli.extract import LessonContent
 
 
 def _write_normalized(path: Path, rows: list[dict[str, object]]) -> None:
@@ -122,9 +125,9 @@ def test_judge_audio_companion_writes_reports_with_stubbed_judge(
         bundle.model_dump_json(indent=2)
     )
 
-    monkeypatch.setattr("corpus.ufli.audio_judge.get_rag_client", lambda: object())
+    monkeypatch.setattr("experiments.corpus_ufli.audio_judge.get_rag_client", lambda: object())
     monkeypatch.setattr(
-        "corpus.ufli.audio_judge._judge_clip_with_gemini",
+        "experiments.corpus_ufli.audio_judge._judge_clip_with_gemini",
         lambda **kwargs: AudioJudgeClipResult(
             voice_profile="dorothy",
             lesson_id=kwargs["clip"].lesson_id,
@@ -193,7 +196,9 @@ def test_judge_clip_uses_audio_pacing_and_clarity_guardrails(
     audio_path.parent.mkdir(parents=True, exist_ok=True)
     audio_path.write_bytes(b"mp3")
 
-    monkeypatch.setattr("corpus.ufli.audio_judge._measure_audio_duration_ms", lambda _path: 500)
+    monkeypatch.setattr(
+        "experiments.corpus_ufli.audio_judge._measure_audio_duration_ms", lambda _path: 500
+    )
 
     fake_response = SimpleNamespace(
         text=json.dumps(
@@ -251,8 +256,7 @@ def test_judge_clip_uses_audio_pacing_and_clarity_guardrails(
     assert any("expected band" in concern for concern in result.concerns)
     assert any("Acoustic pronunciation" in concern for concern in result.concerns)
     assert any(
-        "does not closely match the intended transcript" in concern
-        for concern in result.concerns
+        "does not closely match the intended transcript" in concern for concern in result.concerns
     )
 
 
@@ -272,7 +276,9 @@ def test_judge_short_word_model_clip_avoids_pacing_false_positive(
     audio_path.parent.mkdir(parents=True, exist_ok=True)
     audio_path.write_bytes(b"mp3")
 
-    monkeypatch.setattr("corpus.ufli.audio_judge._measure_audio_duration_ms", lambda _path: 1200)
+    monkeypatch.setattr(
+        "experiments.corpus_ufli.audio_judge._measure_audio_duration_ms", lambda _path: 1200
+    )
     fake_response = SimpleNamespace(
         text=json.dumps(
             {
@@ -376,9 +382,7 @@ def test_apply_judge_verdicts_writes_back_to_bundles(tmp_path: Path) -> None:
     updated = apply_judge_verdicts(data_dir=str(tmp_path), summary=summary)
 
     assert updated > 0
-    reloaded = load_audio_bundles(
-        tmp_path / "companion" / "lessons", selected_lessons={14}
-    )
+    reloaded = load_audio_bundles(tmp_path / "companion" / "lessons", selected_lessons={14})
     for clip in reloaded[0].clips:
         if clip.segment_type != "word_model":
             assert clip.review_status == "approved"

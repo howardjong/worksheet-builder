@@ -11,10 +11,13 @@ import pytest
 
 pytest.importorskip("chromadb")
 
-from corpus.ufli.audio_companion import build_audio_companion_manifests, load_audio_bundles
-from corpus.ufli.audio_companion_schema import AudioClipDefinition, AudioJudgeClipResult
-from corpus.ufli.audio_fallback_policy import execute_gemini_fallback
-from corpus.ufli.audio_judge import _PacingMetrics
+from experiments.corpus_ufli.audio_companion import (
+    build_audio_companion_manifests,
+    load_audio_bundles,
+)
+from experiments.corpus_ufli.audio_companion_schema import AudioClipDefinition, AudioJudgeClipResult
+from experiments.corpus_ufli.audio_fallback_policy import execute_gemini_fallback
+from experiments.corpus_ufli.audio_judge import _PacingMetrics
 
 
 def _write_normalized(path: Path, rows: list[dict[str, object]]) -> None:
@@ -53,9 +56,7 @@ def _sample_rows() -> list[dict[str, object]]:
 
 
 def _prepare_generated_bundle(tmp_path: Path) -> None:
-    bundles = build_audio_companion_manifests(
-        data_dir=str(tmp_path), lesson_id="14"
-    )
+    bundles = build_audio_companion_manifests(data_dir=str(tmp_path), lesson_id="14")
     bundle = bundles[0]
     for clip in bundle.clips:
         clip.status = "generated"
@@ -117,7 +118,7 @@ def test_dry_run_skips_synthesis(
     _prepare_generated_bundle(tmp_path)
 
     monkeypatch.setattr(
-        "corpus.ufli.audio_fallback_policy._build_pacing_metrics",
+        "experiments.corpus_ufli.audio_fallback_policy._build_pacing_metrics",
         _fast_pacing_metrics,
     )
 
@@ -141,21 +142,21 @@ def test_live_synthesizes_and_replaces_when_improved(
     _prepare_generated_bundle(tmp_path)
 
     monkeypatch.setattr(
-        "corpus.ufli.audio_fallback_policy._build_pacing_metrics",
+        "experiments.corpus_ufli.audio_fallback_policy._build_pacing_metrics",
         _fast_pacing_metrics,
     )
 
     fake_tts_result = SimpleNamespace(audio_bytes=b"gemini-mp3", attempt_count=1, retry_delays_s=())
     monkeypatch.setattr(
-        "corpus.ufli.google_tts_client.build_google_tts_request_context",
+        "experiments.corpus_ufli.google_tts_client.build_google_tts_request_context",
         lambda: SimpleNamespace(access_token="test", project_id="test"),
     )
     monkeypatch.setattr(
-        "corpus.ufli.google_tts_client.synthesize_google_tts_audio",
+        "experiments.corpus_ufli.google_tts_client.synthesize_google_tts_audio",
         lambda **_kw: fake_tts_result,
     )
     monkeypatch.setattr(
-        "corpus.ufli.audio_companion._measure_audio_duration_ms",
+        "experiments.corpus_ufli.audio_companion._measure_audio_duration_ms",
         lambda _path: 5000,
     )
     monkeypatch.setattr(
@@ -185,9 +186,7 @@ def test_live_synthesizes_and_replaces_when_improved(
             instructional_match_score=5,
             target_accuracy_score=5,
             decoding_support_score=5,
-            passage_neutrality_score=5
-            if clip.segment_type.startswith("passage")
-            else None,
+            passage_neutrality_score=5 if clip.segment_type.startswith("passage") else None,
             adhd_supportiveness_score=5,
             pacing_suitability_score=5,
             pacing_consistency_score=5,
@@ -199,7 +198,7 @@ def test_live_synthesizes_and_replaces_when_improved(
         )
 
     monkeypatch.setattr(
-        "corpus.ufli.audio_judge._judge_clip_with_gemini",
+        "experiments.corpus_ufli.audio_judge._judge_clip_with_gemini",
         _fake_judge,
     )
 
@@ -218,9 +217,7 @@ def test_live_synthesizes_and_replaces_when_improved(
     assert all(r.replaced for r in improved)
 
     # Verify bundle was updated
-    bundles = load_audio_bundles(
-        tmp_path / "companion" / "lessons", selected_lessons={14}
-    )
+    bundles = load_audio_bundles(tmp_path / "companion" / "lessons", selected_lessons={14})
     replaced_ids = {r.segment_id for r in improved}
     for clip in bundles[0].clips:
         if clip.segment_id in replaced_ids:
@@ -237,19 +234,19 @@ def test_keeps_original_when_not_improved(
     _prepare_generated_bundle(tmp_path)
 
     monkeypatch.setattr(
-        "corpus.ufli.audio_fallback_policy._build_pacing_metrics",
+        "experiments.corpus_ufli.audio_fallback_policy._build_pacing_metrics",
         _fast_pacing_metrics,
     )
     monkeypatch.setattr(
-        "corpus.ufli.google_tts_client.build_google_tts_request_context",
+        "experiments.corpus_ufli.google_tts_client.build_google_tts_request_context",
         lambda: SimpleNamespace(access_token="test", project_id="test"),
     )
     monkeypatch.setattr(
-        "corpus.ufli.google_tts_client.synthesize_google_tts_audio",
+        "experiments.corpus_ufli.google_tts_client.synthesize_google_tts_audio",
         lambda **_kw: SimpleNamespace(audio_bytes=b"gemini-mp3", attempt_count=1),
     )
     monkeypatch.setattr(
-        "corpus.ufli.audio_companion._measure_audio_duration_ms",
+        "experiments.corpus_ufli.audio_companion._measure_audio_duration_ms",
         lambda _path: 2000,
     )
     monkeypatch.setattr(
@@ -279,7 +276,7 @@ def test_keeps_original_when_not_improved(
         )
 
     monkeypatch.setattr(
-        "corpus.ufli.audio_judge._judge_clip_with_gemini",
+        "experiments.corpus_ufli.audio_judge._judge_clip_with_gemini",
         _judge_revise,
     )
 
@@ -305,14 +302,15 @@ def test_fails_early_on_auth_error(
     _prepare_generated_bundle(tmp_path)
 
     monkeypatch.setattr(
-        "corpus.ufli.audio_fallback_policy._build_pacing_metrics",
+        "experiments.corpus_ufli.audio_fallback_policy._build_pacing_metrics",
         _fast_pacing_metrics,
     )
+
     def _fail_auth() -> None:
         raise RuntimeError("no credentials")
 
     monkeypatch.setattr(
-        "corpus.ufli.google_tts_client.build_google_tts_request_context",
+        "experiments.corpus_ufli.google_tts_client.build_google_tts_request_context",
         _fail_auth,
     )
 
@@ -334,15 +332,15 @@ def test_handles_synthesis_failure_gracefully(
     _prepare_generated_bundle(tmp_path)
 
     monkeypatch.setattr(
-        "corpus.ufli.audio_fallback_policy._build_pacing_metrics",
+        "experiments.corpus_ufli.audio_fallback_policy._build_pacing_metrics",
         _fast_pacing_metrics,
     )
     monkeypatch.setattr(
-        "corpus.ufli.google_tts_client.build_google_tts_request_context",
+        "experiments.corpus_ufli.google_tts_client.build_google_tts_request_context",
         lambda: SimpleNamespace(access_token="test", project_id="test"),
     )
 
-    from corpus.ufli.google_tts_client import GoogleTtsSynthesisError
+    from experiments.corpus_ufli.google_tts_client import GoogleTtsSynthesisError
 
     def _fail_tts(**_kw: object) -> None:
         raise GoogleTtsSynthesisError(
@@ -355,7 +353,7 @@ def test_handles_synthesis_failure_gracefully(
         )
 
     monkeypatch.setattr(
-        "corpus.ufli.google_tts_client.synthesize_google_tts_audio",
+        "experiments.corpus_ufli.google_tts_client.synthesize_google_tts_audio",
         _fail_tts,
     )
     monkeypatch.setattr(

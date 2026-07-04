@@ -460,8 +460,7 @@ def main(
         extract_mode=cast(ExtractionMode, extract_mode.lower()),
     )
     click.echo(
-        f"Evaluated {report.case_count} case(s); "
-        f"retrieval@3 mean={report.retrieval_at_3_mean:.2f}"
+        f"Evaluated {report.case_count} case(s); retrieval@3 mean={report.retrieval_at_3_mean:.2f}"
     )
 
 

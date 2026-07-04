@@ -16,7 +16,7 @@ from typing import Literal
 import google.auth
 from google.auth.transport.requests import Request as GoogleAuthRequest
 
-from corpus.ufli.audio_companion_schema import AudioInputFormat, GoogleCloudTtsSettings
+from experiments.corpus_ufli.audio_companion_schema import AudioInputFormat, GoogleCloudTtsSettings
 
 logger = logging.getLogger(__name__)
 
@@ -201,9 +201,7 @@ def _build_payload(
     settings: GoogleCloudTtsSettings,
 ) -> dict[str, object]:
     input_payload: dict[str, object] = (
-        {"markup": text}
-        if input_format == "markup"
-        else {"text": text}
+        {"markup": text} if input_format == "markup" else {"text": text}
     )
     if settings.style_prompt:
         input_payload["prompt"] = settings.style_prompt
@@ -217,11 +215,7 @@ def _build_payload(
         "audioConfig": {
             "audioEncoding": settings.audio_encoding,
             "speakingRate": settings.speaking_rate,
-            **(
-                {"sampleRateHertz": settings.sample_rate_hz}
-                if settings.sample_rate_hz > 0
-                else {}
-            ),
+            **({"sampleRateHertz": settings.sample_rate_hz} if settings.sample_rate_hz > 0 else {}),
             "volumeGainDb": settings.volume_gain_db,
         },
     }
@@ -239,11 +233,7 @@ def _build_request(
         headers={
             "Authorization": f"Bearer {context.access_token}",
             "Content-Type": "application/json",
-            **(
-                {"x-goog-user-project": context.project_id}
-                if context.project_id
-                else {}
-            ),
+            **({"x-goog-user-project": context.project_id} if context.project_id else {}),
         },
         method="POST",
     )

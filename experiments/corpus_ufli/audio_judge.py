@@ -14,7 +14,7 @@ from pathlib import Path
 from statistics import median
 from typing import Any
 
-from corpus.ufli.audio_companion import (
+from experiments.corpus_ufli.audio_companion import (
     _estimate_duration_ms,
     _load_lessons,
     _measure_audio_duration_ms,
@@ -25,7 +25,7 @@ from corpus.ufli.audio_companion import (
     load_voice_profiles,
     validate_audio_companion,
 )
-from corpus.ufli.audio_companion_schema import (
+from experiments.corpus_ufli.audio_companion_schema import (
     AudioClipDefinition,
     AudioJudgeClipResult,
     AudioJudgeFamilySummary,
@@ -34,8 +34,12 @@ from corpus.ufli.audio_companion_schema import (
     LessonAudioBundle,
     PacingMeasurementSource,
 )
-from corpus.ufli.extract import LessonContent
-from corpus.ufli.pacing import PACING_PROFILES, SANE_SINGLE_WORD_MAX_MS, SANE_SINGLE_WORD_MIN_MS
+from experiments.corpus_ufli.extract import LessonContent
+from experiments.corpus_ufli.pacing import (
+    PACING_PROFILES,
+    SANE_SINGLE_WORD_MAX_MS,
+    SANE_SINGLE_WORD_MIN_MS,
+)
 from rag.client import get_rag_client
 
 logger = logging.getLogger(__name__)
@@ -161,9 +165,7 @@ def judge_audio_companion(
         lesson_ids=sorted({result.lesson_id for result in clip_results}, key=int),
         clip_count=len(clip_results),
         blocker_count=sum(1 for result in clip_results if result.blocker),
-        recommendation_counts=dict(
-            Counter(result.recommendation for result in clip_results)
-        ),
+        recommendation_counts=dict(Counter(result.recommendation for result in clip_results)),
         median_scores=_median_scores(clip_results),
         family_summaries=family_summaries,
         pilot_ready=pilot_ready,
@@ -200,8 +202,7 @@ def apply_judge_verdicts(
     bundle_dir = companion_dir / _BUNDLE_DIR
 
     verdict_lookup: dict[str, str] = {
-        result.segment_id: result.recommendation
-        for result in summary.clip_results
+        result.segment_id: result.recommendation for result in summary.clip_results
     }
     if not verdict_lookup:
         return 0
@@ -405,11 +406,7 @@ def _parse_judge_response(text: str) -> dict[str, Any]:
     payload = text.strip()
     if payload.startswith("```"):
         lines = payload.splitlines()
-        payload = "\n".join(
-            line
-            for line in lines
-            if not line.strip().startswith("```")
-        )
+        payload = "\n".join(line for line in lines if not line.strip().startswith("```"))
     data = json.loads(payload)
     return {
         "heard_text": str(data.get("heard_text", "")).strip(),
@@ -444,9 +441,7 @@ def _median_scores(clip_results: list[AudioJudgeClipResult]) -> dict[str, float]
         "instructional_match_score": float(
             median(result.instructional_match_score for result in clip_results)
         ),
-        "clarity_score": float(
-            median(result.clarity_score for result in clip_results)
-        ),
+        "clarity_score": float(median(result.clarity_score for result in clip_results)),
         "pronunciation_accuracy_score": float(
             median(result.pronunciation_accuracy_score for result in clip_results)
         ),
@@ -483,9 +478,7 @@ def _family_summaries(
         summaries[segment_type] = AudioJudgeFamilySummary(
             clip_count=len(results),
             blocker_count=sum(1 for result in results if result.blocker),
-            recommendation_counts=dict(
-                Counter(result.recommendation for result in results)
-            ),
+            recommendation_counts=dict(Counter(result.recommendation for result in results)),
             median_actual_wpm=float(median(result.actual_wpm for result in results)),
             min_actual_wpm=min(result.actual_wpm for result in results),
             max_actual_wpm=max(result.actual_wpm for result in results),
@@ -534,9 +527,7 @@ def _evaluate_pilot_gate(
         )
 
     block_count = sum(
-        1
-        for result in clip_results
-        if result.blocker or result.recommendation == "block"
+        1 for result in clip_results if result.blocker or result.recommendation == "block"
     )
     if block_count:
         failures.append(f"{block_count} clips remain blocked")
@@ -555,8 +546,7 @@ def _evaluate_pilot_gate(
     ]
     if required_non_use:
         failures.append(
-            "required instructional clips are not all `use`: "
-            + ", ".join(required_non_use[:8])
+            "required instructional clips are not all `use`: " + ", ".join(required_non_use[:8])
         )
 
     invalid_revisions = [
@@ -612,8 +602,7 @@ def _is_allowed_word_model_revision(result: AudioJudgeClipResult) -> bool:
     if not result.concerns:
         return True
     return all(
-        "pace" in concern.casefold() or "wpm" in concern.casefold()
-        for concern in result.concerns
+        "pace" in concern.casefold() or "wpm" in concern.casefold() for concern in result.concerns
     )
 
 
@@ -621,11 +610,7 @@ def _build_pacing_metrics(companion_dir: Path, clip: AudioClipDefinition) -> _Pa
     target_wpm, min_wpm, max_wpm = _PACING_PROFILES[clip.segment_type]
     transcript_word_count = max(len(clip.transcript_text.split()), 1)
     audio_path = companion_dir / clip.audio_path if clip.audio_path else None
-    actual_duration_ms = (
-        _measure_audio_duration_ms(audio_path)
-        if audio_path is not None
-        else None
-    )
+    actual_duration_ms = _measure_audio_duration_ms(audio_path) if audio_path is not None else None
     measurement_source: PacingMeasurementSource = "audio_file"
     if actual_duration_ms is None:
         actual_duration_ms = clip.duration_ms or _estimate_duration_ms(
@@ -675,19 +660,18 @@ def _apply_pacing_guardrails(
         )
         if result["recommendation"] == "use":
             result["recommendation"] = "revise"
-        if (
-            actual_wpm > (max_wpm * 1.3)
-            or (
-                actual_wpm < (min_wpm * 0.7)
-                and not relax_for_word_model
-                and not relax_for_passage_interjection
-            )
+        if actual_wpm > (max_wpm * 1.3) or (
+            actual_wpm < (min_wpm * 0.7)
+            and not relax_for_word_model
+            and not relax_for_passage_interjection
         ):
             result["blocker"] = True
 
     deviation_ratio = abs(actual_wpm - target_wpm) / target_wpm if target_wpm else 0.0
-    if deviation_ratio > 0.2 and not relax_for_word_model and not (
-        relax_for_passage_interjection and actual_wpm < target_wpm
+    if (
+        deviation_ratio > 0.2
+        and not relax_for_word_model
+        and not (relax_for_passage_interjection and actual_wpm < target_wpm)
     ):
         concerns.append(
             "Actual audio pace is materially inconsistent with the target pace "

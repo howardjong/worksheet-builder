@@ -15,8 +15,8 @@ from typing import Any, Literal, cast
 
 from pydantic import BaseModel, Field
 
-from corpus.ufli.audit_schema import AuditFlag, CorpusAuditSummary
-from corpus.ufli.extract import LessonContent, extract_lesson
+from experiments.corpus_ufli.audit_schema import AuditFlag, CorpusAuditSummary
+from experiments.corpus_ufli.extract import LessonContent, extract_lesson
 
 logger = logging.getLogger(__name__)
 
@@ -164,9 +164,7 @@ def plan_remediations(
         else:
             initial_status = "pending"
 
-        actions.append(
-            RemediationAction(flag=flag, strategy=strategy, status=initial_status)
-        )
+        actions.append(RemediationAction(flag=flag, strategy=strategy, status=initial_status))
 
     return actions
 
@@ -348,7 +346,7 @@ def execute_remediations(
             )
             continue
         try:
-            from corpus.ufli.audio_companion import generate_audio_companion
+            from experiments.corpus_ufli.audio_companion import generate_audio_companion
 
             generate_audio_companion(
                 data_dir=data_dir,
@@ -423,9 +421,7 @@ def _read_normalized_record(data_dir: str, lesson_id: str) -> dict[str, Any] | N
     return None
 
 
-def _patch_normalized_jsonl(
-    data_dir: str, patches: dict[str, LessonContent]
-) -> None:
+def _patch_normalized_jsonl(data_dir: str, patches: dict[str, LessonContent]) -> None:
     """Atomically patch lessons in normalized.jsonl."""
     normalized_path = Path(data_dir) / "normalized.jsonl"
     if not normalized_path.exists():
@@ -453,9 +449,7 @@ def _patch_normalized_jsonl(
             output_lines.append(line)
 
     # Atomic write via temp file + os.replace
-    fd, tmp_path = tempfile.mkstemp(
-        dir=str(normalized_path.parent), suffix=".tmp"
-    )
+    fd, tmp_path = tempfile.mkstemp(dir=str(normalized_path.parent), suffix=".tmp")
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             f.write("\n".join(output_lines))
@@ -492,9 +486,7 @@ def _reindex_lessons(
         for action in actions:
             if action.strategy == STRATEGY_REINDEX and action.status == "pending":
                 action.status = "skipped"
-                action.detail = (
-                    "embedding API not available — re-run with API key configured"
-                )
+                action.detail = "embedding API not available — re-run with API key configured"
         return
 
     from rag.embeddings import embed_text
@@ -537,7 +529,7 @@ def _reindex_lessons(
 
         doc_id = f"curriculum_ufli_{lid}"
         try:
-            from corpus.ufli.grade_levels import derive_grade
+            from experiments.corpus_ufli.grade_levels import derive_grade
 
             grade_level = derive_grade(lid)
             result = embed_text(combined_text[:2000], task_type="RETRIEVAL_DOCUMENT")
@@ -600,9 +592,7 @@ def write_remediation_report(
     out.mkdir(parents=True, exist_ok=True)
 
     # JSON report
-    (out / "remediation_report.json").write_text(
-        report.model_dump_json(indent=2), encoding="utf-8"
-    )
+    (out / "remediation_report.json").write_text(report.model_dump_json(indent=2), encoding="utf-8")
 
     # Markdown report
     md_lines = [
@@ -622,22 +612,22 @@ def write_remediation_report(
         md_lines.append(f"Re-indexed: {', '.join(report.reindexed_lesson_ids)}")
     if report.deleted_index_ids:
         md_lines.append(f"Deleted stale: {', '.join(report.deleted_index_ids)}")
-    md_lines.extend([
-        "",
-        "## Actions",
-        "",
-        "| Lesson | Code | Strategy | Status | Detail |",
-        "|--------|------|----------|--------|--------|",
-    ])
+    md_lines.extend(
+        [
+            "",
+            "## Actions",
+            "",
+            "| Lesson | Code | Strategy | Status | Detail |",
+            "|--------|------|----------|--------|--------|",
+        ]
+    )
     for action in report.actions:
         md_lines.append(
             f"| {action.flag.lesson_id} | {action.flag.code} | "
             f"{action.strategy} | {action.status} | {action.detail} |"
         )
     md_lines.append("")
-    (out / "remediation_report.md").write_text(
-        "\n".join(md_lines), encoding="utf-8"
-    )
+    (out / "remediation_report.md").write_text("\n".join(md_lines), encoding="utf-8")
 
     # Manual review CSV
     manual_actions = [a for a in report.actions if a.status == "manual_review"]
@@ -671,11 +661,7 @@ def find_latest_audit_dir(audit_root: str) -> str | None:
     root = Path(audit_root)
     if not root.exists():
         return None
-    candidates = [
-        d
-        for d in root.iterdir()
-        if d.is_dir() and re.fullmatch(r"\d{8}_\d{6}", d.name)
-    ]
+    candidates = [d for d in root.iterdir() if d.is_dir() and re.fullmatch(r"\d{8}_\d{6}", d.name)]
     if not candidates:
         return None
     candidates.sort(key=lambda d: d.name)

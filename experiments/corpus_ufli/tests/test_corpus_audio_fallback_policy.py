@@ -9,12 +9,12 @@ import pytest
 
 pytest.importorskip("chromadb")
 
-from corpus.ufli.audio_companion import build_audio_companion_manifests
-from corpus.ufli.audio_fallback_policy import (
+from experiments.corpus_ufli.audio_companion import build_audio_companion_manifests
+from experiments.corpus_ufli.audio_fallback_policy import (
     _classify_clip,
     classify_audio_fallback_policy,
 )
-from corpus.ufli.audio_judge import _PacingMetrics
+from experiments.corpus_ufli.audio_judge import _PacingMetrics
 
 
 def _write_normalized(path: Path, rows: list[dict[str, object]]) -> None:
@@ -78,12 +78,12 @@ def test_classify_clip_marks_fast_passage_sentence_as_gemini_fallback_eligible(
     audio_path.parent.mkdir(parents=True, exist_ok=True)
     audio_path.write_bytes(b"mp3")
     monkeypatch.setattr(
-        "corpus.ufli.audio_fallback_policy._KNOWN_RISK_SEGMENTS",
+        "experiments.corpus_ufli.audio_fallback_policy._KNOWN_RISK_SEGMENTS",
         {clip.segment_id},
     )
 
     monkeypatch.setattr(
-        "corpus.ufli.audio_fallback_policy._build_pacing_metrics",
+        "experiments.corpus_ufli.audio_fallback_policy._build_pacing_metrics",
         lambda **_: _PacingMetrics(
             segment_type="passage_sentence",
             transcript_word_count=max(len(clip.transcript_text.split()), 1),
@@ -127,7 +127,7 @@ def test_classify_clip_keeps_slow_passage_full_in_manual_review(
     audio_path.write_bytes(b"mp3")
 
     monkeypatch.setattr(
-        "corpus.ufli.audio_fallback_policy._build_pacing_metrics",
+        "experiments.corpus_ufli.audio_fallback_policy._build_pacing_metrics",
         lambda **_: _PacingMetrics(
             segment_type="passage_full",
             transcript_word_count=max(len(clip.transcript_text.split()), 1),
@@ -168,7 +168,7 @@ def test_classify_clip_keeps_fast_phoneme_model_outside_fallback_scope(
     audio_path.write_bytes(b"mp3")
 
     monkeypatch.setattr(
-        "corpus.ufli.audio_fallback_policy._build_pacing_metrics",
+        "experiments.corpus_ufli.audio_fallback_policy._build_pacing_metrics",
         lambda **_: _PacingMetrics(
             segment_type="phoneme_model",
             transcript_word_count=max(len(clip.transcript_text.split()), 1),
@@ -244,7 +244,7 @@ def test_classify_audio_fallback_policy_writes_reports(
         )
 
     monkeypatch.setattr(
-        "corpus.ufli.audio_fallback_policy._build_pacing_metrics",
+        "experiments.corpus_ufli.audio_fallback_policy._build_pacing_metrics",
         _fake_build_pacing_metrics,
     )
 

@@ -9,21 +9,24 @@ import pytest
 
 pytest.importorskip("chromadb")
 
-from corpus.ufli.audio_companion import build_audio_companion_manifests
-from corpus.ufli.audio_companion_schema import (
+from experiments.corpus_ufli.audio_companion import build_audio_companion_manifests
+from experiments.corpus_ufli.audio_companion_schema import (
     AudioJudgeClipResult,
     AudioProbeVariant,
     AudioVoiceSettings,
     GoogleCloudTtsSettings,
     JudgeRecommendation,
 )
-from corpus.ufli.audio_diagnostics import (
+from experiments.corpus_ufli.audio_diagnostics import (
     _derive_probe_findings,
     _google_markup_from_tts_text,
     _resolve_google_tts_region,
     run_audio_probe_matrix,
 )
-from corpus.ufli.google_tts_client import GoogleTtsRequestContext, GoogleTtsSynthesisError
+from experiments.corpus_ufli.google_tts_client import (
+    GoogleTtsRequestContext,
+    GoogleTtsSynthesisError,
+)
 
 
 def _write_normalized(path: Path, rows: list[dict[str, object]]) -> None:
@@ -142,10 +145,12 @@ def test_run_audio_probe_matrix_writes_probe_artifacts(
     build_audio_companion_manifests(data_dir=str(tmp_path))
 
     monkeypatch.setattr(
-        "corpus.ufli.audio_diagnostics._synthesize_probe_variant",
+        "experiments.corpus_ufli.audio_diagnostics._synthesize_probe_variant",
         lambda **_: (b"mp3", 1),
     )
-    monkeypatch.setattr("corpus.ufli.audio_diagnostics._elevenlabs_api_key", lambda: "test-key")
+    monkeypatch.setattr(
+        "experiments.corpus_ufli.audio_diagnostics._elevenlabs_api_key", lambda: "test-key"
+    )
 
     def _fake_judge_probe_variant(**kwargs: object) -> AudioJudgeClipResult:
         variant = kwargs["variant"]
@@ -190,10 +195,12 @@ def test_run_audio_probe_matrix_writes_probe_artifacts(
         )
 
     monkeypatch.setattr(
-        "corpus.ufli.audio_diagnostics._judge_probe_variant",
+        "experiments.corpus_ufli.audio_diagnostics._judge_probe_variant",
         _fake_judge_probe_variant,
     )
-    monkeypatch.setattr("corpus.ufli.audio_diagnostics.get_rag_client", lambda: object())
+    monkeypatch.setattr(
+        "experiments.corpus_ufli.audio_diagnostics.get_rag_client", lambda: object()
+    )
 
     summary = run_audio_probe_matrix(
         data_dir=str(tmp_path),
@@ -221,7 +228,7 @@ def test_run_audio_probe_matrix_soft_fails_google_variant_and_skips_judging_it(
     build_audio_companion_manifests(data_dir=str(tmp_path))
 
     monkeypatch.setattr(
-        "corpus.ufli.audio_diagnostics.build_google_tts_request_context",
+        "experiments.corpus_ufli.audio_diagnostics.build_google_tts_request_context",
         lambda: GoogleTtsRequestContext(access_token="token", project_id="project"),
     )
 
@@ -275,14 +282,16 @@ def test_run_audio_probe_matrix_soft_fails_google_variant_and_skips_judging_it(
         )
 
     monkeypatch.setattr(
-        "corpus.ufli.audio_diagnostics._synthesize_probe_variant",
+        "experiments.corpus_ufli.audio_diagnostics._synthesize_probe_variant",
         _fake_synthesize_probe_variant,
     )
     monkeypatch.setattr(
-        "corpus.ufli.audio_diagnostics._judge_probe_variant",
+        "experiments.corpus_ufli.audio_diagnostics._judge_probe_variant",
         _fake_judge_probe_variant,
     )
-    monkeypatch.setattr("corpus.ufli.audio_diagnostics.get_rag_client", lambda: object())
+    monkeypatch.setattr(
+        "experiments.corpus_ufli.audio_diagnostics.get_rag_client", lambda: object()
+    )
 
     summary = run_audio_probe_matrix(
         data_dir=str(tmp_path),

@@ -16,8 +16,8 @@ try:
 except ImportError:
     pass
 
-from corpus.ufli.audit_schema import CorpusAuditSummary
-from corpus.ufli.grade_levels import derive_grade
+from experiments.corpus_ufli.audit_schema import CorpusAuditSummary
+from experiments.corpus_ufli.grade_levels import derive_grade
 from rag.embeddings import embed_text
 from rag.store import CURRICULUM, add_document, get_or_create_collection, get_store
 
@@ -119,7 +119,7 @@ def cli(verbose: bool) -> None:
 @click.option("--data-dir", default="data/ufli", help="Data directory.")
 def crawl(data_dir: str) -> None:
     """Crawl UFLI Toolbox and generate manifest.jsonl."""
-    from corpus.ufli.crawl import crawl_toolbox
+    from experiments.corpus_ufli.crawl import crawl_toolbox
 
     path = crawl_toolbox(output_dir=data_dir)
     click.echo(f"Manifest written to {path}")
@@ -130,7 +130,7 @@ def crawl(data_dir: str) -> None:
 @click.option("--delay", default=1.5, help="Seconds between downloads.")
 def acquire(data_dir: str, delay: float) -> None:
     """Download resources from manifest."""
-    from corpus.ufli.acquire import acquire_resources
+    from experiments.corpus_ufli.acquire import acquire_resources
 
     count = acquire_resources(data_dir=data_dir, delay=delay)
     click.echo(f"Downloaded {count} files")
@@ -140,7 +140,7 @@ def acquire(data_dir: str, delay: float) -> None:
 @click.option("--data-dir", default="data/ufli", help="Data directory.")
 def extract(data_dir: str) -> None:
     """Extract text from downloaded resources."""
-    from corpus.ufli.extract import extract_all
+    from experiments.corpus_ufli.extract import extract_all
 
     results = extract_all(data_dir=data_dir)
     click.echo(f"Extracted {len(results)} lessons")
@@ -175,7 +175,7 @@ def build_audio(
     lesson_max: int,
 ) -> None:
     """Build lesson audio bundles and audio companion manifests."""
-    from corpus.ufli.audio_companion import build_audio_companion_manifests
+    from experiments.corpus_ufli.audio_companion import build_audio_companion_manifests
 
     bundles = build_audio_companion_manifests(
         data_dir=data_dir,
@@ -207,7 +207,7 @@ def validate_audio(
     lesson_max: int,
 ) -> None:
     """Validate built lesson audio bundles before synthesis."""
-    from corpus.ufli.audio_companion import validate_audio_companion
+    from experiments.corpus_ufli.audio_companion import validate_audio_companion
 
     report = validate_audio_companion(
         data_dir=data_dir,
@@ -226,9 +226,7 @@ def validate_audio(
         location = issue.segment_id or issue.bundle_key
         click.echo(f"- {location} [{issue.code}] {issue.message}")
     if not report.passed:
-        raise click.ClickException(
-            f"Audio validation failed with {report.issue_count} issues."
-        )
+        raise click.ClickException(f"Audio validation failed with {report.issue_count} issues.")
 
 
 @cli.command(name="generate-audio")
@@ -275,7 +273,7 @@ def generate_audio(
     review_packet: bool,
 ) -> None:
     """Generate ElevenLabs audio for lesson bundles."""
-    from corpus.ufli.audio_companion import generate_audio_companion
+    from experiments.corpus_ufli.audio_companion import generate_audio_companion
 
     summary = generate_audio_companion(
         data_dir=data_dir,
@@ -346,10 +344,10 @@ def index_audio(
     include_pending: bool,
 ) -> None:
     """Index generated audio companion transcripts into ChromaDB."""
-    from corpus.ufli.audio_companion import index_audio_companion
+    from experiments.corpus_ufli.audio_companion import index_audio_companion
 
     if not include_pending:
-        from corpus.ufli.audio_companion import (
+        from experiments.corpus_ufli.audio_companion import (
             _BUNDLE_DIR,
             _resolve_selected_lessons,
             load_audio_bundles,
@@ -447,7 +445,7 @@ def judge_audio(
     write_back: bool,
 ) -> None:
     """Run Gemini LLM-judge eval over generated audio companion clips."""
-    from corpus.ufli.audio_judge import judge_audio_companion
+    from experiments.corpus_ufli.audio_judge import judge_audio_companion
 
     summary = judge_audio_companion(
         data_dir=data_dir,
@@ -509,7 +507,7 @@ def classify_audio_fallback(
     clip_limit: int | None,
 ) -> None:
     """Classify generated clips into heuristic fallback-policy buckets."""
-    from corpus.ufli.audio_fallback_policy import classify_audio_fallback_policy
+    from experiments.corpus_ufli.audio_fallback_policy import classify_audio_fallback_policy
 
     summary = classify_audio_fallback_policy(
         data_dir=data_dir,
@@ -583,7 +581,7 @@ def execute_fallback(
     dry_run: bool,
 ) -> None:
     """Synthesize Gemini TTS fallback for pacing-failed clips, re-judge, and replace if improved."""
-    from corpus.ufli.audio_fallback_policy import execute_gemini_fallback
+    from experiments.corpus_ufli.audio_fallback_policy import execute_gemini_fallback
 
     summary = execute_gemini_fallback(
         data_dir=data_dir,
@@ -723,7 +721,7 @@ def diagnose_audio(
     google_variant_scope: str,
 ) -> None:
     """Run controlled canary probes to separate input-shaping vs TTS-model issues."""
-    from corpus.ufli.audio_diagnostics import run_audio_probe_matrix
+    from experiments.corpus_ufli.audio_diagnostics import run_audio_probe_matrix
 
     summary = run_audio_probe_matrix(
         data_dir=data_dir,
@@ -774,7 +772,7 @@ def audit(
     use_ai_judge: bool,
 ) -> None:
     """Run an offline multimodal corpus audit and write timestamped reports."""
-    from corpus.ufli.audit import run_audit
+    from experiments.corpus_ufli.audit import run_audit
 
     summary = run_audit(
         data_dir=data_dir,
@@ -827,7 +825,7 @@ def remediate(
     skip_reindex: bool,
 ) -> None:
     """Apply automated fixes for actionable audit flag codes."""
-    from corpus.ufli.remediate import (
+    from experiments.corpus_ufli.remediate import (
         execute_remediations,
         find_latest_audit_dir,
         plan_remediations,
@@ -841,14 +839,12 @@ def remediate(
         if audit_dir is None:
             raise click.ClickException(
                 "No audit results found — run "
-                "`python -m corpus.ufli.ingest audit` first."
+                "`python -m experiments.corpus_ufli.ingest audit` first."
             )
 
     summary_path = Path(audit_dir) / "summary.json"
     if not summary_path.exists():
-        raise click.ClickException(
-            f"No summary.json in {audit_dir} — not a valid audit directory."
-        )
+        raise click.ClickException(f"No summary.json in {audit_dir} — not a valid audit directory.")
 
     summary = CorpusAuditSummary.model_validate_json(summary_path.read_text())
 
@@ -879,7 +875,7 @@ def remediate(
         click.echo(f"Deleted stale: {', '.join(report.deleted_index_ids)}.")
     click.echo(
         "Re-run audit to verify: "
-        "python -m corpus.ufli.ingest audit --data-dir " + data_dir
+        "python -m experiments.corpus_ufli.ingest audit --data-dir " + data_dir
     )
 
 
@@ -889,9 +885,9 @@ def remediate(
 @click.option("--delay", default=1.5, help="Seconds between downloads.")
 def run_all(data_dir: str, db_path: str, delay: float) -> None:
     """Run full pipeline: crawl -> acquire -> extract -> index."""
-    from corpus.ufli.acquire import acquire_resources
-    from corpus.ufli.crawl import crawl_toolbox
-    from corpus.ufli.extract import extract_all
+    from experiments.corpus_ufli.acquire import acquire_resources
+    from experiments.corpus_ufli.crawl import crawl_toolbox
+    from experiments.corpus_ufli.extract import extract_all
 
     click.echo("Step 1/4: Crawling UFLI Toolbox...")
     crawl_toolbox(output_dir=data_dir)

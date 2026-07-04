@@ -11,7 +11,7 @@ import yaml
 
 pytest.importorskip("chromadb")
 
-from corpus.ufli.audio_companion import (
+from experiments.corpus_ufli.audio_companion import (
     _clause_pause_only_tts,
     _pause_shaped_passage_tts,
     build_audio_companion_manifests,
@@ -21,7 +21,7 @@ from corpus.ufli.audio_companion import (
     load_voice_profiles,
     validate_audio_companion,
 )
-from corpus.ufli.audio_companion_schema import LessonAudioBundle
+from experiments.corpus_ufli.audio_companion_schema import LessonAudioBundle
 from rag.store import (
     AUDIO_COMPANION_CLIPS,
     AUDIO_COMPANION_LESSONS,
@@ -88,8 +88,7 @@ def _sample_rows() -> list[dict[str, object]]:
                 "The yellow bird joined them."
             ),
             "home_practice_text": (
-                "1. foil → coil → soil → spoil "
-                "2. coin → join → joint → point February"
+                "1. foil → coil → soil → spoil 2. coin → join → joint → point February"
             ),
             "additional_text": "",
         },
@@ -228,9 +227,7 @@ def test_build_audio_uses_pause_shaped_tts_without_changing_transcript(tmp_path:
 
 
 def test_clause_pause_shaping_avoids_duplicate_pause_tokens() -> None:
-    shaped = _clause_pause_only_tts(
-        "In February, Boyd and James had a choice to make."
-    )
+    shaped = _clause_pause_only_tts("In February, Boyd and James had a choice to make.")
 
     assert shaped == "In February, ... Boyd and James had a choice to make. ..."
     assert "... ..." not in shaped
@@ -252,11 +249,7 @@ def test_build_audio_uses_exact_anchor_for_oy(tmp_path: Path) -> None:
         lesson_id="95",
     )[0]
 
-    oy_clip = next(
-        clip
-        for clip in bundle.clips
-        if clip.segment_id.endswith("phoneme_02_oy")
-    )
+    oy_clip = next(clip for clip in bundle.clips if clip.segment_id.endswith("phoneme_02_oy"))
     assert oy_clip.transcript_text.endswith("toy.")
 
 
@@ -400,10 +393,10 @@ def test_generate_audio_writes_review_packet_with_stubbed_tts(
 
     monkeypatch.setenv("ELEVENLABS_API_KEY", "test-key")
     monkeypatch.setattr(
-        "corpus.ufli.audio_companion._synthesize_elevenlabs",
+        "experiments.corpus_ufli.audio_companion._synthesize_elevenlabs",
         lambda **_: (b"mp3-bytes", "eleven_multilingual_v2"),
     )
-    monkeypatch.setattr("corpus.ufli.audio_companion.time.sleep", lambda _seconds: None)
+    monkeypatch.setattr("experiments.corpus_ufli.audio_companion.time.sleep", lambda _seconds: None)
 
     summary = generate_audio_companion(
         data_dir=str(tmp_path),
@@ -468,7 +461,7 @@ def test_index_audio_companion_clips_filters_by_voice_profile(
         values = [1.0, 0.0, 0.0]
 
     monkeypatch.setattr(
-        "corpus.ufli.audio_companion.embed_text",
+        "experiments.corpus_ufli.audio_companion.embed_text",
         lambda *_args, **_kwargs: _FakeEmbedding(),
     )
 
@@ -499,7 +492,7 @@ def test_index_audio_companion_lessons_creates_aggregate_documents(
         values = [1.0, 0.0, 0.0]
 
     monkeypatch.setattr(
-        "corpus.ufli.audio_companion.embed_text",
+        "experiments.corpus_ufli.audio_companion.embed_text",
         lambda *_args, **_kwargs: _FakeEmbedding(),
     )
 
@@ -537,7 +530,7 @@ def test_index_audio_companion_both_populates_two_collections(
         values = [1.0, 0.0, 0.0]
 
     monkeypatch.setattr(
-        "corpus.ufli.audio_companion.embed_text",
+        "experiments.corpus_ufli.audio_companion.embed_text",
         lambda *_args, **_kwargs: _FakeEmbedding(),
     )
 
@@ -573,7 +566,7 @@ def test_index_clips_skips_pending_review_status(
         values = [1.0, 0.0, 0.0]
 
     monkeypatch.setattr(
-        "corpus.ufli.audio_companion.embed_text",
+        "experiments.corpus_ufli.audio_companion.embed_text",
         lambda *_args, **_kwargs: _FakeEmbedding(),
     )
 
@@ -601,7 +594,7 @@ def test_index_clips_includes_pending_when_flag_set(
         values = [1.0, 0.0, 0.0]
 
     monkeypatch.setattr(
-        "corpus.ufli.audio_companion.embed_text",
+        "experiments.corpus_ufli.audio_companion.embed_text",
         lambda *_args, **_kwargs: _FakeEmbedding(),
     )
 
@@ -635,7 +628,7 @@ def test_index_clips_only_indexes_approved(
         values = [1.0, 0.0, 0.0]
 
     monkeypatch.setattr(
-        "corpus.ufli.audio_companion.embed_text",
+        "experiments.corpus_ufli.audio_companion.embed_text",
         lambda *_args, **_kwargs: _FakeEmbedding(),
     )
 

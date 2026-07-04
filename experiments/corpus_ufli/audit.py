@@ -19,7 +19,7 @@ from typing import Any, Literal
 from PIL import Image
 from pydantic import ValidationError
 
-from corpus.ufli.audit_schema import (
+from experiments.corpus_ufli.audit_schema import (
     AudioCompanionRecord,
     AuditFlag,
     CorpusAuditSummary,
@@ -31,8 +31,8 @@ from corpus.ufli.audit_schema import (
     RecordType,
     RetrievalBenchmarkResult,
 )
-from corpus.ufli.grade_levels import derive_grade
-from corpus.ufli.pacing import FLAT_AUDIT_WPM_RANGE, PACING_PROFILES
+from experiments.corpus_ufli.grade_levels import derive_grade
+from experiments.corpus_ufli.pacing import FLAT_AUDIT_WPM_RANGE, PACING_PROFILES
 from rag.store import CURRICULUM, get_store
 
 logger = logging.getLogger(__name__)
@@ -231,9 +231,7 @@ def _load_jsonl(
             records.append(model_type.model_validate(raw))
         except ValidationError as exc:
             lesson_id = str(raw.get("lesson_id", ""))
-            record_id = str(
-                raw.get("asset_id") or raw.get("segment_id") or line_number
-            )
+            record_id = str(raw.get("asset_id") or raw.get("segment_id") or line_number)
             flags.append(
                 AuditFlag(
                     lesson_id=lesson_id,
@@ -242,8 +240,7 @@ def _load_jsonl(
                     severity="fail",
                     code="missing_required_fields",
                     message=(
-                        f"{path.name}:{line_number} failed validation: "
-                        f"{exc.errors()[0]['msg']}"
+                        f"{path.name}:{line_number} failed validation: {exc.errors()[0]['msg']}"
                     ),
                 )
             )
@@ -954,12 +951,7 @@ def _build_lesson_records(
                 image_alignment_score=_mean(image_alignment.get(lesson_id, [])),
                 audio_alignment_score=_mean(audio_alignment.get(lesson_id, [])),
                 modality_coverage_score=round(
-                    (
-                        float(text_present)
-                        + float(image_present)
-                        + float(audio_present)
-                    )
-                    / 3.0,
+                    (float(text_present) + float(image_present) + float(audio_present)) / 3.0,
                     2,
                 ),
                 missing_image_companions=bool(image_records) and not image_present,
@@ -1050,9 +1042,9 @@ def _text_retrieval_benchmark(
     for record in sampled:
         if record.concept.strip():
             cases.append((record.lesson_id, record.concept, derive_grade(record.lesson_id)))
-        lexical_tokens = [
-            token for token in _tokenize(_combined_text(record)) if len(token) > 2
-        ][:5]
+        lexical_tokens = [token for token in _tokenize(_combined_text(record)) if len(token) > 2][
+            :5
+        ]
         if lexical_tokens:
             cases.append(
                 (
@@ -1428,10 +1420,8 @@ def _write_markdown_report(
     ]
     for bench in summary.retrieval_benchmarks:
         lines.append(
-
-                f"- {bench.modality}: status={bench.status}, cases={bench.case_count}, "
-                f"hit@3={bench.hit_at_3:.2f}, mrr={bench.mrr:.2f}"
-
+            f"- {bench.modality}: status={bench.status}, cases={bench.case_count}, "
+            f"hit@3={bench.hit_at_3:.2f}, mrr={bench.mrr:.2f}"
         )
     lines.extend(
         [
@@ -1524,9 +1514,7 @@ def _lexical_overlap(tokens: Iterable[str], lesson_tokens: set[str]) -> float:
     return len(token_set & lesson_tokens) / len(token_set)
 
 
-def _pronunciation_target_overlap(
-    targets: list[str], concept: str
-) -> float:
+def _pronunciation_target_overlap(targets: list[str], concept: str) -> float:
     """Check if pronunciation targets reference the lesson concept.
 
     Extracts grapheme/phoneme keys from targets like 'grapheme:a' and checks

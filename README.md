@@ -58,10 +58,10 @@ python -m rag.backfill --artifacts-dir ./samples/output --output-dir ./samples/o
 python -m experiments.rag.eval --test-dir ./samples/input --profile profiles/ian.yaml
 
 # Build UFLI audio companion lesson bundles (pilot_rep: 6 lessons)
-python -m corpus.ufli.ingest build-audio
+python -m experiments.corpus_ufli.ingest build-audio
 
 # Estimate pilot audio generation cost and clip counts without calling ElevenLabs
-python -m corpus.ufli.ingest generate-audio --dry-run
+python -m experiments.corpus_ufli.ingest generate-audio --dry-run
 
 # View progress
 python complete.py --profile profiles/ian.yaml --progress
@@ -406,31 +406,31 @@ Core commands:
 
 ```bash
 # Build voice-neutral lesson bundles (defaults to pilot_rep: 6 lessons)
-python -m corpus.ufli.ingest build-audio
+python -m experiments.corpus_ufli.ingest build-audio
 
 # Validate built bundles
-python -m corpus.ufli.ingest validate-audio
+python -m experiments.corpus_ufli.ingest validate-audio
 
 # Dry-run estimation for pilot voices
-python -m corpus.ufli.ingest generate-audio --dry-run
+python -m experiments.corpus_ufli.ingest generate-audio --dry-run
 
 # Live-generate with Dorothy
-python -m corpus.ufli.ingest generate-audio \
+python -m experiments.corpus_ufli.ingest generate-audio \
   --voice-profile dorothy \
   --live \
   --review-packet
 
 # Index into both clip-level and lesson-level collections
-python -m corpus.ufli.ingest index-audio \
+python -m experiments.corpus_ufli.ingest index-audio \
   --voice-profile dorothy \
   --granularity both
 
 # Judge generated clips with Gemini
-python -m corpus.ufli.ingest judge-audio \
+python -m experiments.corpus_ufli.ingest judge-audio \
   --voice-profile dorothy
 
 # Run controlled diagnostic probes on hard clips
-python -m corpus.ufli.ingest diagnose-audio \
+python -m experiments.corpus_ufli.ingest diagnose-audio \
   --voice-profile dorothy
 ```
 

@@ -27,7 +27,7 @@ python batch.py ... --no-images    # skip AI images (avoids 35 RPD limit)
 python batch.py ... --dry-run      # list only
 
 # RAG
-python -m corpus.ufli.ingest index --data-dir ./data/ufli
+python -m experiments.corpus_ufli.ingest index --data-dir ./data/ufli
 python -m rag.backfill --artifacts-dir ./samples/output --output-dir ./samples/output
 python -m experiments.rag.eval --test-dir ./samples/input --profile profiles/ian.yaml
 ```

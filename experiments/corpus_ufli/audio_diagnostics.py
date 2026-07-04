@@ -8,7 +8,7 @@ from collections import defaultdict
 from collections.abc import Iterable
 from pathlib import Path
 
-from corpus.ufli.audio_companion import (
+from experiments.corpus_ufli.audio_companion import (
     _BUNDLE_DIR,
     _PRONUNCIATION_LEXICON,
     _VOICE_PROFILES,
@@ -23,7 +23,7 @@ from corpus.ufli.audio_companion import (
     load_pronunciation_lexicon,
     load_voice_profiles,
 )
-from corpus.ufli.audio_companion_schema import (
+from experiments.corpus_ufli.audio_companion_schema import (
     AudioClipDefinition,
     AudioClipKind,
     AudioInputFormat,
@@ -39,9 +39,9 @@ from corpus.ufli.audio_companion_schema import (
     PronunciationLexicon,
     VoiceProfile,
 )
-from corpus.ufli.audio_judge import DEFAULT_JUDGE_MODEL, _judge_clip_with_gemini
-from corpus.ufli.extract import LessonContent
-from corpus.ufli.google_tts_client import (
+from experiments.corpus_ufli.audio_judge import DEFAULT_JUDGE_MODEL, _judge_clip_with_gemini
+from experiments.corpus_ufli.extract import LessonContent
+from experiments.corpus_ufli.google_tts_client import (
     GoogleTtsRequestContext,
     GoogleTtsSynthesisError,
     build_google_tts_request_context,
@@ -132,9 +132,7 @@ def run_audio_probe_matrix(
     )
     generated_at = _timestamp()
     run_dir = (
-        Path(output_dir)
-        if output_dir is not None
-        else companion_dir / "diagnostics" / generated_at
+        Path(output_dir) if output_dir is not None else companion_dir / "diagnostics" / generated_at
     )
     if output_dir is None:
         run_dir = companion_dir / "diagnostics" / generated_at
@@ -161,8 +159,7 @@ def run_audio_probe_matrix(
             api_key = _elevenlabs_api_key()
             if not api_key:
                 raise RuntimeError(
-                    "ELEVENLABS_API_KEY is required for live "
-                    "ElevenLabs probe generation"
+                    "ELEVENLABS_API_KEY is required for live ElevenLabs probe generation"
                 )
         if provider_scope in {"google", "both"}:
             try:
@@ -415,6 +412,7 @@ def _approved_phoneme_tts(
         parts.append(f"As in {example_word}.")
     return " ".join(parts)
 
+
 def _synthesize_probe_variant(
     variant: AudioProbeVariant,
     voice_profile: VoiceProfile,
@@ -528,23 +526,21 @@ def _derive_probe_findings(variants: list[AudioProbeVariant]) -> list[AudioProbe
             )
         elif text_improves:
             cause = "pipeline_input_problem"
-            evidence.append(
-                "A same-model text variant outperformed the current pipeline "
-                "text."
-            )
+            evidence.append("A same-model text variant outperformed the current pipeline text.")
             next_step = (
-                "Refine transcript shaping for this clip family before testing "
-                "other voices."
+                "Refine transcript shaping for this clip family before testing other voices."
             )
         elif model_improves:
             cause = "model_or_voice_limitation"
-            evidence.append(
-                "The same text performed better when only the model path changed."
-            )
+            evidence.append("The same text performed better when only the model path changed.")
             next_step = "Compare models or voices before changing the lesson content further."
-        elif current_default and current_default.judge_result is not None and (
-            current_default.judge_result.blocker
-            or current_default.judge_result.recommendation != "use"
+        elif (
+            current_default
+            and current_default.judge_result is not None
+            and (
+                current_default.judge_result.blocker
+                or current_default.judge_result.recommendation != "use"
+            )
         ):
             cause = "model_or_voice_limitation"
             evidence.append(

@@ -168,9 +168,7 @@ def _goto_with_retry(page: Any, url: str, max_retries: int = _MAX_RETRIES) -> bo
                 )
                 time.sleep(wait)
             else:
-                logger.error(
-                    "All %d attempts failed for %s, skipping", max_retries, url
-                )
+                logger.error("All %d attempts failed for %s, skipping", max_retries, url)
     return False
 
 
@@ -207,9 +205,7 @@ def crawl_toolbox(
         except Exception as exc:
             msg = str(exc)
             if "Executable doesn't exist" in msg or "executable" in msg.lower():
-                logger.error(
-                    "Chromium not installed. Run: playwright install chromium"
-                )
+                logger.error("Chromium not installed. Run: playwright install chromium")
             raise
 
         try:
@@ -222,8 +218,7 @@ def crawl_toolbox(
                 ),
                 extra_http_headers={
                     "Accept": (
-                        "text/html,application/xhtml+xml,application/xml;"
-                        "q=0.9,image/webp,*/*;q=0.8"
+                        "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8"
                     ),
                     "Accept-Language": "en-US,en;q=0.5",
                 },
@@ -244,9 +239,7 @@ def crawl_toolbox(
                     continue
 
                 # Write new records immediately so progress survives crashes
-                new_records = [
-                    r for r in records if r["lesson_id"] not in existing_ids
-                ]
+                new_records = [r for r in records if r["lesson_id"] not in existing_ids]
                 if new_records:
                     with manifest_path.open("a") as f:
                         for rec in new_records:
@@ -256,7 +249,9 @@ def crawl_toolbox(
 
                 logger.info(
                     "Found %d lessons on %s (%d new)",
-                    len(records), slug, len(new_records),
+                    len(records),
+                    slug,
+                    len(new_records),
                 )
 
                 # Polite delay with jitter between pages

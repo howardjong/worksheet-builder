@@ -1,11 +1,11 @@
-"""Tests for shared pacing bands in corpus.ufli.pacing."""
+"""Tests for shared pacing bands in experiments.corpus_ufli.pacing."""
 
 from __future__ import annotations
 
 from typing import get_args
 
-from corpus.ufli.audio_companion_schema import AudioClipKind
-from corpus.ufli.pacing import FLAT_AUDIT_WPM_RANGE, PACING_PROFILES
+from experiments.corpus_ufli.audio_companion_schema import AudioClipKind
+from experiments.corpus_ufli.pacing import FLAT_AUDIT_WPM_RANGE, PACING_PROFILES
 
 
 def test_all_clip_kinds_have_pacing_profiles() -> None:

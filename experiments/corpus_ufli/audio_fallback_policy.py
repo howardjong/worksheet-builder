@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
-from corpus.ufli.audio_companion import (
+from experiments.corpus_ufli.audio_companion import (
     _BUNDLE_DIR,
     _PILOT_LESSONS,
     _VOICE_PROFILES,
@@ -20,7 +20,7 @@ from corpus.ufli.audio_companion import (
     load_pilot_lessons,
     load_voice_profiles,
 )
-from corpus.ufli.audio_companion_schema import (
+from experiments.corpus_ufli.audio_companion_schema import (
     AudioClipDefinition,
     AudioFallbackClipDecision,
     AudioFallbackPolicySummary,
@@ -32,7 +32,7 @@ from corpus.ufli.audio_companion_schema import (
     GoogleCloudTtsSettings,
     LessonAudioBundle,
 )
-from corpus.ufli.audio_judge import _build_pacing_metrics
+from experiments.corpus_ufli.audio_judge import _build_pacing_metrics
 
 logger = logging.getLogger(__name__)
 
@@ -339,8 +339,8 @@ def execute_gemini_fallback(
 
     Only clips classified as ``gemini_fallback_eligible`` are processed.
     """
-    from corpus.ufli.audio_judge import _judge_clip_with_gemini
-    from corpus.ufli.extract import LessonContent
+    from experiments.corpus_ufli.audio_judge import _judge_clip_with_gemini
+    from experiments.corpus_ufli.extract import LessonContent
 
     base = Path(data_dir)
     companion_dir = base / "companion"
@@ -372,9 +372,7 @@ def execute_gemini_fallback(
 
     eligible_ids = set(policy_summary.gemini_fallback_segments)
     eligible_decisions: dict[str, AudioFallbackClipDecision] = {
-        d.segment_id: d
-        for d in policy_summary.clip_results
-        if d.segment_id in eligible_ids
+        d.segment_id: d for d in policy_summary.clip_results if d.segment_id in eligible_ids
     }
     if clip_limit is not None:
         eligible_ids = set(list(eligible_ids)[:clip_limit])
@@ -420,8 +418,8 @@ def execute_gemini_fallback(
         return summary
 
     # Live mode: synthesize, judge, conditionally replace
-    from corpus.ufli.audio_companion import _load_lessons, _measure_audio_duration_ms
-    from corpus.ufli.google_tts_client import (
+    from experiments.corpus_ufli.audio_companion import _load_lessons, _measure_audio_duration_ms
+    from experiments.corpus_ufli.google_tts_client import (
         GoogleTtsSynthesisError,
         build_google_tts_request_context,
         synthesize_google_tts_audio,
@@ -435,8 +433,7 @@ def execute_gemini_fallback(
 
     gemini_client = get_rag_client()
     lessons_by_id: dict[str, LessonContent] = {
-        lesson.lesson_id: lesson
-        for lesson in _load_lessons(base / "normalized.jsonl")
+        lesson.lesson_id: lesson for lesson in _load_lessons(base / "normalized.jsonl")
     }
 
     synthesized_count = 0
@@ -525,9 +522,7 @@ def execute_gemini_fallback(
         if lesson is not None:
             fallback_clip = clip.model_copy(
                 update={
-                    "audio_path": str(
-                        fallback_audio_path.relative_to(companion_dir)
-                    ),
+                    "audio_path": str(fallback_audio_path.relative_to(companion_dir)),
                 }
             )
             try:
@@ -580,9 +575,7 @@ def execute_gemini_fallback(
         failed_count=failed_count,
         clip_results=clip_results,
     )
-    (report_dir / "fallback_execution_summary.json").write_text(
-        summary.model_dump_json(indent=2)
-    )
+    (report_dir / "fallback_execution_summary.json").write_text(summary.model_dump_json(indent=2))
     return summary
 
 
@@ -592,10 +585,7 @@ def _family_bucket_counts(
     grouped: dict[str, Counter[str]] = defaultdict(Counter)
     for result in clip_results:
         grouped[result.segment_type][result.bucket] += 1
-    return {
-        segment_type: dict(counter)
-        for segment_type, counter in grouped.items()
-    }
+    return {segment_type: dict(counter) for segment_type, counter in grouped.items()}
 
 
 def _write_summary(path: Path, summary: AudioFallbackPolicySummary) -> None:
@@ -647,9 +637,7 @@ def _write_markdown_report(path: Path, summary: AudioFallbackPolicySummary) -> N
 
     lines.extend(["", "## Gemini Fallback Eligible", ""])
     eligible = [
-        result
-        for result in summary.clip_results
-        if result.bucket == "gemini_fallback_eligible"
+        result for result in summary.clip_results if result.bucket == "gemini_fallback_eligible"
     ]
     if not eligible:
         lines.append("- None")
@@ -663,9 +651,7 @@ def _write_markdown_report(path: Path, summary: AudioFallbackPolicySummary) -> N
 
     lines.extend(["", "## Needs LLM Or Manual Review", ""])
     manual_review = [
-        result
-        for result in summary.clip_results
-        if result.bucket == "needs_llm_or_manual_review"
+        result for result in summary.clip_results if result.bucket == "needs_llm_or_manual_review"
     ]
     if not manual_review:
         lines.append("- None")

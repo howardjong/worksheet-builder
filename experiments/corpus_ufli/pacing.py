@@ -5,7 +5,7 @@ Single source of truth consumed by the judge, audit, and fallback modules.
 
 from __future__ import annotations
 
-from corpus.ufli.audio_companion_schema import AudioClipKind
+from experiments.corpus_ufli.audio_companion_schema import AudioClipKind
 
 # Conservative child-directed pacing bands for ages 5-8, set below the 150 WPM
 # TTS research baseline reported for older students and aligned to explicit,

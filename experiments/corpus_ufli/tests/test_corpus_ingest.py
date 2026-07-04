@@ -9,7 +9,7 @@ import pytest
 
 pytest.importorskip("chromadb")
 
-from corpus.ufli.ingest import _derive_grade, ingest_curriculum
+from experiments.corpus_ufli.ingest import _derive_grade, ingest_curriculum
 from rag.embeddings import EmbeddingResult
 from rag.store import CURRICULUM, get_or_create_collection, get_store
 
@@ -35,7 +35,7 @@ def test_ingest_creates_curriculum_documents(
 ) -> None:
     """Ingestion creates documents in the curriculum collection."""
     monkeypatch.setattr(
-        "corpus.ufli.ingest.embed_text",
+        "experiments.corpus_ufli.ingest.embed_text",
         lambda *_a, **_k: _fake_embedding(),
     )
 
@@ -71,12 +71,10 @@ def test_ingest_creates_curriculum_documents(
     assert meta["has_additional"] is False
 
 
-def test_ingest_multiple_lessons(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_ingest_multiple_lessons(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Multiple lessons are indexed with correct IDs."""
     monkeypatch.setattr(
-        "corpus.ufli.ingest.embed_text",
+        "experiments.corpus_ufli.ingest.embed_text",
         lambda *_a, **_k: _fake_embedding(),
     )
 
@@ -114,12 +112,10 @@ def test_ingest_multiple_lessons(
     assert col.count() == 2
 
 
-def test_ingest_is_idempotent(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_ingest_is_idempotent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """Re-running ingestion upserts, not duplicates."""
     monkeypatch.setattr(
-        "corpus.ufli.ingest.embed_text",
+        "experiments.corpus_ufli.ingest.embed_text",
         lambda *_a, **_k: _fake_embedding(),
     )
 

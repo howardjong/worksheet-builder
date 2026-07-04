@@ -39,9 +39,7 @@ _DOWNLOAD_TIMEOUT = 60  # seconds
 _SSL_CTX = ssl.create_default_context(cafile=certifi.where())
 
 
-def _download_with_retry(
-    url: str, dest: str, lesson_id: str, rtype: str
-) -> bool:
+def _download_with_retry(url: str, dest: str, lesson_id: str, rtype: str) -> bool:
     """Download a file with retries and exponential backoff."""
     for attempt in range(_MAX_RETRIES):
         try:

@@ -11,8 +11,8 @@ from typing import Literal
 
 import pytest
 
-from corpus.ufli.audio_companion_schema import GoogleCloudTtsSettings
-from corpus.ufli.google_tts_client import (
+from experiments.corpus_ufli.audio_companion_schema import GoogleCloudTtsSettings
+from experiments.corpus_ufli.google_tts_client import (
     GoogleTtsRequestContext,
     GoogleTtsSynthesisError,
     synthesize_google_tts_audio,
@@ -26,9 +26,7 @@ class _FakeResponse:
     def __enter__(self) -> _FakeResponse:
         return self
 
-    def __exit__(
-        self, exc_type: object, exc: object, tb: object
-    ) -> Literal[False]:
+    def __exit__(self, exc_type: object, exc: object, tb: object) -> Literal[False]:
         return False
 
     def read(self) -> bytes:
@@ -48,9 +46,7 @@ def _context() -> GoogleTtsRequestContext:
 
 
 def _success_response(audio_bytes: bytes = b"mp3") -> _FakeResponse:
-    return _FakeResponse(
-        {"audioContent": base64.b64encode(audio_bytes).decode("utf-8")}
-    )
+    return _FakeResponse({"audioContent": base64.b64encode(audio_bytes).decode("utf-8")})
 
 
 def _http_error(
@@ -85,9 +81,13 @@ def test_google_tts_client_retries_499_then_succeeds(
             raise item
         return item
 
-    monkeypatch.setattr("corpus.ufli.google_tts_client.urllib.request.urlopen", _fake_urlopen)
-    monkeypatch.setattr("corpus.ufli.google_tts_client._jitter_multiplier", lambda: 1.0)
-    monkeypatch.setattr("corpus.ufli.google_tts_client._sleep", lambda delay: sleeps.append(delay))
+    monkeypatch.setattr(
+        "experiments.corpus_ufli.google_tts_client.urllib.request.urlopen", _fake_urlopen
+    )
+    monkeypatch.setattr("experiments.corpus_ufli.google_tts_client._jitter_multiplier", lambda: 1.0)
+    monkeypatch.setattr(
+        "experiments.corpus_ufli.google_tts_client._sleep", lambda delay: sleeps.append(delay)
+    )
 
     result = synthesize_google_tts_audio(
         text="Hello world",
@@ -116,9 +116,13 @@ def test_google_tts_client_retries_502_then_succeeds(
             raise item
         return item
 
-    monkeypatch.setattr("corpus.ufli.google_tts_client.urllib.request.urlopen", _fake_urlopen)
-    monkeypatch.setattr("corpus.ufli.google_tts_client._jitter_multiplier", lambda: 1.0)
-    monkeypatch.setattr("corpus.ufli.google_tts_client._sleep", lambda delay: sleeps.append(delay))
+    monkeypatch.setattr(
+        "experiments.corpus_ufli.google_tts_client.urllib.request.urlopen", _fake_urlopen
+    )
+    monkeypatch.setattr("experiments.corpus_ufli.google_tts_client._jitter_multiplier", lambda: 1.0)
+    monkeypatch.setattr(
+        "experiments.corpus_ufli.google_tts_client._sleep", lambda delay: sleeps.append(delay)
+    )
 
     result = synthesize_google_tts_audio(
         text="Hello world",
@@ -147,8 +151,12 @@ def test_google_tts_client_retries_429_and_honors_retry_after(
             raise item
         return item
 
-    monkeypatch.setattr("corpus.ufli.google_tts_client.urllib.request.urlopen", _fake_urlopen)
-    monkeypatch.setattr("corpus.ufli.google_tts_client._sleep", lambda delay: sleeps.append(delay))
+    monkeypatch.setattr(
+        "experiments.corpus_ufli.google_tts_client.urllib.request.urlopen", _fake_urlopen
+    )
+    monkeypatch.setattr(
+        "experiments.corpus_ufli.google_tts_client._sleep", lambda delay: sleeps.append(delay)
+    )
 
     result = synthesize_google_tts_audio(
         text="Hello world",
@@ -177,9 +185,13 @@ def test_google_tts_client_retries_urlerror_then_succeeds(
             raise item
         return item
 
-    monkeypatch.setattr("corpus.ufli.google_tts_client.urllib.request.urlopen", _fake_urlopen)
-    monkeypatch.setattr("corpus.ufli.google_tts_client._jitter_multiplier", lambda: 1.0)
-    monkeypatch.setattr("corpus.ufli.google_tts_client._sleep", lambda delay: sleeps.append(delay))
+    monkeypatch.setattr(
+        "experiments.corpus_ufli.google_tts_client.urllib.request.urlopen", _fake_urlopen
+    )
+    monkeypatch.setattr("experiments.corpus_ufli.google_tts_client._jitter_multiplier", lambda: 1.0)
+    monkeypatch.setattr(
+        "experiments.corpus_ufli.google_tts_client._sleep", lambda delay: sleeps.append(delay)
+    )
 
     result = synthesize_google_tts_audio(
         text="Hello world",
@@ -203,8 +215,12 @@ def test_google_tts_client_does_not_retry_non_retryable_http_codes(
     def _fake_urlopen(_request: object, timeout: float) -> _FakeResponse:
         raise _http_error(status_code)
 
-    monkeypatch.setattr("corpus.ufli.google_tts_client.urllib.request.urlopen", _fake_urlopen)
-    monkeypatch.setattr("corpus.ufli.google_tts_client._sleep", lambda delay: sleeps.append(delay))
+    monkeypatch.setattr(
+        "experiments.corpus_ufli.google_tts_client.urllib.request.urlopen", _fake_urlopen
+    )
+    monkeypatch.setattr(
+        "experiments.corpus_ufli.google_tts_client._sleep", lambda delay: sleeps.append(delay)
+    )
 
     with pytest.raises(GoogleTtsSynthesisError) as exc_info:
         synthesize_google_tts_audio(
@@ -229,9 +245,13 @@ def test_google_tts_client_raises_exhausted_error_after_max_attempts(
     def _fake_urlopen(_request: object, timeout: float) -> _FakeResponse:
         raise _http_error(502)
 
-    monkeypatch.setattr("corpus.ufli.google_tts_client.urllib.request.urlopen", _fake_urlopen)
-    monkeypatch.setattr("corpus.ufli.google_tts_client._jitter_multiplier", lambda: 1.0)
-    monkeypatch.setattr("corpus.ufli.google_tts_client._sleep", lambda delay: sleeps.append(delay))
+    monkeypatch.setattr(
+        "experiments.corpus_ufli.google_tts_client.urllib.request.urlopen", _fake_urlopen
+    )
+    monkeypatch.setattr("experiments.corpus_ufli.google_tts_client._jitter_multiplier", lambda: 1.0)
+    monkeypatch.setattr(
+        "experiments.corpus_ufli.google_tts_client._sleep", lambda delay: sleeps.append(delay)
+    )
 
     with pytest.raises(GoogleTtsSynthesisError) as exc_info:
         synthesize_google_tts_audio(
@@ -255,7 +275,9 @@ def test_google_tts_client_raises_response_error_for_missing_audio_content(
     def _fake_urlopen(_request: object, timeout: float) -> _FakeResponse:
         return _FakeResponse({})
 
-    monkeypatch.setattr("corpus.ufli.google_tts_client.urllib.request.urlopen", _fake_urlopen)
+    monkeypatch.setattr(
+        "experiments.corpus_ufli.google_tts_client.urllib.request.urlopen", _fake_urlopen
+    )
 
     with pytest.raises(GoogleTtsSynthesisError) as exc_info:
         synthesize_google_tts_audio(
