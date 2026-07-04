@@ -8,6 +8,61 @@
 
 ## Current State
 
+### Session 56 — 2026-07-04 (experiments refactor: strategy reconciled, no code moved yet)
+
+**Status:** Strategy/planning session. Reviewed refactor state against the owner's real
+objective (un-overengineer, don't just relocate) and **reconciled the plan** so the
+artifacts are the source of truth again. **No code moved this session** — the working-tree
+rag-eval extraction from a prior uncommitted session is still uncommitted. Plan lives at
+`~/.claude/plans/lexical-exploring-castle.md` (session-plans dir, outside the repo — it was
+never checked in; see its 2026-07-04 revision block for the authoritative decisions).
+
+**Decisions locked (owner, 2026-07-04):**
+- **Nothing gets deleted.** Experiments (UFLI audio companion, corpus tooling, batteries)
+  are **do-later features**, not dead code. Park them, keep them healthy, resume later.
+- **Product state:** working capability = "pick a UFLI lesson → build worksheets." The
+  "photo → worksheet from image alone" path is **not working yet** (capability gap,
+  separate from this cleanup and the higher-value target for dev effort).
+- **`rag/` stays in production.** Verified: `transform.py` drives the lesson-pick build via
+  guarded `retrieve_context()` (opt-in `WORKSHEET_USE_RAG`); `batch.py:432` uses
+  `rag.indexer.index_run`. Original plan Step 4 ("move all of `rag/`") is **rejected** —
+  only the eval *harness* is experiment. The uncommitted `experiments/rag/eval.py` move is
+  the correct scope; commit it after the full 3.11 gate.
+- **Relocation alone doesn't simplify.** No ruff/mypy `exclude`, `testpaths = ["tests"]`,
+  so moving code to `experiments/` keeps the full strict-typecheck + lint + test tax. The
+  move only pays off paired with dropping parked tests from CI.
+- **CI-strictness (owner choice): drop experiment tests, keep mypy + ruff.** Mechanically,
+  relocate experiment test files under `experiments/` so `testpaths = ["tests"]` stops
+  collecting them (no per-file ignore list); mypy/ruff keep scanning them so they don't rot.
+  This means the test count will drop **by design** — not lost coverage.
+
+**Boundary re-verified (this session):**
+- Only first-party `corpus.ufli` import in the production closure is `corpus/ufli/lookup.py`
+  (`adapt/llm_planner:48`, `adapt/objective_ledger:20`, `extract/vision:257`,
+  `skill/extractor:357,408`). The ~9.3k LoC of crawl/acquire/ingest/extract/audio_companion
+  are off the runtime path → Step 5 move is safe.
+- LoC context: corpus/ufli non-lookup ≈ 9,263; `rag/` ≈ 971 (production, stays);
+  batteries ≈ 1,252; `adapt/` ≈ 6,816 (out of scope, needs measured pruning later);
+  repo total ≈ 54k.
+- `[[tool.mypy.overrides]]` lists only third-party `ignore_missing_imports` — no
+  `rag.*`/`corpus.*` globs, so the plan's override-update worries are moot.
+
+**Uncommitted in tree (from a prior session, verified green in isolation):**
+- Staged: `experiments/rag/__init__.py`, `experiments/rag_eval.py` → `experiments/rag/eval.py`.
+- Unstaged: import repoints in `tests/test_rag_eval.py`, README, AGENTS.md,
+  `experiments/batteries/ab_eval.py`, `experiments/rag/eval.py`, `rag/__init__.py`.
+- `ruff`/`mypy`/`test_rag_eval.py` pass; full 3.11 gate not yet re-run.
+
+**Next (execution sequence per revised plan, not yet started):** (1) commit the green
+rag-eval extraction after the full 3.11 gate; (2) Step 5 — `git mv` non-lookup
+`corpus/ufli/*` → `experiments/corpus_ufli/`, repoint intra-cluster imports, leave
+`lookup.py`; (3) Step 5b — relocate experiment test files (`test_corpus_*`, `test_pacing`,
+`test_remediate`, `test_ab_eval`, `test_adapt_battery`, `test_render_battery`,
+`test_renderer_benchmark`, `test_rag_eval`) under `experiments/` to drop them from CI; keep
+`test_llm_planner`/`objective_corpus_fixture` in `tests/`; (4) gate under 3.11, report which
+tests left CI, smoke a `pdf_classic` transform. Do NOT touch `adapt/` or
+`corpus/ufli/lookup.py`. Mind the ruff 0.8.4-vs-local format skew when committing.
+
 ### Session 55 — 2026-06-22 (experiments refactor: batteries + rag_eval moved)
 
 **Status:** Continued `plans/lexical-exploring-castle.md`. Completed the package skeleton (partial) + the **batteries move** and relocated the RAG eval harness. Scope this session was deliberately **batteries-only** (owner choice); the UFLI corpus move (Step 5) and the rest of the RAG package (Step 4) are still deferred.
