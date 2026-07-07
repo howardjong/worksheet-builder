@@ -8,6 +8,95 @@
 
 ## Current State
 
+### Session 57 — 2026-07-06 (Goal 1: intensity dial + lesson-number entry point)
+
+**Status:** Shipped **Phases 0 + A + B** of `plans/2026-07-07-intensity-dial-hybrid-renderer-plan.md`
+(Goal 1 of two). All gates green: `make lint`, `make typecheck` (mypy 179 files),
+`make test` (**714 passed**; 687 baseline → 700 after A → 714 after B). Merged the feature
+branch back into `claude/review-recent-refactoring-rma786` and pushed. **Phases C–F (Goal 2:
+hybrid renderer, roblox_obby assets, gold set + UAT harness + golden e2e, docs) are NOT done
+— submit Goal 2 only after Goal 1 UAT passes.**
+
+**Branch setup:** cut `feature/intensity-dial-lesson-entry` from
+`claude/review-recent-refactoring-rma786`, merged `origin/refactor/separate-experiments`.
+The plan predicted a clean fast-forward; it was actually a true (conflict-free) merge because
+the base had gained the plan-doc commit on top of the fork point — the two sides touch disjoint
+files, so no manual resolution. Merged back and pushed at the end.
+
+**Phase A — profile-driven visual intensity dial (`c9c12bd`).**
+- `companion/schema.py` `Preferences.visual_intensity` (None|low|medium|high; None = exact
+  legacy behavior). `adapt/rules.py` `IntensityVisuals` + `INTENSITY_VISUALS` table
+  (low 1/3/0.75/none, **medium 2/4/1.0/basic == old hardcodes**, high 6/6/1.3/full);
+  `AccommodationRules.visual_intensity`; `build_rules()` derives both.
+- `validate/adhd_compliance.py` Check 4 uses `rules.max_decorative_elements` (2 when rules None).
+- `render/design_spec.py` widened `VisualBudget` field validators (0–8 dec / 1–6 colors) +
+  a per-intensity `model_validator`; `_resolve_visual_budget(theme, profile)` — dial unset →
+  legacy theme-derived path (byte-identical), dial set → table values. `render_benchmark` gate
+  compares against `intensity_budget_ceiling`.
+- **Plan-tension resolved (judgment call):** the plan's strict "low caps at 1 decoration"
+  validator would have rejected existing tests that build `VisualBudget(intensity="low",
+  max_decorative_elements=2, max_colors=4)` (image-prompt/image-gen/benchmark fixtures), which
+  risk #1 requires stay valid. The `model_validator` uses a **monotonic ceiling =
+  max(tier, medium)**: low/medium permit up to the legacy 2/4, only "high" unlocks 6/6. The dial
+  still *produces* low=1/3; the validator only rejects a calm-intensity spec that packs a busy
+  budget. Every pre-dial construction stays valid; the dial-off legacy path is unchanged.
+- **`render/benchmark.py` moved:** the refactor merge relocated it to
+  `experiments/batteries/render_benchmark.py`; the gate was updated there.
+
+**Phase B — `--lesson N` entry point + fixture corpus (`4f7ab74`).**
+- `transform.py`: `--input` optional; new `--lesson` (int); UsageError unless exactly one.
+  Factored the post-extraction pipeline into `_run_from_skill_model()` (shared by photo +
+  lesson paths); `run_lesson_pipeline[_collect_artifacts]()` skip capture/OCR. Idempotent:
+  `source_image_hash = sha256("ufli_lesson:N")[:16]` → content hash → stable `lesson_<hash>.pdf`.
+- `skill/lesson_loader.py` `skill_model_from_lesson(n)` builds a `LiteracySkillModel` from
+  `corpus.ufli.lookup`, mirroring `_extract_word_work` + `_enrich_from_corpus`
+  (word_list, roll_and_read, passage, sentence); `template_type ufli_word_work`,
+  `extraction_confidence 1.0`, grade via `grade_from_lesson(n)`. Reused word-work helpers were
+  promoted to public aliases in `skill/extractor.py` (private names kept).
+- `corpus/ufli/lookup.py`: fall back to the committed fixture when
+  `data/ufli/normalized.jsonl` is absent (**real file always wins**); cache keyed by resolved
+  path + `reset_lookup_cache()`.
+- `corpus/ufli/fixtures/normalized_fixture.jsonl`: 4 hand-authored **ORIGINAL** lessons
+  (31 sh, 49 a_e, **74 ay**, 90 oa/ow), lesson 74 sized under grade-2 caps.
+- **⚠️ Fixture 74 ≠ real 74 (judgment call):** the plan REQUIRES fixture lesson 74 = "ay", but
+  the REAL corpus maps lesson 74 to **"y /ē/"** (long-e y). The fixture is a controlled test fake;
+  the real file wins on your machine, so **UAT pulls the real "y /ē/" content while tests stay
+  deterministic on "ay".** Phase E's golden e2e (Goal 2) is designed around fixture-"ay", so this
+  divergence is intentional. If you want the fixture to match reality, change it in a follow-up —
+  but that would also mean revisiting the Goal-2 golden assertions.
+- Full-suite audit for "no corpus" assumptions came back clean — this worktree lacks the real
+  corpus, so the test run already exercises the fixture-fallback path (all 714 green).
+
+**Verified offline (no mocks):** `WORKSHEET_SKIP_ASSET_GEN=1 python transform.py --lesson 74
+--profile <tmp> --theme roblox_obby --output <tmp> --render-mode pdf_classic` → 3 mini-worksheets,
+all validations passed, stable merged `lesson_b805276388ae.pdf`. (Uses the fixture here because
+the worktree has no real corpus; on your machine it uses the real corpus + AI planner.)
+
+**UAT #1 (run these to sign off Goal 1, then Goal 2 can start):** from the repo root with `.env`
++ real corpus present. `profiles/ian.yaml` is gitignored; add `visual_intensity: high` under a
+`preferences:` block for the high-dial run.
+```
+# Baseline: lesson 74 from the REAL corpus with the AI planner (full path).
+python transform.py --lesson 74 --profile profiles/ian.yaml --theme roblox_obby --output ./output/
+
+# Low- vs high-dial budgets change validation. Two throwaway profiles differing only in the dial:
+#   samples/profiles/uat_grade1_low.yaml  → preferences.visual_intensity: low
+#   samples/profiles/uat_grade1_high.yaml → preferences.visual_intensity: high
+python transform.py --lesson 74 --profile <low-dial profile>  --theme roblox_obby --output ./output/low/
+python transform.py --lesson 74 --profile <high-dial profile> --theme roblox_obby --output ./output/high/
+# Expect: low dial caps decorations at 1 / 3 colors; high dial allows 6 / 6. Dial-off profiles
+# behave exactly as before (medium == old 2/4 hardcodes).
+```
+Note: those UAT profile files (`samples/profiles/uat_grade1_*.yaml`) are authored in Phase E
+(Goal 2); for a quick Goal-1 check, copy `profiles/ian.yaml` twice and set the dial in each.
+
+**Next (Goal 2 — Phases C–F, submit only after UAT #1 passes):** hybrid renderer
+(`render/hybrid.py`, reuse pdf primitives, wire `HybridShellRenderer.render`), roblox_obby PNG
+assets (`tools/generate_obby_assets.py`, **keep `max_per_page: 2`** in the theme config — the
+dial, not the theme, unlocks >2), gold set + `tools/uat_compare.py` + `make uat` + golden e2e in
+`tests/test_e2e.py` + `make test-golden` in CI, docs. Model rec: Fable 5 for the renderer layout
+math; Opus 4.8 fallback. Full spec: `plans/2026-07-07-intensity-dial-hybrid-renderer-plan.md`.
+
 ### Session 56 — 2026-07-04 (experiments refactor: reconciled AND executed)
 
 **Status:** Reconciled the plan against the owner's real objective (un-overengineer, don't
