@@ -8,8 +8,12 @@ adapt/engine.py:adapt_lesson()).
 
 from __future__ import annotations
 
-from adapt.rules import BRAIN_BREAK_PROMPTS, AccommodationRules
+import logging
+
+from adapt.rules import BRAIN_BREAK_PROMPTS, TARGET_MAX_WORKSHEETS_PER_LESSON, AccommodationRules
 from adapt.schema import AdaptedActivityModel
+
+logger = logging.getLogger(__name__)
 
 
 def enforce_section_cap(
@@ -63,5 +67,15 @@ def enforce_section_cap(
                     "break_prompt": break_prompt,
                 }
             )
+        )
+    if total > TARGET_MAX_WORKSHEETS_PER_LESSON:
+        logger.warning(
+            "Lesson package has %s mini-worksheets, above the %s-worksheet target "
+            "(AGENTS.md). Content was split, not dropped — this usually means the "
+            "source content volume exceeded what the grade's chunk/section limits "
+            "expect. Consider a different adapt path (e.g. WORKSHEET_PLANNER_V2) "
+            "if this recurs.",
+            total,
+            TARGET_MAX_WORKSHEETS_PER_LESSON,
         )
     return final

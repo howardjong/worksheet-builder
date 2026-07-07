@@ -1,0 +1,71 @@
+name: "Geometry Dash Runner"
+style: calm
+multi_worksheet: true
+fonts:
+  primary: "Lexend"
+  heading: "Fredoka"
+colors:
+  directions: "#2563EB"
+  examples: "#059669"
+  key_words: "#D97706"
+  rewards: "#D97706"
+  background: "#FAFAFA"
+  text: "#1F2937"
+  chunk_border: "#E5E7EB"
+avatar_position: "integrated"
+decorative_elements:
+  max_per_page: 2
+  assets: []
+character_spec:
+  art_style: "geometry_runner_flat_shapes"
+  style_description: >
+    Geometry-Dash-inspired flat 2D shape runner with bold black outlines,
+    saturated candy colors, simple readable silhouettes, and light cel
+    shading. The character should preserve Ian's learning buddy likeness from
+    the profile style sheet: rainbow spiky hair, square peach head, blue
+    shirt with a yellow lightning bolt, brown pants, and orange sneakers,
+    but reshaped as a simple square/cube-bodied runner rather than a blocky
+    Roblox figure. Think a printable geometry-runner comic panel, not a
+    detailed 3D game render.
+  body_description: >
+    Simple flat-shape proportions: a rounded square "cube" torso, thin
+    rectangular arms and legs, and a square peach head sitting on top. For
+    Ian, clothing must stay consistent: bright blue short-sleeve shirt with a
+    large yellow lightning bolt on the cube torso, brown pants, and orange
+    sneakers with white soles and white lace accents.
+  face_description: >
+    Friendly simple face on the square peach head: two black oval eyes, no
+    detailed nose, and a simple curved smile. Face must remain simple and
+    decal-like, matching the flat-shape body style.
+  scene_environment: >
+    Calm printable geometry-runner learning environment with a light blue
+    sky, a single flat ground line, and simple geometric obstacles in the
+    distance. Backgrounds should support focus rather than compete with
+    worksheet text, with plenty of white space around literacy content.
+  scene_elements:
+    - "triangle spikes along the ground line"
+    - "spinning square platforms"
+    - "orb jump rings"
+    - "checkpoint flags"
+    - "star collectibles"
+    - "simple geometric portals"
+  color_palette: >
+    Bright saturated avatar colors: peach skin, vivid rainbow hair (red,
+    orange, yellow, green, cyan, blue, purple, magenta), blue shirt, yellow
+    lightning bolt, brown pants, and orange shoes. Use calmer light blue,
+    soft gray, white, and pale ground colors in backgrounds for print
+    readability.
+  reference_keywords:
+    - "geometry runner flat shape avatar"
+    - "square cube learning buddy"
+    - "rainbow spiky hair"
+    - "blue lightning shirt"
+    - "orange sneakers"
+  judge_criteria:
+    - "Ian's rainbow spiky hair is preserved with multiple vivid color sections"
+    - "Character wears the blue shirt with a large yellow lightning bolt"
+    - "Character wears brown pants and orange sneakers with white soles"
+    - "Face is square, peach, simple, and friendly with black oval eyes"
+    - "Body remains simple flat-shape geometry, not realistic or 3D rendered"
+    - "Background is calm and print-readable with limited decorative clutter"
+    - "No generated scene changes the core avatar identity or clothing"

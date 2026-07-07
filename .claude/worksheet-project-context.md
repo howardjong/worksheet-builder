@@ -8,6 +8,77 @@
 
 ## Current State
 
+### Session 58 — 2026-07-07 (UAT #1 fixes: worksheet-count explosion, lesson-mode planner default)
+
+**Status:** Owner ran UAT #1 live (`python transform.py --lesson 74 --profile profiles/ian.yaml
+--theme roblox_obby`, real `.env` keys + real 148-lesson corpus, default `image_gen` renderer).
+Good: `--lesson` wiring worked end-to-end, text legible, avatar identity consistent, no
+visible text/image overlap in the actual PDF. Bad, root-caused and (partly) fixed this
+session — all gates green (`make lint`, `make typecheck` 3 pre-existing mutagen errors
+unrelated, `make test` **719 passed**, up from 714):
+
+**Fixed:**
+1. **Lesson mode now defaults to `WORKSHEET_PLANNER_V2=1`** (`transform.py:
+   run_lesson_pipeline_collect_artifacts`), scoped ONLY to lesson mode via a save/restore
+   around the `_run_from_skill_model` call (never mutates `os.environ` permanently — tested
+   for both the default-on and explicit-override cases). The live run hit the **legacy**
+   Gemini→judge→GPT-takeover loop, which is the exact failure mode already diagnosed at D30
+   (".claude/worksheet-project-context.md:1186" — "every live run ended
+   `gpt_takeover_unjudged`... a live page shipped with 9 sections") — this run produced **10**
+   mini-worksheets / 46 estimated minutes (cap is 20) after the judge REJECTED (score 0.42)
+   and GPT took over unjudged. Planner-v2 is the already-built, already-designed fix for
+   this; it was never made default for the **photo** workflow because its A/B battery gate
+   hasn't passed (Tasks 13-15 still blocked, D31) — that photo-mode default is UNTOUCHED.
+   Lesson mode is brand new (this session's own Goal 1) with no such gate history, so
+   defaulting it to the safer path is scoped and reversible (`WORKSHEET_PLANNER_V2=0` to
+   opt back into legacy).
+2. **Worksheet-count overflow is no longer silent.** `adapt/rules.py` gained
+   `TARGET_MAX_WORKSHEETS_PER_LESSON = 3` (matches the "2-3 mini-worksheets" spec in
+   AGENTS.md/`adapt_lesson()`'s docstring); `adapt/section_cap.py:enforce_section_cap` logs a
+   warning (not an error — content-preservation stays a hard, tested invariant, see below)
+   whenever the final split package exceeds it.
+3. **Stale docstring fixed:** `render/image_providers.py:resolve_provider_chain` said default
+   `"gemini,openai"`; the actual constant/AGENTS.md/D29 value is `"openai,gemini"`.
+4. **New `geometry_dash` theme** (`theme/themes/geometry_dash/config.yaml`) — answers the
+   owner's "how would a different theme render" question. Purely additive YAML (themes are
+   fully data-driven, `theme/engine.py` has no hardcoded theme registry); untested against a
+   live render (no API keys in the dev sandbox) — try `--theme geometry_dash` locally.
+
+**Deliberately NOT fixed — needs an owner decision, not a silent code change:**
+`adapt/section_cap.py`'s docstring + a passing test (`test_nine_section_worksheet_splits_
+without_dropping_content`) encode **"every chunk survives, never trimmed"** as a considered,
+tested design invariant. A full UFLI lesson genuinely has more raw content (roll-and-read
+list + passage + home-practice sentences + chain scripts) than fits in 3 worksheets under the
+existing ADHD-safe chunk/section-size constants (tuned for a single photo scan). Planner-v2 +
+the new warning together make overflow *visible* and *less likely* (planner-v2 authors 2-3
+worksheets directly instead of the deterministic engine's batch-everything-then-split), but
+they do not guarantee ≤3 for a content-rich lesson — that requires deciding whether to
+prioritize/trim less-essential content (breaks "never trimmed") or accept more worksheets
+above a hard ceiling (keeps "never trimmed", bounds growth). Flagged to the owner directly;
+not decided here.
+
+**Not fixed — architecturally requires Goal 2 (hybrid_shell), confirmed root-caused, not a
+patchable image_gen tweak:** inconsistent text sizing/line-spacing, a progress bar that
+"looks different each page", and an avatar that "doesn't do much" are all a structural
+consequence of `image_gen` generating each worksheet page as an **independent raster image**
+with no shared deterministic template — confirmed via `render/image_gen.py` (no cross-page
+consistency input besides the character reference photo) and `render/image_prompt_builder.py`
+(the progress indicator and font sizing are natural-language prompt instructions, not fixed
+vector geometry). `HybridShellRenderer` (`render/strategies.py:72-87`) is still a stub
+identical to `pdf_classic` — Goal 2 is exactly the fix (deterministic vector text/chrome +
+zoned AI/vector art) and should be run next.
+
+**Exercise variety** ("more variable and fun"): likely improves as a byproduct of the
+planner-v2 default (author's full-context single call vs. the deterministic engine's rigid
+per-category single-format chunk builders, which the ADHD-compliance validator repeatedly
+flagged as "only 1 response format across 3 chunks") — not independently verified this
+session; re-check in the next lesson-mode UAT run.
+
+**Next:** owner re-runs `--lesson 74` locally (now defaults to planner-v2) and reports back:
+worksheet count, time budget, exercise variety, and whether the deeper content-prioritization
+question above needs resolving. Then proceed to Goal 2 (hybrid renderer) — it directly targets
+the remaining chrome/typography-consistency complaints.
+
 ### Session 57 — 2026-07-06 (Goal 1: intensity dial + lesson-number entry point)
 
 **Status:** Shipped **Phases 0 + A + B** of `plans/2026-07-07-intensity-dial-hybrid-renderer-plan.md`

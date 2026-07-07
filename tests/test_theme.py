@@ -49,6 +49,15 @@ class TestLoadTheme:
         theme = load_theme("dinosaur")
         assert theme.name == "Dino Discovery"
 
+    def test_load_geometry_dash_theme(self) -> None:
+        theme = load_theme("geometry_dash")
+        assert theme.name == "Geometry Dash Runner"
+        assert theme.style == "calm"
+        assert theme.multi_worksheet is True
+        assert theme.avatar_position == "integrated"
+        assert theme.character_spec.scene_elements
+        assert theme.character_spec.judge_criteria
+
     def test_load_unknown_returns_default(self) -> None:
         theme = load_theme("nonexistent")
         assert theme.name == "Default"

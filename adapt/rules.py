@@ -73,6 +73,14 @@ TIME_ESTIMATE_MINUTES: dict[str, int] = {
 # never trimmed (see adapt/section_cap.py).
 MAX_SECTIONS_PER_WORKSHEET: dict[str, int] = {"K": 2, "1": 3, "2": 4, "3": 4}
 
+# Target lesson-package size ("2-3 mini-worksheets", AGENTS.md/adapt_lesson()
+# docstring). This is NOT enforced by trimming content — content preservation
+# is a tested invariant (adapt/section_cap.py). It exists so a package that
+# blows past the target is loud in logs instead of silently shipping, e.g. a
+# full UFLI lesson's raw content volume splitting into 10 mini-worksheets.
+# See adapt/section_cap.py:enforce_section_cap.
+TARGET_MAX_WORKSHEETS_PER_LESSON = 3
+
 # Color system — consistent across all worksheets
 COLOR_SYSTEM: dict[str, str] = {
     "directions": "#2563EB",  # Blue

@@ -2,6 +2,10 @@
 
 from __future__ import annotations
 
+import logging
+
+import pytest
+
 from adapt.rules import AccommodationRules, build_rules
 from adapt.schema import (
     ActivityChunk,
@@ -109,3 +113,25 @@ def test_split_uses_grade_cap() -> None:
 
     assert len(result) == 2
     assert all(len(ws.chunks) <= 2 for ws in result)
+
+
+def test_at_target_worksheet_count_logs_no_warning(caplog: pytest.LogCaptureFixture) -> None:
+    """3 worksheets (the AGENTS.md target) should not trigger the overflow warning."""
+    with caplog.at_level(logging.WARNING, logger="adapt.section_cap"):
+        enforce_section_cap([_worksheet(9, self_assessment=["I can read"])], _rules("1"))
+    assert not caplog.records
+
+
+def test_over_target_worksheet_count_logs_warning(caplog: pytest.LogCaptureFixture) -> None:
+    """Splitting past the 3-worksheet target logs a warning but still preserves content."""
+    package = [_worksheet(13, self_assessment=["I can read"])]
+    with caplog.at_level(logging.WARNING, logger="adapt.section_cap"):
+        result = enforce_section_cap(package, _rules("1"))
+
+    # Grade 1 cap is 3 sections/worksheet: 13 sections -> 5 worksheets.
+    assert len(result) == 5
+    contents = [item.content for ws in result for ch in ws.chunks for item in ch.items]
+    assert sorted(contents) == sorted(f"word{i + 1}" for i in range(13))
+    assert len(caplog.records) == 1
+    assert "5 mini-worksheets" in caplog.records[0].message
+    assert "not dropped" in caplog.records[0].message

@@ -452,6 +452,16 @@ def run_lesson_pipeline_collect_artifacts(
     Skips capture/OCR entirely (no photo). Idempotent: the synthetic source hash
     is a pure function of the lesson number, so repeated runs land on the same
     ``lesson_<hash>.pdf``.
+
+    Defaults the adapt stage to the single-call planner (WORKSHEET_PLANNER_V2)
+    rather than the legacy Gemini-plan/GPT-judge/retry loop. This is scoped to
+    lesson mode only — the photo workflow's own default is untouched, since that
+    path has its own historical A/B gate history (see .claude/worksheet-project-
+    context.md, decision D30/D31). Lesson mode is new and has no such history;
+    the legacy loop was observed live on a full UFLI lesson producing an
+    over-cap 10-worksheet package after a rejected pedagogical judge verdict —
+    exactly the failure mode planner-v2 was built to fix. Set
+    WORKSHEET_PLANNER_V2=0 explicitly to opt back into the legacy loop.
     """
     from skill.lesson_loader import skill_model_from_lesson
 
@@ -472,21 +482,32 @@ def run_lesson_pipeline_collect_artifacts(
     # Deterministic source hash for the content-hash chain (transform.py content_hash).
     source_image_hash = hashlib.sha256(f"ufli_lesson:{lesson_number}".encode()).hexdigest()[:16]
 
-    return _run_from_skill_model(
-        skill_model,
-        profile_path=profile_path,
-        theme_id=theme_id,
-        output=output,
-        artifacts=artifacts,
-        source_image_path=f"ufli_lesson:{lesson_number}",
-        source_image_hash=source_image_hash,
-        extracted_text="",
-        template_type=skill_model.template_type,
-        ocr_engine="none",
-        region_count=0,
-        index_results=index_results,
-        render_mode=render_mode,
-    )
+    # Scoped, restorable default — only takes effect if the caller hasn't set
+    # WORKSHEET_PLANNER_V2 themselves, and never leaks the setting beyond this
+    # call (important since os.environ is process-global and shared across
+    # tests in the same session).
+    had_planner_v2 = "WORKSHEET_PLANNER_V2" in os.environ
+    if not had_planner_v2:
+        os.environ["WORKSHEET_PLANNER_V2"] = "1"
+    try:
+        return _run_from_skill_model(
+            skill_model,
+            profile_path=profile_path,
+            theme_id=theme_id,
+            output=output,
+            artifacts=artifacts,
+            source_image_path=f"ufli_lesson:{lesson_number}",
+            source_image_hash=source_image_hash,
+            extracted_text="",
+            template_type=skill_model.template_type,
+            ocr_engine="none",
+            region_count=0,
+            index_results=index_results,
+            render_mode=render_mode,
+        )
+    finally:
+        if not had_planner_v2:
+            os.environ.pop("WORKSHEET_PLANNER_V2", None)
 
 
 def _run_single_worksheet_pipeline(

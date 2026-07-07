@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
@@ -81,6 +82,88 @@ def test_lesson_mode_skips_capture_and_hashes_deterministically(
     assert model.lesson_number == 74
     assert model.template_type == "ufli_word_work"
     assert model.specific_skill == "vowel_teams"
+
+
+def test_lesson_mode_defaults_planner_v2_and_restores_env(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Lesson mode defaults the adapt stage to planner-v2, scoped to the call only."""
+    monkeypatch.delenv("WORKSHEET_PLANNER_V2", raising=False)
+    seen: list[str | None] = []
+
+    def fake_run_from_skill_model(skill_model: Any, **kwargs: Any) -> RunArtifacts:
+        seen.append(os.environ.get("WORKSHEET_PLANNER_V2"))
+        return RunArtifacts(
+            source_image_path=str(kwargs["source_image_path"]),
+            source_image_hash=str(kwargs["source_image_hash"]),
+            extracted_text=str(kwargs["extracted_text"]),
+            template_type=str(kwargs["template_type"]),
+            ocr_engine=str(kwargs["ocr_engine"]),
+            region_count=int(kwargs["region_count"]),
+            skill_domain=skill_model.domain,
+            skill_name=skill_model.specific_skill,
+            grade_level=skill_model.grade_level,
+            theme_id="roblox_obby",
+            worksheet_mode="multi",
+            adapted_summaries=[],
+            pdf_paths=[],
+            validation_results={"all_validators_passed": True},
+        )
+
+    monkeypatch.setattr(transform_module, "_run_from_skill_model", fake_run_from_skill_model)
+
+    run_lesson_pipeline_collect_artifacts(
+        74,
+        "profiles/does-not-need-to-exist.yaml",
+        "roblox_obby",
+        str(tmp_path / "out"),
+        str(tmp_path / "art"),
+        index_results=False,
+    )
+
+    assert seen == ["1"]  # defaulted on for the duration of the call
+    assert "WORKSHEET_PLANNER_V2" not in os.environ  # restored afterward
+
+
+def test_lesson_mode_respects_explicit_planner_v2_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An explicit WORKSHEET_PLANNER_V2 (e.g. opting back into the legacy loop) wins."""
+    monkeypatch.setenv("WORKSHEET_PLANNER_V2", "0")
+    seen: list[str | None] = []
+
+    def fake_run_from_skill_model(skill_model: Any, **kwargs: Any) -> RunArtifacts:
+        seen.append(os.environ.get("WORKSHEET_PLANNER_V2"))
+        return RunArtifacts(
+            source_image_path=str(kwargs["source_image_path"]),
+            source_image_hash=str(kwargs["source_image_hash"]),
+            extracted_text=str(kwargs["extracted_text"]),
+            template_type=str(kwargs["template_type"]),
+            ocr_engine=str(kwargs["ocr_engine"]),
+            region_count=int(kwargs["region_count"]),
+            skill_domain=skill_model.domain,
+            skill_name=skill_model.specific_skill,
+            grade_level=skill_model.grade_level,
+            theme_id="roblox_obby",
+            worksheet_mode="multi",
+            adapted_summaries=[],
+            pdf_paths=[],
+            validation_results={"all_validators_passed": True},
+        )
+
+    monkeypatch.setattr(transform_module, "_run_from_skill_model", fake_run_from_skill_model)
+
+    run_lesson_pipeline_collect_artifacts(
+        74,
+        "profiles/does-not-need-to-exist.yaml",
+        "roblox_obby",
+        str(tmp_path / "out"),
+        str(tmp_path / "art"),
+        index_results=False,
+    )
+
+    assert seen == ["0"]  # explicit override is never clobbered
+    assert os.environ["WORKSHEET_PLANNER_V2"] == "0"  # left exactly as the caller set it
 
 
 def _worksheet(number: int, contents: list[str]) -> AdaptedActivityModel:

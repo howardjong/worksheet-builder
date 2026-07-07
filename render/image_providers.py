@@ -129,7 +129,8 @@ def resolve_provider_chain() -> list[ImageProvider]:
     """Resolve the configured provider fallback chain, available providers only.
 
     Order comes from WORKSHEET_IMAGE_PROVIDERS (comma-separated), default
-    "gemini,openai". Unknown names are ignored.
+    "openai,gemini" (see DEFAULT_PROVIDER_ORDER / decision D29). Unknown names
+    are ignored.
     """
     order = os.environ.get("WORKSHEET_IMAGE_PROVIDERS", DEFAULT_PROVIDER_ORDER)
     registry: dict[str, ImageProvider] = {
