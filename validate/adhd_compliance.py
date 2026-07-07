@@ -67,7 +67,7 @@ def validate_adhd_compliance(
                 result.add_violation(
                     check="numbered_instructions",
                     message=(
-                        f"Chunk {chunk.chunk_id}: step number {step.number} " f"should be {i + 1}"
+                        f"Chunk {chunk.chunk_id}: step number {step.number} should be {i + 1}"
                     ),
                 )
 
@@ -98,13 +98,14 @@ def validate_adhd_compliance(
                     severity="warning",
                 )
 
-    # Check 4: Decorative elements <= 2
+    # Check 4: Decorative elements within the profile's intensity budget
     result.checks_run += 1
-    if len(adapted.decoration_zones) > 2:
+    limit = rules.max_decorative_elements if rules else 2
+    if len(adapted.decoration_zones) > limit:
         result.add_violation(
             check="decoration_budget",
             message=(
-                f"{len(adapted.decoration_zones)} decoration zones defined, " f"max is 2 per page"
+                f"{len(adapted.decoration_zones)} decoration zones defined, max is {limit} per page"
             ),
         )
 

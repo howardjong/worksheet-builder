@@ -6,10 +6,11 @@ different renderers can consume without re-deciding pedagogy or ADHD constraints
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Literal, cast
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from adapt.rules import INTENSITY_VISUALS
 from adapt.schema import ActivityItem, AdaptedActivityModel
 from companion.schema import LearnerProfile
 from theme.schema import ThemeConfig
@@ -38,6 +39,23 @@ class PageSpec(BaseModel):
         return self
 
 
+def intensity_budget_ceiling(intensity: str) -> tuple[int, int]:
+    """Max (decorations, colors) a VisualBudget may carry at this intensity.
+
+    The dial (INTENSITY_VISUALS) picks the actual counts; this ceiling is the
+    safety net that keeps a spec from claiming a calm intensity while packing a
+    busy budget. Every tier is allowed at least the medium/legacy budget
+    (2 decorations, 4 colors) so pre-dial constructions — including the
+    (low, 2, 4) image-prompt fixtures — stay valid; only "high" unlocks more.
+    """
+    tier = INTENSITY_VISUALS[intensity]
+    legacy = INTENSITY_VISUALS["medium"]
+    return (
+        max(tier.max_decorative_elements, legacy.max_decorative_elements),
+        max(tier.max_colors, legacy.max_colors),
+    )
+
+
 class VisualBudget(BaseModel):
     """ADHD-safe visual budget for a renderer."""
 
@@ -49,16 +67,29 @@ class VisualBudget(BaseModel):
     @field_validator("max_decorative_elements")
     @classmethod
     def _validate_decorations(cls, value: int) -> int:
-        if value < 0 or value > 2:
-            raise ValueError("ADHD-safe worksheets allow 0-2 decorative elements")
+        if value < 0 or value > 8:
+            raise ValueError("ADHD-safe worksheets allow 0-8 decorative elements")
         return value
 
     @field_validator("max_colors")
     @classmethod
     def _validate_colors(cls, value: int) -> int:
-        if value < 1 or value > 4:
-            raise ValueError("ADHD-safe worksheets allow 1-4 functional colors")
+        if value < 1 or value > 6:
+            raise ValueError("ADHD-safe worksheets allow 1-6 functional colors")
         return value
+
+    @model_validator(mode="after")
+    def _enforce_intensity_caps(self) -> VisualBudget:
+        max_dec, max_col = intensity_budget_ceiling(self.intensity)
+        if self.max_decorative_elements > max_dec:
+            raise ValueError(
+                f"{self.intensity} intensity allows at most {max_dec} decorative elements"
+            )
+        if self.max_colors > max_col:
+            raise ValueError(
+                f"{self.intensity} intensity allows at most {max_col} functional colors"
+            )
+        return self
 
 
 class AnswerZoneSpec(BaseModel):
@@ -172,12 +203,7 @@ def compile_worksheet_design_spec(
             height_pt=LETTER_HEIGHT_PT,
             margin_pt=LETTER_MARGIN_PT,
         ),
-        visual_budget=VisualBudget(
-            style=theme.style,
-            intensity=_intensity_for_style(theme.style),
-            max_decorative_elements=theme.decorative_elements.max_per_page,
-            max_colors=4,
-        ),
+        visual_budget=_resolve_visual_budget(theme, profile),
         required_text=_required_text(adapted),
         answer_zones=_answer_zones(adapted),
         sections=_sections(adapted),
@@ -190,6 +216,30 @@ def _theme_preferences(profile: LearnerProfile) -> list[str]:
     if profile.preferences is None:
         return []
     return list(profile.preferences.favorite_themes)
+
+
+def _resolve_visual_budget(theme: ThemeConfig, profile: LearnerProfile) -> VisualBudget:
+    """Resolve the visual budget from the profile's intensity dial.
+
+    Dial unset (``visual_intensity is None``) → exact legacy behavior: theme
+    ``max_per_page`` decorations, 4 colors, ``_intensity_for_style`` label.
+    Dial set → the INTENSITY_VISUALS table values for that level.
+    """
+    intensity = profile.preferences.visual_intensity if profile.preferences else None
+    if intensity is None:
+        return VisualBudget(
+            style=theme.style,
+            intensity=_intensity_for_style(theme.style),
+            max_decorative_elements=theme.decorative_elements.max_per_page,
+            max_colors=4,
+        )
+    visuals = INTENSITY_VISUALS[intensity]
+    return VisualBudget(
+        style=theme.style,
+        intensity=cast(VisualIntensity, intensity),
+        max_decorative_elements=visuals.max_decorative_elements,
+        max_colors=visuals.max_colors,
+    )
 
 
 def _intensity_for_style(style: str) -> VisualIntensity:

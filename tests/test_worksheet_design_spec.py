@@ -117,6 +117,99 @@ def test_design_spec_rejects_invalid_visual_intensity() -> None:
         )
 
 
+def test_design_spec_high_intensity_profile() -> None:
+    from render.design_spec import compile_worksheet_design_spec
+
+    theme = ThemeConfig(name="Roblox Obby")
+    profile = LearnerProfile(
+        name="Ian",
+        grade_level="1",
+        preferences=Preferences(
+            favorite_themes=["roblox_obby"],
+            visual_style="pixel_art",
+            visual_intensity="high",
+        ),
+    )
+
+    spec = compile_worksheet_design_spec(_adapted(), theme, profile, render_mode="hybrid_shell")
+
+    assert spec.visual_budget.intensity == "high"
+    assert spec.visual_budget.max_decorative_elements == 6
+    assert spec.visual_budget.max_colors == 6
+
+
+def test_design_spec_low_intensity_profile() -> None:
+    from render.design_spec import compile_worksheet_design_spec
+
+    theme = ThemeConfig(name="Roblox Obby")
+    profile = LearnerProfile(
+        name="Ian",
+        grade_level="1",
+        preferences=Preferences(
+            favorite_themes=["roblox_obby"],
+            visual_intensity="low",
+        ),
+    )
+
+    spec = compile_worksheet_design_spec(_adapted(), theme, profile, render_mode="hybrid_shell")
+
+    assert spec.visual_budget.intensity == "low"
+    assert spec.visual_budget.max_decorative_elements == 1
+    assert spec.visual_budget.max_colors == 3
+
+
+def test_design_spec_dial_unset_matches_legacy() -> None:
+    # Dial off (no visual_intensity) → exact legacy theme-derived budget.
+    from render.design_spec import compile_worksheet_design_spec
+
+    theme = ThemeConfig(name="Geometry Dash Calm")  # calm, max_per_page=2
+    profile = LearnerProfile(
+        name="Ian",
+        grade_level="1",
+        preferences=Preferences(favorite_themes=["roblox_obby"], visual_style="pixel_art"),
+    )
+
+    spec = compile_worksheet_design_spec(_adapted(), theme, profile, render_mode="image_prompt")
+
+    assert spec.visual_budget.style == "calm"
+    assert spec.visual_budget.intensity == "low"
+    assert spec.visual_budget.max_decorative_elements == 2
+    assert spec.visual_budget.max_colors == 4
+
+
+def test_visual_budget_rejects_over_intensity_budget() -> None:
+    from render.design_spec import VisualBudget
+
+    # A calm-tier (medium) budget may not pack a high-tier decoration count.
+    with pytest.raises(ValidationError):
+        VisualBudget(
+            style="calm",
+            intensity="medium",
+            max_decorative_elements=6,
+            max_colors=4,
+        )
+    with pytest.raises(ValidationError):
+        VisualBudget(
+            style="calm",
+            intensity="low",
+            max_decorative_elements=2,
+            max_colors=6,
+        )
+
+
+def test_visual_budget_high_allows_full_budget() -> None:
+    from render.design_spec import VisualBudget
+
+    budget = VisualBudget(
+        style="energetic",
+        intensity="high",
+        max_decorative_elements=6,
+        max_colors=6,
+    )
+    assert budget.max_decorative_elements == 6
+    assert budget.max_colors == 6
+
+
 def test_design_spec_rejects_non_print_page_size() -> None:
     from render.design_spec import PageSpec
 

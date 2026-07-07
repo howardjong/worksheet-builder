@@ -83,6 +83,35 @@ COLOR_SYSTEM: dict[str, str] = {
 }
 
 
+class IntensityVisuals(BaseModel):
+    """Decoration/visual budget for one profile-driven visual-intensity level."""
+
+    max_decorative_elements: int
+    max_colors: int
+    art_scale: float
+    game_chrome: str  # "none" | "basic" | "full"
+
+
+# Profile-driven visual intensity dial. Structural ADHD rules (chunking, worked
+# examples, micro-goals) are universal; only decoration/visual intensity varies
+# per student. "medium" is bit-identical to the legacy hardcodes (2 decorations /
+# 4 colors), so a dial-off profile behaves exactly as before. "low" calms the page
+# further; "high" unlocks the busy, game-styled look the owner's validated gold
+# standard uses. White-behind-text, WCAG AA, margins, and anti-patterns
+# (no leaderboards/streaks/loot) hold at every level.
+INTENSITY_VISUALS: dict[str, IntensityVisuals] = {
+    "low": IntensityVisuals(
+        max_decorative_elements=1, max_colors=3, art_scale=0.75, game_chrome="none"
+    ),
+    "medium": IntensityVisuals(
+        max_decorative_elements=2, max_colors=4, art_scale=1.0, game_chrome="basic"
+    ),
+    "high": IntensityVisuals(
+        max_decorative_elements=6, max_colors=6, art_scale=1.3, game_chrome="full"
+    ),
+}
+
+
 class AccommodationRules(BaseModel):
     """Derived accommodation rules for a specific learner + grade combination."""
 
@@ -95,6 +124,7 @@ class AccommodationRules(BaseModel):
     allowed_response_formats: list[str]
     font_size_min: int
     max_decorative_elements: int = 2
+    visual_intensity: str = "medium"
     color_system: dict[str, str]
     time_estimate_minutes: int
     max_sections_per_worksheet: int = 4
@@ -129,6 +159,13 @@ def build_rules(profile: LearnerProfile) -> AccommodationRules:
     # Section cap
     max_sections = MAX_SECTIONS_PER_WORKSHEET.get(grade, 4)
 
+    # Visual intensity dial (profile preference). Unset → "medium", which is
+    # bit-identical to the legacy hardcodes, so dial-off profiles are unchanged.
+    visual_intensity = "medium"
+    if profile.preferences is not None and profile.preferences.visual_intensity is not None:
+        visual_intensity = profile.preferences.visual_intensity
+    intensity_visuals = INTENSITY_VISUALS[visual_intensity]
+
     return AccommodationRules(
         max_items_per_chunk=max_items,
         instruction_max_words=grade_limits["max_words"],
@@ -138,7 +175,8 @@ def build_rules(profile: LearnerProfile) -> AccommodationRules:
         require_self_check=accom.show_self_check_boxes,
         allowed_response_formats=allowed_formats,
         font_size_min=font_min,
-        max_decorative_elements=2,
+        max_decorative_elements=intensity_visuals.max_decorative_elements,
+        visual_intensity=visual_intensity,
         color_system=dict(COLOR_SYSTEM),
         time_estimate_minutes=time_est,
         max_sections_per_worksheet=max_sections,

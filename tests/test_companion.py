@@ -74,6 +74,32 @@ class TestProfile:
         assert loaded.progress.worksheets_completed == 3
         path.unlink()
 
+    def test_visual_intensity_yaml_round_trip(self) -> None:
+        profile = LearnerProfile(
+            name="Test",
+            grade_level="1",
+            preferences=Preferences(favorite_themes=["roblox_obby"], visual_intensity="high"),
+        )
+        with tempfile.NamedTemporaryFile(suffix=".yaml", delete=False) as f:
+            path = Path(f.name)
+
+        save_profile(profile, path)
+        loaded = load_profile(path)
+        assert loaded.preferences is not None
+        assert loaded.preferences.visual_intensity == "high"
+        path.unlink()
+
+    def test_visual_intensity_defaults_none(self) -> None:
+        # Dial unset by default → exact legacy behavior downstream.
+        assert Preferences().visual_intensity is None
+
+    def test_visual_intensity_rejects_invalid_value(self) -> None:
+        import pytest
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            Preferences(visual_intensity="chaotic")
+
     def test_update_accommodations(self) -> None:
         profile = LearnerProfile(name="Test", grade_level="1")
         updated = update_accommodations(profile, chunking_level="small", font_size_override=18)

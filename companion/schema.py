@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 
 class Accommodations(BaseModel):
@@ -73,6 +73,17 @@ class Preferences(BaseModel):
     favorite_themes: list[str] = Field(default_factory=lambda: ["space"])
     color_preferences: list[str] = Field(default_factory=list)
     visual_style: str = "cute_cartoon"  # "cute_cartoon" | "comic_book" | "pixel_art"
+    # Per-student decoration/visual intensity dial. None = exact legacy behavior
+    # (theme-derived budget); "low" | "medium" | "high" select the INTENSITY_VISUALS
+    # table in adapt/rules.py. "medium" is bit-identical to the legacy hardcodes.
+    visual_intensity: str | None = None
+
+    @field_validator("visual_intensity")
+    @classmethod
+    def _validate_visual_intensity(cls, value: str | None) -> str | None:
+        if value is not None and value not in {"low", "medium", "high"}:
+            raise ValueError('visual_intensity must be one of None, "low", "medium", "high"')
+        return value
 
 
 class CompletionRecord(BaseModel):

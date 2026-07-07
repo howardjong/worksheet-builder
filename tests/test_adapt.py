@@ -8,11 +8,18 @@ from pathlib import Path
 from adapt.engine import adapt_activity, adapt_lesson
 from adapt.rules import (
     CHUNKING_RULES,
+    INTENSITY_VISUALS,
     build_rules,
     get_substitute_format,
 )
 from adapt.schema import AdaptedActivityModel
-from companion.schema import Accommodations, LearnerProfile, load_profile, save_profile
+from companion.schema import (
+    Accommodations,
+    LearnerProfile,
+    Preferences,
+    load_profile,
+    save_profile,
+)
 from skill.schema import LiteracySkillModel, SourceItem
 from validate.content_coverage import validate_content_coverage_for_package
 
@@ -218,6 +225,48 @@ class TestAccommodationRules:
         assert "rewards" in rules.color_system
         assert rules.max_decorative_elements == 2
 
+    def test_intensity_visuals_table_medium_matches_legacy_hardcodes(self) -> None:
+        # medium must be bit-identical to the pre-dial hardcodes.
+        medium = INTENSITY_VISUALS["medium"]
+        assert medium.max_decorative_elements == 2
+        assert medium.max_colors == 4
+        assert medium.art_scale == 1.0
+        assert medium.game_chrome == "basic"
+        low = INTENSITY_VISUALS["low"]
+        assert (low.max_decorative_elements, low.max_colors) == (1, 3)
+        assert low.art_scale == 0.75
+        assert low.game_chrome == "none"
+        high = INTENSITY_VISUALS["high"]
+        assert (high.max_decorative_elements, high.max_colors) == (6, 6)
+        assert high.art_scale == 1.3
+        assert high.game_chrome == "full"
+
+    def test_visual_intensity_dial_unset_is_medium(self) -> None:
+        # No preferences → medium == exact legacy behavior.
+        rules = build_rules(_grade_1_profile())
+        assert rules.visual_intensity == "medium"
+        assert rules.max_decorative_elements == 2
+
+    def test_visual_intensity_high_dial(self) -> None:
+        profile = LearnerProfile(
+            name="High dial",
+            grade_level="1",
+            preferences=Preferences(visual_intensity="high"),
+        )
+        rules = build_rules(profile)
+        assert rules.visual_intensity == "high"
+        assert rules.max_decorative_elements == 6
+
+    def test_visual_intensity_low_dial(self) -> None:
+        profile = LearnerProfile(
+            name="Low dial",
+            grade_level="1",
+            preferences=Preferences(visual_intensity="low"),
+        )
+        rules = build_rules(profile)
+        assert rules.visual_intensity == "low"
+        assert rules.max_decorative_elements == 1
+
 
 # --- Adaptation Engine Tests ---
 
@@ -380,15 +429,13 @@ def _ufli_59_skill() -> LiteracySkillModel:
             ),
             SourceItem(
                 item_type="sentence",
-                content=(
-                    "1. The grade on the slide was quite nice. " "2. These froze by the chase."
-                ),
+                content=("1. The grade on the slide was quite nice. 2. These froze by the chase."),
                 source_region_index=3,
             ),
             SourceItem(
                 item_type="passage",
                 content=(
-                    "A Cake for Tess. Tess had a cake. " "The cake was huge! She made it with love."
+                    "A Cake for Tess. Tess had a cake. The cake was huge! She made it with love."
                 ),
                 source_region_index=4,
             ),
@@ -443,9 +490,9 @@ class TestAdaptLesson:
                 for item in chunk.items:
                     all_content.append(item.content)
         # The passage about Tess should be present
-        assert any(
-            "Tess" in c or "cake" in c.lower() for c in all_content
-        ), "Decodable passage 'A Cake for Tess' was dropped"
+        assert any("Tess" in c or "cake" in c.lower() for c in all_content), (
+            "Decodable passage 'A Cake for Tess' was dropped"
+        )
 
     def test_brain_break_prompts(self) -> None:
         """Non-last worksheets should have break prompts."""

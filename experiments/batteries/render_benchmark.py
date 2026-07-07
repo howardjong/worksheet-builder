@@ -6,7 +6,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
-from render.design_spec import WorksheetDesignSpec
+from render.design_spec import WorksheetDesignSpec, intensity_budget_ceiling
 from render.strategies import RenderResult
 
 
@@ -40,9 +40,10 @@ def evaluate_renderer_artifacts(
             f"Missing answer zone affordance for item {item_id}" for item_id in missing_zone_items
         )
 
+    max_decorations, max_colors = intensity_budget_ceiling(design_spec.visual_budget.intensity)
     visual_budget_respected = (
-        design_spec.visual_budget.max_decorative_elements <= 2
-        and design_spec.visual_budget.max_colors <= 4
+        design_spec.visual_budget.max_decorative_elements <= max_decorations
+        and design_spec.visual_budget.max_colors <= max_colors
     )
     if not visual_budget_respected:
         blocking_issues.append("ADHD visual budget exceeded")

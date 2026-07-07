@@ -13,7 +13,7 @@ from adapt.schema import (
     ScaffoldConfig,
     Step,
 )
-from companion.schema import Accommodations, LearnerProfile
+from companion.schema import Accommodations, LearnerProfile, Preferences
 from skill.schema import LiteracySkillModel, SourceItem
 from validate.adhd_compliance import validate_adhd_compliance
 from validate.ai_review import _apply_suggestions, review_adapted_worksheet
@@ -263,6 +263,33 @@ class TestAdhdCompliance:
         result = validate_adhd_compliance(adapted)
         violations = [v for v in result.violations if v.check == "decoration_budget"]
         assert len(violations) == 1
+
+    def test_decoration_budget_uses_high_intensity_rules(self) -> None:
+        # Four decoration zones exceed the default limit of 2 but are within a
+        # high-intensity profile's budget of 6, so supplying its rules clears
+        # the violation (mirrors test_chunk_size_uses_supplied_small_profile_rules).
+        adapted = _make_adapted(
+            decoration_zones=[
+                (0.0, 0.0, 0.1, 0.1),
+                (0.2, 0.0, 0.3, 0.1),
+                (0.5, 0.0, 0.6, 0.1),
+                (0.9, 0.0, 1.0, 0.1),
+            ]
+        )
+        high_profile = LearnerProfile(
+            name="High dial",
+            grade_level="1",
+            preferences=Preferences(visual_intensity="high"),
+        )
+        high_rules = build_rules(high_profile)
+        assert high_rules.max_decorative_elements == 6
+
+        with_rules = validate_adhd_compliance(adapted, rules=high_rules)
+        assert not [v for v in with_rules.violations if v.check == "decoration_budget"]
+
+        # Without rules the legacy limit of 2 still flags the same worksheet.
+        without_rules = validate_adhd_compliance(adapted)
+        assert [v for v in without_rules.violations if v.check == "decoration_budget"]
 
     def test_missing_self_assessment_warns(self) -> None:
         adapted = _make_adapted(has_self_assessment=False)
