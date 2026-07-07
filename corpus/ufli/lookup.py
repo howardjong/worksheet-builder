@@ -3,6 +3,11 @@
 Reads data/ufli/normalized.jsonl and returns structured lesson content
 (decodable passage, Roll and Read word list, etc.) by lesson number.
 No API calls — pure file lookup with in-memory caching for batch mode.
+
+The real corpus (data/ufli/normalized.jsonl) is gitignored. When it is absent
+— fresh clones, CI — lookups fall back to a small committed fixture corpus
+(corpus/ufli/fixtures/normalized_fixture.jsonl) so tests and demos still work.
+The real file always wins when present.
 """
 
 from __future__ import annotations
@@ -15,9 +20,11 @@ from pathlib import Path
 logger = logging.getLogger(__name__)
 
 _DEFAULT_DATA_DIR = Path(__file__).resolve().parent.parent.parent / "data" / "ufli"
+_FIXTURE_PATH = Path(__file__).resolve().parent / "fixtures" / "normalized_fixture.jsonl"
 
-# Module-level cache: populated on first lookup, reused across calls
-_corpus_cache: dict[str, _CorpusRecord] | None = None
+# Cache keyed by the resolved corpus path so a fallback to the fixture and a
+# later real-corpus lookup don't collide. Reset with reset_lookup_cache().
+_corpus_caches: dict[str, dict[str, _CorpusRecord]] = {}
 
 
 @dataclass(frozen=True)
@@ -42,6 +49,25 @@ class _CorpusRecord:
     home_practice_text: str
 
 
+def reset_lookup_cache() -> None:
+    """Clear the corpus cache. Tests that swap the corpus file must call this."""
+    _corpus_caches.clear()
+
+
+def _resolve_corpus_path(data_dir: str | Path | None) -> Path:
+    """Pick the corpus file: an explicit data_dir, else the real file, else fixture.
+
+    The real corpus always wins when present; the committed fixture is only used
+    when the real normalized.jsonl is absent (fresh clones, CI).
+    """
+    if data_dir is not None:
+        return Path(data_dir) / "normalized.jsonl"
+    real_path = _DEFAULT_DATA_DIR / "normalized.jsonl"
+    if real_path.exists():
+        return real_path
+    return _FIXTURE_PATH
+
+
 def lookup_lesson(
     lesson_number: int,
     data_dir: str | Path | None = None,
@@ -50,13 +76,15 @@ def lookup_lesson(
 
     Returns None if the lesson is not found or the corpus file is missing.
     """
-    global _corpus_cache
+    corpus_path = _resolve_corpus_path(data_dir)
+    cache_key = str(corpus_path.resolve())
 
-    if _corpus_cache is None:
-        _corpus_cache = _load_corpus(data_dir or _DEFAULT_DATA_DIR)
+    cache = _corpus_caches.get(cache_key)
+    if cache is None:
+        cache = _load_corpus(corpus_path)
+        _corpus_caches[cache_key] = cache
 
-    key = str(lesson_number)
-    record = _corpus_cache.get(key)
+    record = cache.get(str(lesson_number))
     if record is None:
         return None
 
@@ -69,15 +97,15 @@ def lookup_lesson(
     )
 
 
-def _load_corpus(data_dir: str | Path) -> dict[str, _CorpusRecord]:
-    """Parse normalized.jsonl into a lesson_id-keyed dict."""
-    corpus_path = Path(data_dir) / "normalized.jsonl"
-    if not corpus_path.exists():
-        logger.warning("Corpus file not found: %s", corpus_path)
+def _load_corpus(corpus_path: str | Path) -> dict[str, _CorpusRecord]:
+    """Parse a normalized.jsonl file into a lesson_id-keyed dict."""
+    path = Path(corpus_path)
+    if not path.exists():
+        logger.warning("Corpus file not found: %s", path)
         return {}
 
     records: dict[str, _CorpusRecord] = {}
-    with open(corpus_path, encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         for line_num, line in enumerate(f, 1):
             line = line.strip()
             if not line:
@@ -85,7 +113,7 @@ def _load_corpus(data_dir: str | Path) -> dict[str, _CorpusRecord]:
             try:
                 data = json.loads(line)
             except json.JSONDecodeError:
-                logger.warning("Skipping malformed line %d in %s", line_num, corpus_path)
+                logger.warning("Skipping malformed line %d in %s", line_num, path)
                 continue
 
             lesson_id = str(data.get("lesson_id", ""))
@@ -100,5 +128,5 @@ def _load_corpus(data_dir: str | Path) -> dict[str, _CorpusRecord]:
                 home_practice_text=str(data.get("home_practice_text", "")),
             )
 
-    logger.info("Loaded %d lessons from corpus", len(records))
+    logger.info("Loaded %d lessons from corpus %s", len(records), path)
     return records

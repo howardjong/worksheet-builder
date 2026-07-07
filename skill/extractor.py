@@ -751,3 +751,13 @@ def _compute_confidence(region_confidences: list[float], has_concept: bool) -> f
 
     # Penalize if no concept label found
     return avg * 0.85
+
+
+# Public aliases — the lesson-number entry point (skill/lesson_loader.py) reuses
+# these word-work helpers to build a skill model straight from the corpus without
+# OCR. Private names are kept so existing call sites are undisturbed.
+grade_from_lesson = _grade_from_lesson
+clean_corpus_passage = _clean_corpus_passage
+build_word_work_objectives = _build_word_work_objectives
+normalize_concept = _normalize_concept
+sanitize_concept_text = _sanitize_concept_text

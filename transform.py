@@ -36,6 +36,7 @@ from render.design_spec import RenderMode, WorksheetDesignSpec, compile_workshee
 from render.pdf import render_cover_page
 from render.strategies import RenderContext, RenderResult, RenderStrategy, resolve_render_strategy
 from skill.extractor import extract_skill
+from skill.schema import LiteracySkillModel
 from theme.engine import apply_theme, load_theme
 from validate.adhd_compliance import validate_adhd_compliance, validate_lesson_time_budget
 from validate.ai_review import review_adapted_worksheet
@@ -75,7 +76,14 @@ class RunArtifacts(BaseModel):
 
 
 @click.command()
-@click.option("--input", "input_path", required=True, help="Path to worksheet photo/scan")
+@click.option("--input", "input_path", default=None, help="Path to worksheet photo/scan")
+@click.option(
+    "--lesson",
+    "lesson_number",
+    type=int,
+    default=None,
+    help="UFLI lesson number — build a worksheet from the corpus, no photo needed",
+)
 @click.option("--profile", "profile_path", required=True, help="Path to learner profile YAML")
 @click.option("--theme", "theme_id", default="space", help="Theme name")
 @click.option("--output", "output_dir", default="./output", help="Output directory")
@@ -90,27 +98,43 @@ class RunArtifacts(BaseModel):
     ),
 )
 def transform(
-    input_path: str,
+    input_path: str | None,
+    lesson_number: int | None,
     profile_path: str,
     theme_id: str,
     output_dir: str,
     render_mode: str,
 ) -> None:
-    """Transform a worksheet photo into an ADHD-adapted, themed, print-ready PDF."""
+    """Transform a worksheet photo (or UFLI lesson) into an ADHD-adapted PDF."""
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+
+    # Exactly one entry point: a photo (--input) or a lesson number (--lesson).
+    if (input_path is None) == (lesson_number is None):
+        raise click.UsageError("Provide exactly one of --input or --lesson.")
 
     output = Path(output_dir)
     artifacts = output / "artifacts"
     artifacts.mkdir(parents=True, exist_ok=True)
 
-    run_pipeline(
-        input_path=input_path,
-        profile_path=profile_path,
-        theme_id=theme_id,
-        output_dir=str(output),
-        artifacts_dir=str(artifacts),
-        render_mode=render_mode,
-    )
+    if lesson_number is not None:
+        run_lesson_pipeline(
+            lesson_number=lesson_number,
+            profile_path=profile_path,
+            theme_id=theme_id,
+            output_dir=str(output),
+            artifacts_dir=str(artifacts),
+            render_mode=render_mode,
+        )
+    else:
+        assert input_path is not None  # guaranteed by the exactly-one check above
+        run_pipeline(
+            input_path=input_path,
+            profile_path=profile_path,
+            theme_id=theme_id,
+            output_dir=str(output),
+            artifacts_dir=str(artifacts),
+            render_mode=render_mode,
+        )
 
 
 def rag_available() -> bool:
@@ -200,8 +224,6 @@ def run_pipeline_collect_artifacts(
     artifacts = Path(artifacts_dir)
     output.mkdir(parents=True, exist_ok=True)
     artifacts.mkdir(parents=True, exist_ok=True)
-    selected_strategy = resolve_render_strategy(render_mode)
-    selected_render_mode = cast(RenderMode, selected_strategy.renderer_id)
 
     # Stage 1: Preprocess
     logger.info("Stage 1: Preprocessing image...")
@@ -234,6 +256,48 @@ def run_pipeline_collect_artifacts(
     skill_json.write_text(skill_model.model_dump_json(indent=2))
     logger.info("  Domain: %s, Skill: %s", skill_model.domain, skill_model.specific_skill)
 
+    return _run_from_skill_model(
+        skill_model,
+        profile_path=profile_path,
+        theme_id=theme_id,
+        output=output,
+        artifacts=artifacts,
+        source_image_path=preprocessed_path,
+        source_image_hash=master.image_hash,
+        extracted_text=source_model.raw_text,
+        template_type=source_model.template_type,
+        ocr_engine=source_model.ocr_engine,
+        region_count=len(source_model.regions),
+        index_results=index_results,
+        render_mode=render_mode,
+    )
+
+
+def _run_from_skill_model(
+    skill_model: LiteracySkillModel,
+    *,
+    profile_path: str,
+    theme_id: str,
+    output: Path,
+    artifacts: Path,
+    source_image_path: str,
+    source_image_hash: str,
+    extracted_text: str,
+    template_type: str,
+    ocr_engine: str,
+    region_count: int,
+    index_results: bool,
+    render_mode: str | None = None,
+) -> RunArtifacts:
+    """Adapt → theme → render → validate from a ready skill model.
+
+    Shared by the photo pipeline and the ``--lesson`` entry point. The caller has
+    already produced the skill model (OCR extraction or corpus lookup) plus the
+    source provenance fields; this runs everything downstream of skill extraction.
+    """
+    selected_strategy = resolve_render_strategy(render_mode)
+    selected_render_mode = cast(RenderMode, selected_strategy.renderer_id)
+
     # Stage 5: ADHD adaptation
     logger.info("Stage 5: Adapting for ADHD...")
     profile = load_profile(profile_path)
@@ -261,7 +325,7 @@ def run_pipeline_collect_artifacts(
             skill_desc = f"{skill_model.domain}: {skill_model.specific_skill}"
             rag_context = retrieve_context(
                 skill_description=skill_desc,
-                extracted_text=source_model.raw_text,
+                extracted_text=extracted_text,
                 grade_level=skill_model.grade_level,
             )
             rag_prior_adaptations, rag_debug = _select_rag_adaptation_context(rag_context)
@@ -292,12 +356,12 @@ def run_pipeline_collect_artifacts(
             profile=profile,
             theme=theme,
             theme_id=theme_id,
-            source_image_path=preprocessed_path,
-            source_image_hash=master.image_hash,
-            extracted_text=source_model.raw_text,
-            template_type=source_model.template_type,
-            ocr_engine=source_model.ocr_engine,
-            region_count=len(source_model.regions),
+            source_image_path=source_image_path,
+            source_image_hash=source_image_hash,
+            extracted_text=extracted_text,
+            template_type=template_type,
+            ocr_engine=ocr_engine,
+            region_count=region_count,
             output=output,
             artifacts=artifacts,
             rag_prior_adaptations=rag_prior_adaptations,
@@ -310,12 +374,12 @@ def run_pipeline_collect_artifacts(
             profile=profile,
             theme=theme,
             theme_id=theme_id,
-            source_image_path=preprocessed_path,
-            source_image_hash=master.image_hash,
-            extracted_text=source_model.raw_text,
-            template_type=source_model.template_type,
-            ocr_engine=source_model.ocr_engine,
-            region_count=len(source_model.regions),
+            source_image_path=source_image_path,
+            source_image_hash=source_image_hash,
+            extracted_text=extracted_text,
+            template_type=template_type,
+            ocr_engine=ocr_engine,
+            region_count=region_count,
             output=output,
             artifacts=artifacts,
             rag_prior_adaptations=rag_prior_adaptations,
@@ -350,6 +414,79 @@ def run_pipeline_collect_artifacts(
             logger.warning("  RAG indexing skipped: %s", exc)
 
     return run_artifacts
+
+
+def run_lesson_pipeline(
+    lesson_number: int,
+    profile_path: str,
+    theme_id: str,
+    output_dir: str,
+    artifacts_dir: str,
+    render_mode: str | None = None,
+) -> str:
+    """Run the lesson-number pipeline. Returns the path to the output PDF."""
+    run_artifacts = run_lesson_pipeline_collect_artifacts(
+        lesson_number=lesson_number,
+        profile_path=profile_path,
+        theme_id=theme_id,
+        output_dir=output_dir,
+        artifacts_dir=artifacts_dir,
+        index_results=True,
+        render_mode=render_mode,
+    )
+    return run_artifacts.pdf_paths[0] if run_artifacts.pdf_paths else ""
+
+
+def run_lesson_pipeline_collect_artifacts(
+    lesson_number: int,
+    profile_path: str,
+    theme_id: str,
+    output_dir: str,
+    artifacts_dir: str,
+    *,
+    index_results: bool,
+    render_mode: str | None = None,
+) -> RunArtifacts:
+    """Build a skill model from a UFLI lesson number and run the rest of the pipeline.
+
+    Skips capture/OCR entirely (no photo). Idempotent: the synthetic source hash
+    is a pure function of the lesson number, so repeated runs land on the same
+    ``lesson_<hash>.pdf``.
+    """
+    from skill.lesson_loader import skill_model_from_lesson
+
+    output = Path(output_dir)
+    artifacts = Path(artifacts_dir)
+    output.mkdir(parents=True, exist_ok=True)
+    artifacts.mkdir(parents=True, exist_ok=True)
+
+    logger.info(
+        "Lesson mode: building skill model from UFLI lesson %s (no capture/OCR)",
+        lesson_number,
+    )
+    skill_model = skill_model_from_lesson(lesson_number)
+    skill_json = artifacts / "skill_model.json"
+    skill_json.write_text(skill_model.model_dump_json(indent=2))
+    logger.info("  Domain: %s, Skill: %s", skill_model.domain, skill_model.specific_skill)
+
+    # Deterministic source hash for the content-hash chain (transform.py content_hash).
+    source_image_hash = hashlib.sha256(f"ufli_lesson:{lesson_number}".encode()).hexdigest()[:16]
+
+    return _run_from_skill_model(
+        skill_model,
+        profile_path=profile_path,
+        theme_id=theme_id,
+        output=output,
+        artifacts=artifacts,
+        source_image_path=f"ufli_lesson:{lesson_number}",
+        source_image_hash=source_image_hash,
+        extracted_text="",
+        template_type=skill_model.template_type,
+        ocr_engine="none",
+        region_count=0,
+        index_results=index_results,
+        render_mode=render_mode,
+    )
 
 
 def _run_single_worksheet_pipeline(
