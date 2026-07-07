@@ -492,7 +492,28 @@ def run_lesson_pipeline_collect_artifacts(
     # plan_lesson_llm() is a no-op without it, and silently falling to the
     # deterministic engine reproduces the 10-worksheet overflow this default
     # exists to prevent.
-    lesson_mode_defaults = {"WORKSHEET_PLANNER_V2": "1", "WORKSHEET_LLM_ADAPT": "1"}
+    #
+    # WORKSHEET_OBJECTIVE_COVERAGE routes the planner to the objective-
+    # sufficiency path (owner policy 2026-07-07: meeting the lesson's learning
+    # objectives within the ADHD time budget outranks exhaustive source
+    # coverage). The default "ALL source words, nothing dropped" judge rubric
+    # is arithmetically unsatisfiable for a full corpus lesson under the ADHD
+    # section/item limits — observed live on lesson 74: two structurally strong
+    # 3-worksheet plans (0.64/0.69) rejected on coverage, then the deterministic
+    # fallback shipped a 10-worksheet package the same judge scored 0.45. The
+    # objective rubric samples large word pools to thresholds instead of
+    # requiring every word. That rubric split is intentional: a photographed
+    # single page CAN be fully covered, so the photo path keeps the strict
+    # rubric and its own defaults.
+    lesson_mode_defaults = {
+        "WORKSHEET_PLANNER_V2": "1",
+        "WORKSHEET_LLM_ADAPT": "1",
+        "WORKSHEET_OBJECTIVE_COVERAGE": "1",
+    }
+    if os.environ.get("WORKSHEET_PLANNER_SLOT_CONTRACT"):
+        # Mutually exclusive coverage systems (plan_lesson_llm raises when both
+        # are enabled) — an explicit slot-contract opt-in wins over our default.
+        del lesson_mode_defaults["WORKSHEET_OBJECTIVE_COVERAGE"]
     applied: list[str] = []
     for key, value in lesson_mode_defaults.items():
         if key not in os.environ:

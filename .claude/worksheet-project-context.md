@@ -138,6 +138,55 @@ breaks the "never trimmed" invariant in adapt/section_cap.py).
 
 **Next:** unchanged from Session 58 — owner re-runs `--lesson 74`, then Goal 2.
 
+### Session 58c — 2026-07-07 (owner re-ran UAT: judge rubric was the real bottleneck → lesson mode now defaults objective-sufficiency coverage)
+
+**Status:** Owner re-ran `--lesson 74` after Session 58b. The planner-v2 default WORKED
+mechanically (2 plan + 2 judge calls, then fallback; page cache absorbed 8/10 image
+generations) but the OUTCOME was unchanged: 10 worksheets, 46 minutes. Root cause from the
+live trace: **the default judge rubric rejected two structurally strong 3-worksheet plans
+(0.64 → 0.69; concept 0.88, flow 0.80-0.82, adhd 0.90-0.92) purely on coverage** ("ALL source
+words... Nothing should be dropped", llm_judge.py criterion 2) — which is arithmetically
+unsatisfiable for a 148-lesson-corpus lesson under the ADHD section/item caps — and the
+deterministic fallback then shipped a package the same judge scored **0.45** (garbled Story
+Time text, invalid match items). The system discarded a 0.69 package to ship a 0.45 one.
+Attempt 2 missed approval by 0.01 overall with coverage 0.52 barely above the 0.5 criterion
+floor.
+
+**Fix (commit this session):** lesson mode now also defaults `WORKSHEET_OBJECTIVE_COVERAGE=1`
+(scoped save/restore like the other two; explicit user value always wins; suppressed when the
+mutually-exclusive `WORKSHEET_PLANNER_SLOT_CONTRACT` is explicitly set — plan_lesson_llm
+raises if both are enabled). This routes lesson-mode planning to the **already-built,
+already-tested objective-sufficiency path** (Sessions 50+, tri-state judge, deterministic
+ledger/gates/coverage): one planning call, no regen; prompts and judge use sufficiency
+semantics ("sample samplable pools to the threshold, not exhaustively — you need not include
+all of them"), which is the researched implementation of the owner's 2026-07-07 policy
+(objectives within the time budget > exhaustive coverage). The strict "ALL" rubric was
+deliberately KEPT for the photo path (a single photographed page can be fully covered) — do
+not "fix" it there.
+
+**This is the objective path's FIRST live default-on run** (it was flag-off pending live
+validation; UFLI-first auto-approval scope per Session 50). Watch the next owner run for its
+distinct outcomes in the log: `objective_approved` (ships, skips ai_review) vs
+`objective_rejected_gate` / `objective_rejected_coverage` / `objective_rejected` /
+`objective_abstain` (each → deterministic fallback → the 10-sheet warning fires). If it
+abstains/rejects on real lesson 74, read `artifacts/planner_attempts.json` for the aggregated
+verdict before changing anything.
+
+**Also learned from the trace (answering owner questions):**
+- "Why load the whole corpus for 1 lesson?" — `corpus/ufli/lookup.py` reads the single
+  normalized.jsonl into an in-memory dict once (module cache, <1s, by design). Run latency is
+  LLM/image calls, not corpus I/O.
+- Grade-mismatch warnings (`Adapted grade '2' doesn't match target grade '1'`) are the
+  owner's `profiles/ian.yaml` saying grade_level "1" while lesson 74 maps to grade 2
+  (`_grade_from_lesson`). Owner should set the profile grade (or accept warn-only noise).
+- Judge/planner text model is swappable without code via `WORKSHEET_OPENAI_TEXT_MODEL`
+  (Session 58b); no model swap made yet — the rubric, not the model, was the bottleneck.
+
+**Still open (unchanged):** the deterministic fallback's Story Time garble (raw chain-script
+text as student items) remains the worst failure mode when fallbacks engage; Goal 2
+(hybrid_shell) still owed for chrome/typography consistency; owner decision still pending on
+trim-vs-more-sheets if even objective-approved packages exceed the 20-minute budget.
+
 ### Session 57 — 2026-07-06 (Goal 1: intensity dial + lesson-number entry point)
 
 **Status:** Shipped **Phases 0 + A + B** of `plans/2026-07-07-intensity-dial-hybrid-renderer-plan.md`

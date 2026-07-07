@@ -95,11 +95,17 @@ def test_lesson_mode_defaults_planner_v2_and_restores_env(
     """
     monkeypatch.delenv("WORKSHEET_PLANNER_V2", raising=False)
     monkeypatch.delenv("WORKSHEET_LLM_ADAPT", raising=False)
-    seen: list[tuple[str | None, str | None]] = []
+    monkeypatch.delenv("WORKSHEET_OBJECTIVE_COVERAGE", raising=False)
+    monkeypatch.delenv("WORKSHEET_PLANNER_SLOT_CONTRACT", raising=False)
+    seen: list[tuple[str | None, str | None, str | None]] = []
 
     def fake_run_from_skill_model(skill_model: Any, **kwargs: Any) -> RunArtifacts:
         seen.append(
-            (os.environ.get("WORKSHEET_PLANNER_V2"), os.environ.get("WORKSHEET_LLM_ADAPT"))
+            (
+                os.environ.get("WORKSHEET_PLANNER_V2"),
+                os.environ.get("WORKSHEET_LLM_ADAPT"),
+                os.environ.get("WORKSHEET_OBJECTIVE_COVERAGE"),
+            )
         )
         return RunArtifacts(
             source_image_path=str(kwargs["source_image_path"]),
@@ -129,9 +135,10 @@ def test_lesson_mode_defaults_planner_v2_and_restores_env(
         index_results=False,
     )
 
-    assert seen == [("1", "1")]  # both defaulted on for the duration of the call
+    assert seen == [("1", "1", "1")]  # all defaulted on for the duration of the call
     assert "WORKSHEET_PLANNER_V2" not in os.environ  # restored afterward
     assert "WORKSHEET_LLM_ADAPT" not in os.environ  # restored afterward
+    assert "WORKSHEET_OBJECTIVE_COVERAGE" not in os.environ  # restored afterward
 
 
 def test_lesson_mode_respects_explicit_planner_v2_override(
@@ -177,6 +184,56 @@ def test_lesson_mode_respects_explicit_planner_v2_override(
     assert seen == [("0", "0")]  # explicit overrides are never clobbered
     assert os.environ["WORKSHEET_PLANNER_V2"] == "0"  # left exactly as the caller set it
     assert os.environ["WORKSHEET_LLM_ADAPT"] == "0"
+
+
+def test_lesson_mode_skips_objective_default_when_slot_contract_enabled(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An explicit slot-contract opt-in suppresses the objective-coverage default.
+
+    The two coverage systems are mutually exclusive (plan_lesson_llm raises when
+    both are set), so lesson mode must never stack its objective default on top
+    of a user's slot-contract choice.
+    """
+    monkeypatch.delenv("WORKSHEET_PLANNER_V2", raising=False)
+    monkeypatch.delenv("WORKSHEET_LLM_ADAPT", raising=False)
+    monkeypatch.delenv("WORKSHEET_OBJECTIVE_COVERAGE", raising=False)
+    monkeypatch.setenv("WORKSHEET_PLANNER_SLOT_CONTRACT", "1")
+    seen: list[str | None] = []
+
+    def fake_run_from_skill_model(skill_model: Any, **kwargs: Any) -> RunArtifacts:
+        seen.append(os.environ.get("WORKSHEET_OBJECTIVE_COVERAGE"))
+        return RunArtifacts(
+            source_image_path=str(kwargs["source_image_path"]),
+            source_image_hash=str(kwargs["source_image_hash"]),
+            extracted_text=str(kwargs["extracted_text"]),
+            template_type=str(kwargs["template_type"]),
+            ocr_engine=str(kwargs["ocr_engine"]),
+            region_count=int(kwargs["region_count"]),
+            skill_domain=skill_model.domain,
+            skill_name=skill_model.specific_skill,
+            grade_level=skill_model.grade_level,
+            theme_id="roblox_obby",
+            worksheet_mode="multi",
+            adapted_summaries=[],
+            pdf_paths=[],
+            validation_results={"all_validators_passed": True},
+        )
+
+    monkeypatch.setattr(transform_module, "_run_from_skill_model", fake_run_from_skill_model)
+
+    run_lesson_pipeline_collect_artifacts(
+        74,
+        "profiles/does-not-need-to-exist.yaml",
+        "roblox_obby",
+        str(tmp_path / "out"),
+        str(tmp_path / "art"),
+        index_results=False,
+    )
+
+    assert seen == [None]  # objective default suppressed, slot contract untouched
+    assert os.environ["WORKSHEET_PLANNER_SLOT_CONTRACT"] == "1"
+    assert "WORKSHEET_OBJECTIVE_COVERAGE" not in os.environ
 
 
 def _worksheet(number: int, contents: list[str]) -> AdaptedActivityModel:
