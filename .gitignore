@@ -11,6 +11,7 @@ uv.lock
 
 # Local agent/tool state
 .Codex/
+.claude/settings.json
 
 # Generated asset outputs
 assets/cache/

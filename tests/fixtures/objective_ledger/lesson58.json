@@ -1,0 +1,77 @@
+{
+  "grade_level": "1",
+  "domain": "phonics",
+  "specific_skill": "cvce",
+  "learning_objectives": [
+    "Identify and read words with the u_e pattern",
+    "Read and spell CVCe (silent-e) words",
+    "Build and manipulate words using target patterns"
+  ],
+  "target_words": [
+    "cube",
+    "mute",
+    "fuse",
+    "tune",
+    "rule",
+    "june",
+    "mule",
+    "cute",
+    "use",
+    "muse",
+    "fume",
+    "one",
+    "once"
+  ],
+  "response_types": [
+    "write",
+    "read_aloud",
+    "trace"
+  ],
+  "source_items": [
+    {
+      "item_type": "word_list",
+      "content": "cube, mute, fuse, tune, rule, June",
+      "source_region_index": 1,
+      "metadata": {}
+    },
+    {
+      "item_type": "word_chain",
+      "content": "mule -> mute -> cute -> cube",
+      "source_region_index": 2,
+      "metadata": {}
+    },
+    {
+      "item_type": "word_chain",
+      "content": "use -> muse -> fuse -> fume",
+      "source_region_index": 3,
+      "metadata": {}
+    },
+    {
+      "item_type": "chain_script",
+      "content": "1. Make the word mule. [spelling] 2. Change the l to t. What word is this? [reading] 3. Change mute to cute. [spelling] 4. Change the t to b. What word is this? [reading]",
+      "source_region_index": 4,
+      "metadata": {}
+    },
+    {
+      "item_type": "sight_words",
+      "content": "one, once",
+      "source_region_index": 5,
+      "metadata": {}
+    },
+    {
+      "item_type": "sentence",
+      "content": "1. Should we get one tube?",
+      "source_region_index": 6,
+      "metadata": {}
+    },
+    {
+      "item_type": "sentence",
+      "content": "2. They will tune the flute once.",
+      "source_region_index": 7,
+      "metadata": {}
+    }
+  ],
+  "extraction_confidence": 0.8925,
+  "template_type": "ufli_word_work",
+  "lesson_number": 58
+}

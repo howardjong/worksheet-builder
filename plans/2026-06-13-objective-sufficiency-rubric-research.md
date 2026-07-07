@@ -473,13 +473,20 @@ Per-objective anchors should be attached to `ObjectiveCell.sufficiency_rule` so 
 
 ### Approval Policy
 
+> **SUPERSEDED (Session 50).** The binary "approve iff … no essential cell < 0.60" below is
+> replaced by the **tri-state** policy in `plans/2026-06-13-objective-sufficiency-implementation-plan.md`
+> (approve / abstain / reject; per-cell `>=0.65` pass, `0.50–0.65` abstain, `<0.50` reject;
+> typed severe-defect veto via 2/3 reject, 1/3 abstain). A hard per-cell floor is fake
+> precision on a noisy judge score — see the plan's design block. The lines below are kept for
+> rationale only.
+
 Approve only if all are true:
 
 - deterministic blocking gates pass
 - deterministic required-form checks pass for essential objectives
 - deterministic objective coverage passes with `definition="objective_sufficiency_v1"`
 - overall judge score >= 0.70
-- no essential objective cell has judge score < 0.60
+- no essential objective cell has judge score < 0.60  *(superseded — see banner)*
 - no safety/ADHD criterion is < 0.50
 
 Do not use a single hard floor on the old `content_coverage` field. It encourages page fidelity and false rejection of good ADHD-optimized adaptations. Instead, use per-objective essential floors plus deterministic blockers.
@@ -548,6 +555,12 @@ These are implementation priors, not settled science. The calibration process be
 
 ## Calibration Against Human Raters
 
+> **SUPERSEDED (Session 50).** The 15–20-sample plan below is replaced by the sequential
+> design in the implementation plan (T11): freeze rubric → ~20 dev set (debug, tunable) →
+> **40–60 blind holdout** (promotion gate, not tuned against) with abort rules. Three-bucket
+> (approve/abstain/reject) tracking; band width + severe-defect enum calibrated there. The
+> outline below is kept for the strata/metrics ideas only.
+
 Cheap validation plan for 15-20 samples:
 
 1. Create a stratified set:
@@ -606,13 +619,17 @@ Tooling worth buying versus building:
 5. Replace `validate/content_coverage.py` internals with objective-sufficiency evaluation.
 6. Update `adapt/llm_judge.py` prompt and schema, mapping old `content_coverage` to `objective_sufficiency` during transition.
 7. Update battery scorecard details to display `definition="objective_sufficiency_v1"`.
-8. Build 15-20 calibration fixtures and compare to expert human ratings.
+8. Build calibration fixtures and compare to expert human ratings. *(Superseded — the plan's
+   T11 uses ~20 dev + 40–60 blind holdout, not 15–20; implementation plan is the source of truth.)*
 9. Tune thresholds based on false approvals before optimizing false rejections.
 
 ## Evidence Gaps And Contested Areas
 
 - There is no precise universal dosage threshold for phonics practice in ages 5-8 with ADHD. The proposed counts are conservative engineering priors grounded in instructional design and cognitive-load constraints.
-- UFLI corpus metadata may not explicitly label every contrast/review word. The safe fallback is to undercount ambiguous words, not overcredit them.
+- UFLI corpus metadata may not explicitly label every contrast/review word. *(Superseded — the
+  plan does NOT blanket-undercount: ambiguous words are tagged `low` `role_confidence` and
+  treated as advisory, never auto-rejecting an essential cell. Blanket undercount would
+  manufacture a new class of false rejections. Implementation plan T2/T6 is the source of truth.)*
 - Deterministic answer-key checks require machine-readable task metadata. Where the planner cannot emit checkable metadata, the item should be teacher-checked or blocked.
 - LLM-judge research is changing quickly. Claims about new judge frameworks, scales, and debiasing methods should be treated as provisional and rechecked before product commitments.
 

@@ -1,0 +1,907 @@
+"""Embed and index UFLI curriculum into ChromaDB, with CLI entry point."""
+
+from __future__ import annotations
+
+import json
+import logging
+from datetime import UTC, datetime
+from pathlib import Path
+
+import click
+
+try:
+    from dotenv import load_dotenv
+
+    load_dotenv()
+except ImportError:
+    pass
+
+from experiments.corpus_ufli.audit_schema import CorpusAuditSummary
+from experiments.corpus_ufli.grade_levels import derive_grade
+from rag.embeddings import embed_text
+from rag.store import CURRICULUM, add_document, get_or_create_collection, get_store
+
+logger = logging.getLogger(__name__)
+
+
+def _derive_grade(lesson_id: str) -> str:
+    """Backward-compatible wrapper for UFLI grade derivation."""
+    return derive_grade(lesson_id)
+
+
+def ingest_curriculum(
+    data_dir: str = "data/ufli",
+    db_path: str = "vector_store",
+) -> int:
+    """Read normalized.jsonl, embed with Gemini, index into Chroma.
+
+    Returns number of lessons indexed.
+    """
+    normalized_path = Path(data_dir) / "normalized.jsonl"
+    if not normalized_path.exists():
+        logger.error("No normalized.jsonl found in %s — run extract first", data_dir)
+        return 0
+
+    store = get_store(db_path)
+    collection = get_or_create_collection(store, CURRICULUM)
+    indexed = 0
+
+    for line in normalized_path.read_text().splitlines():
+        if not line.strip():
+            continue
+        rec = json.loads(line)
+        lesson_id = rec["lesson_id"]
+
+        # Combine all text sources for the richest embedding
+        parts = [rec.get("slide_text", "")]
+        if rec.get("decodable_text"):
+            parts.append(rec["decodable_text"])
+        if rec.get("home_practice_text"):
+            parts.append(rec["home_practice_text"])
+        if rec.get("additional_text"):
+            parts.append(rec["additional_text"])
+        combined_text = "\n\n".join(p for p in parts if p)
+
+        if not combined_text.strip():
+            logger.warning("No text content for lesson %s, skipping", lesson_id)
+            continue
+
+        doc_id = f"curriculum_ufli_{lesson_id}"
+        grade_level = _derive_grade(lesson_id)
+
+        try:
+            result = embed_text(combined_text[:2000], task_type="RETRIEVAL_DOCUMENT")
+        except Exception:
+            logger.exception("Embedding failed for lesson %s", lesson_id)
+            continue
+
+        metadata = {
+            "source": "ufli_toolbox",
+            "lesson_id": lesson_id,
+            "lesson_group": rec.get("lesson_group", ""),
+            "concept": rec.get("concept", ""),
+            "slide_count": rec.get("slide_count", 0),
+            "grade_level": grade_level,
+            "has_decodable": bool(rec.get("decodable_text")),
+            "has_home_practice": bool(rec.get("home_practice_text")),
+            "has_additional": bool(rec.get("additional_text")),
+            "indexed_at": datetime.now(tz=UTC).isoformat(),
+        }
+
+        add_document(
+            collection,
+            doc_id=doc_id,
+            embedding=result.values,
+            metadata=metadata,
+            document=combined_text[:1000],
+        )
+        indexed += 1
+        logger.info("Indexed lesson %s: %s", lesson_id, rec.get("concept", ""))
+
+    logger.info("Indexed %d lessons into curriculum collection", indexed)
+    return indexed
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+
+@click.group()
+@click.option("--verbose", "-v", is_flag=True, help="Enable verbose logging.")
+def cli(verbose: bool) -> None:
+    """UFLI Foundations Toolbox corpus management."""
+    level = logging.DEBUG if verbose else logging.INFO
+    logging.basicConfig(level=level, format="%(levelname)s: %(message)s")
+
+
+@cli.command()
+@click.option("--data-dir", default="data/ufli", help="Data directory.")
+def crawl(data_dir: str) -> None:
+    """Crawl UFLI Toolbox and generate manifest.jsonl."""
+    from experiments.corpus_ufli.crawl import crawl_toolbox
+
+    path = crawl_toolbox(output_dir=data_dir)
+    click.echo(f"Manifest written to {path}")
+
+
+@cli.command()
+@click.option("--data-dir", default="data/ufli", help="Data directory.")
+@click.option("--delay", default=1.5, help="Seconds between downloads.")
+def acquire(data_dir: str, delay: float) -> None:
+    """Download resources from manifest."""
+    from experiments.corpus_ufli.acquire import acquire_resources
+
+    count = acquire_resources(data_dir=data_dir, delay=delay)
+    click.echo(f"Downloaded {count} files")
+
+
+@cli.command()
+@click.option("--data-dir", default="data/ufli", help="Data directory.")
+def extract(data_dir: str) -> None:
+    """Extract text from downloaded resources."""
+    from experiments.corpus_ufli.extract import extract_all
+
+    results = extract_all(data_dir=data_dir)
+    click.echo(f"Extracted {len(results)} lessons")
+
+
+@cli.command()
+@click.option("--data-dir", default="data/ufli", help="Data directory.")
+@click.option("--db-path", default="vector_store", help="ChromaDB path.")
+def index(data_dir: str, db_path: str) -> None:
+    """Embed and index extracted lessons into ChromaDB."""
+    count = ingest_curriculum(data_dir=data_dir, db_path=db_path)
+    click.echo(f"Indexed {count} lessons")
+
+
+@cli.command(name="build-audio")
+@click.option("--data-dir", default="data/ufli", help="Data directory.")
+@click.option(
+    "--lesson-set",
+    type=click.Choice(["pilot_micro", "pilot_rep", "all", "range"]),
+    default="pilot_rep",
+    show_default=True,
+    help="Lesson selection mode.",
+)
+@click.option("--lesson", "lesson_id", default=None, help="Specific numeric lesson to build.")
+@click.option("--lesson-min", default=1, help="Minimum numeric lesson for --lesson-set range.")
+@click.option("--lesson-max", default=128, help="Maximum numeric lesson for --lesson-set range.")
+def build_audio(
+    data_dir: str,
+    lesson_set: str,
+    lesson_id: str | None,
+    lesson_min: int,
+    lesson_max: int,
+) -> None:
+    """Build lesson audio bundles and audio companion manifests."""
+    from experiments.corpus_ufli.audio_companion import build_audio_companion_manifests
+
+    bundles = build_audio_companion_manifests(
+        data_dir=data_dir,
+        lesson_set=lesson_set,
+        lesson_id=lesson_id,
+        lesson_min=lesson_min,
+        lesson_max=lesson_max,
+    )
+    click.echo(f"Built {len(bundles)} audio lesson bundles")
+
+
+@cli.command(name="validate-audio")
+@click.option("--data-dir", default="data/ufli", help="Data directory.")
+@click.option(
+    "--lesson-set",
+    type=click.Choice(["pilot_micro", "pilot_rep", "all", "range"]),
+    default="pilot_rep",
+    show_default=True,
+    help="Lesson selection mode.",
+)
+@click.option("--lesson", "lesson_id", default=None, help="Specific numeric lesson to validate.")
+@click.option("--lesson-min", default=1, help="Minimum numeric lesson for --lesson-set range.")
+@click.option("--lesson-max", default=128, help="Maximum numeric lesson for --lesson-set range.")
+def validate_audio(
+    data_dir: str,
+    lesson_set: str,
+    lesson_id: str | None,
+    lesson_min: int,
+    lesson_max: int,
+) -> None:
+    """Validate built lesson audio bundles before synthesis."""
+    from experiments.corpus_ufli.audio_companion import validate_audio_companion
+
+    report = validate_audio_companion(
+        data_dir=data_dir,
+        lesson_set=lesson_set,
+        lesson_id=lesson_id,
+        lesson_min=lesson_min,
+        lesson_max=lesson_max,
+    )
+    click.echo(
+        "Audio validation summary: "
+        f"bundles={report.bundle_count} "
+        f"issues={report.issue_count} "
+        f"passed={report.passed}"
+    )
+    for issue in report.issues[:25]:
+        location = issue.segment_id or issue.bundle_key
+        click.echo(f"- {location} [{issue.code}] {issue.message}")
+    if not report.passed:
+        raise click.ClickException(f"Audio validation failed with {report.issue_count} issues.")
+
+
+@cli.command(name="generate-audio")
+@click.option("--data-dir", default="data/ufli", help="Data directory.")
+@click.option(
+    "--lesson-set",
+    type=click.Choice(["pilot_micro", "pilot_rep", "all", "range"]),
+    default="pilot_rep",
+    show_default=True,
+    help="Lesson selection mode.",
+)
+@click.option("--lesson", "lesson_id", default=None, help="Specific numeric lesson to generate.")
+@click.option("--lesson-min", default=1, help="Minimum numeric lesson for --lesson-set range.")
+@click.option("--lesson-max", default=128, help="Maximum numeric lesson for --lesson-set range.")
+@click.option(
+    "--voice-profile",
+    default=None,
+    help="Named voice profile from data/ufli/companion/voice_profiles.yaml.",
+)
+@click.option(
+    "--dry-run/--live",
+    default=True,
+    help="Keep generation offline by default; use --live to call ElevenLabs.",
+)
+@click.option(
+    "--force/--no-force",
+    default=False,
+    help="Regenerate files even if they already exist.",
+)
+@click.option(
+    "--review-packet/--no-review-packet",
+    default=False,
+    help="Write a timestamped pilot review packet under data/ufli/companion/pilots/.",
+)
+def generate_audio(
+    data_dir: str,
+    lesson_set: str,
+    lesson_id: str | None,
+    lesson_min: int,
+    lesson_max: int,
+    voice_profile: str | None,
+    dry_run: bool,
+    force: bool,
+    review_packet: bool,
+) -> None:
+    """Generate ElevenLabs audio for lesson bundles."""
+    from experiments.corpus_ufli.audio_companion import generate_audio_companion
+
+    summary = generate_audio_companion(
+        data_dir=data_dir,
+        lesson_set=lesson_set,
+        lesson_id=lesson_id,
+        lesson_min=lesson_min,
+        lesson_max=lesson_max,
+        voice_profile=voice_profile,
+        dry_run=dry_run,
+        force=force,
+        review_packet=review_packet,
+    )
+    click.echo(
+        "Audio generation summary: "
+        f"planned={summary['planned']} "
+        f"generated={summary['generated']} "
+        f"skipped={summary['skipped']} "
+        f"failed={summary.get('failed', 0)} "
+        f"review_packet_dir={summary['review_packet_dir'] or 'n/a'}"
+    )
+    for profile_name, estimate in summary["voice_profiles"].items():
+        click.echo(
+            f"Voice {profile_name}: clips={estimate['clip_count']} "
+            f"chars={estimate['character_count']} "
+            f"costs={estimate['projected_costs_usd']}"
+        )
+
+
+@cli.command(name="index-audio")
+@click.option("--data-dir", default="data/ufli", help="Data directory.")
+@click.option("--db-path", default="vector_store", help="ChromaDB path.")
+@click.option(
+    "--lesson-set",
+    type=click.Choice(["pilot_micro", "pilot_rep", "all", "range"]),
+    default="pilot_rep",
+    show_default=True,
+    help="Lesson selection mode.",
+)
+@click.option("--lesson", "lesson_id", default=None, help="Specific numeric lesson to index.")
+@click.option("--lesson-min", default=1, help="Minimum numeric lesson for --lesson-set range.")
+@click.option("--lesson-max", default=128, help="Maximum numeric lesson for --lesson-set range.")
+@click.option(
+    "--voice-profile",
+    default=None,
+    help="Restrict indexing to one generated voice profile.",
+)
+@click.option(
+    "--granularity",
+    type=click.Choice(["clips", "lessons", "both"]),
+    default="both",
+    show_default=True,
+    help="Indexing granularity: clips, lessons, or both (default).",
+)
+@click.option(
+    "--include-pending/--approved-only",
+    default=False,
+    help="Include clips with pending review_status (default: approved-only).",
+)
+def index_audio(
+    data_dir: str,
+    db_path: str,
+    lesson_set: str,
+    lesson_id: str | None,
+    lesson_min: int,
+    lesson_max: int,
+    voice_profile: str | None,
+    granularity: str,
+    include_pending: bool,
+) -> None:
+    """Index generated audio companion transcripts into ChromaDB."""
+    from experiments.corpus_ufli.audio_companion import index_audio_companion
+
+    if not include_pending:
+        from experiments.corpus_ufli.audio_companion import (
+            _BUNDLE_DIR,
+            _resolve_selected_lessons,
+            load_audio_bundles,
+            load_pilot_lessons,
+        )
+
+        base = Path(data_dir)
+        companion_dir = base / "companion"
+        pilot_lessons = load_pilot_lessons(companion_dir / "pilot_lessons.yaml")
+        selected = _resolve_selected_lessons(
+            pilot_lessons=pilot_lessons,
+            lesson_set=lesson_set,
+            lesson_id=lesson_id,
+            lesson_min=lesson_min,
+            lesson_max=lesson_max,
+        )
+        bundles = load_audio_bundles(companion_dir / _BUNDLE_DIR, selected_lessons=selected)
+        pending_count = sum(
+            1
+            for bundle in bundles
+            for clip in bundle.clips
+            if clip.status == "generated"
+            and clip.review_status == "pending"
+            and (not voice_profile or clip.voice_profile == voice_profile)
+        )
+        if pending_count:
+            click.echo(
+                f"Warning: {pending_count} clips have review_status='pending' and will be "
+                "skipped. Use --include-pending to index them."
+            )
+
+    count = index_audio_companion(
+        data_dir=data_dir,
+        db_path=db_path,
+        lesson_set=lesson_set,
+        lesson_id=lesson_id,
+        lesson_min=lesson_min,
+        lesson_max=lesson_max,
+        voice_profile=voice_profile,
+        granularity=granularity,
+        include_pending=include_pending,
+    )
+    click.echo(f"Indexed {count} audio companion documents (granularity={granularity})")
+
+
+@cli.command(name="judge-audio")
+@click.option("--data-dir", default="data/ufli", help="Data directory.")
+@click.option(
+    "--lesson-set",
+    type=click.Choice(["pilot_micro", "pilot_rep", "all", "range"]),
+    default="pilot_micro",
+    show_default=True,
+    help="Lesson selection mode.",
+)
+@click.option("--lesson", "lesson_id", default=None, help="Specific numeric lesson to judge.")
+@click.option("--lesson-min", default=1, help="Minimum numeric lesson for --lesson-set range.")
+@click.option("--lesson-max", default=128, help="Maximum numeric lesson for --lesson-set range.")
+@click.option(
+    "--voice-profile",
+    default=None,
+    help="Restrict judging to one generated voice profile.",
+)
+@click.option(
+    "--judge-model",
+    default="gemini-3-flash-preview",
+    show_default=True,
+    help="Gemini model used for transcript/script judging.",
+)
+@click.option(
+    "--output-dir",
+    default=None,
+    help="Optional output root. Defaults to data/ufli/companion/evals.",
+)
+@click.option(
+    "--clip-limit",
+    default=None,
+    type=int,
+    help="Optional limit for a smaller smoke run.",
+)
+@click.option(
+    "--write-back/--no-write-back",
+    default=True,
+    help="Write judge verdicts back to bundle clips as review_status (default: yes).",
+)
+def judge_audio(
+    data_dir: str,
+    lesson_set: str,
+    lesson_id: str | None,
+    lesson_min: int,
+    lesson_max: int,
+    voice_profile: str | None,
+    judge_model: str,
+    output_dir: str | None,
+    clip_limit: int | None,
+    write_back: bool,
+) -> None:
+    """Run Gemini LLM-judge eval over generated audio companion clips."""
+    from experiments.corpus_ufli.audio_judge import judge_audio_companion
+
+    summary = judge_audio_companion(
+        data_dir=data_dir,
+        lesson_set=lesson_set,
+        lesson_id=lesson_id,
+        lesson_min=lesson_min,
+        lesson_max=lesson_max,
+        voice_profile=voice_profile,
+        judge_model=judge_model,
+        output_dir=output_dir,
+        clip_limit=clip_limit,
+        write_back=write_back,
+    )
+    click.echo(
+        "Audio judge summary: "
+        f"clips={summary.clip_count} "
+        f"blockers={summary.blocker_count} "
+        f"pilot_ready={summary.pilot_ready} "
+        f"report_dir={summary.output_dir}"
+    )
+
+
+@cli.command(name="classify-audio-fallback")
+@click.option("--data-dir", default="data/ufli", help="Data directory.")
+@click.option(
+    "--lesson-set",
+    type=click.Choice(["pilot_micro", "pilot_rep", "all", "range"]),
+    default="pilot_micro",
+    show_default=True,
+    help="Lesson selection mode.",
+)
+@click.option("--lesson", "lesson_id", default=None, help="Specific numeric lesson to classify.")
+@click.option("--lesson-min", default=1, help="Minimum numeric lesson for --lesson-set range.")
+@click.option("--lesson-max", default=128, help="Maximum numeric lesson for --lesson-set range.")
+@click.option(
+    "--voice-profile",
+    default=None,
+    help="Restrict classification to one generated voice profile.",
+)
+@click.option(
+    "--output-dir",
+    default=None,
+    help="Optional output root. Defaults to data/ufli/companion/fallbacks.",
+)
+@click.option(
+    "--clip-limit",
+    default=None,
+    type=int,
+    help="Optional limit for a smaller smoke run.",
+)
+def classify_audio_fallback(
+    data_dir: str,
+    lesson_set: str,
+    lesson_id: str | None,
+    lesson_min: int,
+    lesson_max: int,
+    voice_profile: str | None,
+    output_dir: str | None,
+    clip_limit: int | None,
+) -> None:
+    """Classify generated clips into heuristic fallback-policy buckets."""
+    from experiments.corpus_ufli.audio_fallback_policy import classify_audio_fallback_policy
+
+    summary = classify_audio_fallback_policy(
+        data_dir=data_dir,
+        lesson_set=lesson_set,
+        lesson_id=lesson_id,
+        lesson_min=lesson_min,
+        lesson_max=lesson_max,
+        voice_profile=voice_profile,
+        output_dir=output_dir,
+        clip_limit=clip_limit,
+    )
+    click.echo(
+        "Audio fallback summary: "
+        f"clips={summary.clip_count} "
+        f"auto_accept={summary.bucket_counts.get('auto_accept', 0)} "
+        f"gemini_fallback_eligible={summary.bucket_counts.get('gemini_fallback_eligible', 0)} "
+        f"manual_review={summary.bucket_counts.get('needs_llm_or_manual_review', 0)} "
+        f"report_dir={summary.output_dir}"
+    )
+
+
+@cli.command(name="execute-fallback")
+@click.option("--data-dir", default="data/ufli", help="Data directory.")
+@click.option(
+    "--lesson-set",
+    type=click.Choice(["pilot_micro", "pilot_rep", "all", "range"]),
+    default="pilot_micro",
+    show_default=True,
+    help="Lesson selection mode.",
+)
+@click.option("--lesson", "lesson_id", default=None, help="Specific numeric lesson.")
+@click.option("--lesson-min", default=1, help="Minimum numeric lesson for --lesson-set range.")
+@click.option("--lesson-max", default=128, help="Maximum numeric lesson for --lesson-set range.")
+@click.option(
+    "--voice-profile",
+    default=None,
+    help="Restrict fallback to one generated voice profile.",
+)
+@click.option(
+    "--judge-model",
+    default="gemini-3-flash-preview",
+    show_default=True,
+    help="Gemini model used for re-judging fallback clips.",
+)
+@click.option(
+    "--output-dir",
+    default=None,
+    help="Optional output root. Defaults to data/ufli/companion/fallbacks.",
+)
+@click.option(
+    "--clip-limit",
+    default=None,
+    type=int,
+    help="Optional limit for controlled rollout.",
+)
+@click.option(
+    "--dry-run/--live",
+    default=True,
+    help="Dry-run lists eligible clips without synthesis; --live synthesizes and replaces.",
+)
+def execute_fallback(
+    data_dir: str,
+    lesson_set: str,
+    lesson_id: str | None,
+    lesson_min: int,
+    lesson_max: int,
+    voice_profile: str | None,
+    judge_model: str,
+    output_dir: str | None,
+    clip_limit: int | None,
+    dry_run: bool,
+) -> None:
+    """Synthesize Gemini TTS fallback for pacing-failed clips, re-judge, and replace if improved."""
+    from experiments.corpus_ufli.audio_fallback_policy import execute_gemini_fallback
+
+    summary = execute_gemini_fallback(
+        data_dir=data_dir,
+        voice_profile=voice_profile,
+        output_dir=output_dir,
+        dry_run=dry_run,
+        judge_model=judge_model,
+        lesson_set=lesson_set,
+        lesson_id=lesson_id,
+        lesson_min=lesson_min,
+        lesson_max=lesson_max,
+        clip_limit=clip_limit,
+    )
+    click.echo(
+        "Fallback execution summary: "
+        f"clips={summary.clip_count} "
+        f"synthesized={summary.synthesized_count} "
+        f"improved={summary.improved_count} "
+        f"replaced={summary.replaced_count} "
+        f"failed={summary.failed_count} "
+        f"report_dir={summary.output_dir}"
+    )
+
+
+@cli.command(name="diagnose-audio")
+@click.option("--data-dir", default="data/ufli", help="Data directory.")
+@click.option(
+    "--voice-profile",
+    default=None,
+    help="Restrict diagnostic probes to one generated voice profile.",
+)
+@click.option(
+    "--segment-id",
+    "segment_ids",
+    multiple=True,
+    help="Specific segment ids to probe. Defaults to the committed canary set.",
+)
+@click.option(
+    "--output-dir",
+    default=None,
+    help="Optional output root. Defaults to data/ufli/companion/diagnostics/<timestamp>.",
+)
+@click.option(
+    "--live/--dry-run",
+    default=False,
+    help="Generate live probe audio. Dry-run only writes the planned variant matrix.",
+)
+@click.option(
+    "--judge/--no-judge",
+    default=False,
+    help="Judge generated probe variants with Gemini. Requires --live.",
+)
+@click.option(
+    "--judge-model",
+    default="gemini-3-flash-preview",
+    show_default=True,
+    help="Gemini model used for probe judging.",
+)
+@click.option(
+    "--provider-scope",
+    type=click.Choice(["elevenlabs", "google", "both"]),
+    default="elevenlabs",
+    show_default=True,
+    help="Which synthesis provider path to include in the canary matrix.",
+)
+@click.option(
+    "--google-voice-name",
+    default="en-US-Chirp3-HD-Leda",
+    show_default=True,
+    help="Google Cloud TTS Chirp 3 voice used when --provider-scope includes google.",
+)
+@click.option(
+    "--google-region",
+    default=None,
+    help=(
+        "Google Cloud TTS region/multi-region for Chirp 3. "
+        "Uses GOOGLE_TTS_LOCATION or a supported fallback if omitted."
+    ),
+)
+@click.option(
+    "--google-speaking-rate",
+    default=None,
+    type=float,
+    help=(
+        "Optional Google Cloud TTS speaking rate override. "
+        "If omitted, the canary uses conservative clip-family defaults."
+    ),
+)
+@click.option(
+    "--google-model-name",
+    default="",
+    help="Optional Google Cloud TTS model name such as gemini-2.5-pro-tts.",
+)
+@click.option(
+    "--google-style-prompt",
+    default="",
+    help="Optional Google Cloud TTS style prompt/system instruction.",
+)
+@click.option(
+    "--google-sample-rate-hz",
+    default=0,
+    type=int,
+    help="Optional Google Cloud TTS output sample rate in Hz.",
+)
+@click.option(
+    "--google-volume-gain-db",
+    default=0.0,
+    type=float,
+    help="Optional Google Cloud TTS volume gain in dB.",
+)
+@click.option(
+    "--google-variant-scope",
+    type=click.Choice(["both", "current_pipeline", "exact_transcript"]),
+    default="both",
+    show_default=True,
+    help=(
+        "Optional Google diagnostics variant filter to isolate "
+        "current_pipeline vs exact_transcript."
+    ),
+)
+def diagnose_audio(
+    data_dir: str,
+    voice_profile: str | None,
+    segment_ids: tuple[str, ...],
+    output_dir: str | None,
+    live: bool,
+    judge: bool,
+    judge_model: str,
+    provider_scope: str,
+    google_voice_name: str,
+    google_region: str | None,
+    google_speaking_rate: float | None,
+    google_model_name: str,
+    google_style_prompt: str,
+    google_sample_rate_hz: int,
+    google_volume_gain_db: float,
+    google_variant_scope: str,
+) -> None:
+    """Run controlled canary probes to separate input-shaping vs TTS-model issues."""
+    from experiments.corpus_ufli.audio_diagnostics import run_audio_probe_matrix
+
+    summary = run_audio_probe_matrix(
+        data_dir=data_dir,
+        voice_profile=voice_profile,
+        segment_ids=list(segment_ids) if segment_ids else None,
+        output_dir=output_dir,
+        live=live,
+        judge=judge,
+        judge_model=judge_model,
+        provider_scope=provider_scope,
+        google_voice_name=google_voice_name,
+        google_region=google_region,
+        google_speaking_rate=google_speaking_rate,
+        google_model_name=google_model_name,
+        google_style_prompt=google_style_prompt,
+        google_sample_rate_hz=google_sample_rate_hz,
+        google_volume_gain_db=google_volume_gain_db,
+        google_variant_scope=google_variant_scope,
+    )
+    click.echo(
+        "Audio probe summary: "
+        f"variants={summary.variant_count} "
+        f"live={summary.live} "
+        f"judged={summary.judged} "
+        f"report_dir={summary.output_dir}"
+    )
+
+
+@cli.command()
+@click.option("--data-dir", default="data/ufli", help="Data directory.")
+@click.option("--db-path", default="vector_store", help="ChromaDB path.")
+@click.option("--output-dir", default="data/ufli/audit", help="Audit report root directory.")
+@click.option("--sample-size", default=20, help="Manual review sample size.")
+@click.option("--benchmark-size", default=50, help="Retrieval benchmark sample size.")
+@click.option("--seed", default=42, help="Deterministic sampling seed.")
+@click.option(
+    "--use-ai-judge/--no-ai-judge",
+    default=False,
+    help="Advisory flag only; audit remains offline.",
+)
+def audit(
+    data_dir: str,
+    db_path: str,
+    output_dir: str,
+    sample_size: int,
+    benchmark_size: int,
+    seed: int,
+    use_ai_judge: bool,
+) -> None:
+    """Run an offline multimodal corpus audit and write timestamped reports."""
+    from experiments.corpus_ufli.audit import run_audit
+
+    summary = run_audit(
+        data_dir=data_dir,
+        db_path=db_path,
+        output_dir=output_dir,
+        sample_size=sample_size,
+        benchmark_size=benchmark_size,
+        seed=seed,
+        use_ai_judge=use_ai_judge,
+    )
+    click.echo(f"Audit written to {summary.output_dir}")
+
+
+@cli.command()
+@click.option("--data-dir", default="data/ufli", help="Data directory.")
+@click.option("--db-path", default="vector_store", help="ChromaDB path.")
+@click.option(
+    "--audit-dir",
+    default=None,
+    help="Timestamped audit directory. Defaults to most recent under data/ufli/audit.",
+)
+@click.option(
+    "--dry-run/--execute",
+    default=True,
+    help="Report what would be fixed without changing anything.",
+)
+@click.option(
+    "--severity",
+    default="fail,warn",
+    help="Comma-separated severity levels to act on.",
+)
+@click.option(
+    "--codes",
+    default=None,
+    help="Comma-separated allowlist of flag codes to remediate.",
+)
+@click.option(
+    "--skip-reindex",
+    is_flag=True,
+    default=False,
+    help="Fix source data but skip ChromaDB re-indexing.",
+)
+def remediate(
+    data_dir: str,
+    db_path: str,
+    audit_dir: str | None,
+    dry_run: bool,
+    severity: str,
+    codes: str | None,
+    skip_reindex: bool,
+) -> None:
+    """Apply automated fixes for actionable audit flag codes."""
+    from experiments.corpus_ufli.remediate import (
+        execute_remediations,
+        find_latest_audit_dir,
+        plan_remediations,
+        write_remediation_report,
+    )
+
+    # Resolve audit directory
+    if audit_dir is None:
+        audit_root = str(Path(data_dir) / "audit")
+        audit_dir = find_latest_audit_dir(audit_root)
+        if audit_dir is None:
+            raise click.ClickException(
+                "No audit results found — run "
+                "`python -m experiments.corpus_ufli.ingest audit` first."
+            )
+
+    summary_path = Path(audit_dir) / "summary.json"
+    if not summary_path.exists():
+        raise click.ClickException(f"No summary.json in {audit_dir} — not a valid audit directory.")
+
+    summary = CorpusAuditSummary.model_validate_json(summary_path.read_text())
+
+    severity_filter = {s.strip() for s in severity.split(",")}
+    code_filter = {c.strip() for c in codes.split(",")} if codes else None
+
+    actions = plan_remediations(summary, severity_filter, code_filter)
+    click.echo(f"Planned {len(actions)} remediation actions")
+
+    report = execute_remediations(
+        actions,
+        data_dir=data_dir,
+        db_path=db_path,
+        dry_run=dry_run,
+        skip_reindex=skip_reindex,
+    )
+    write_remediation_report(report, audit_dir)
+
+    click.echo(
+        f"Remediation complete: {report.fixed_count} fixed, "
+        f"{report.skipped_count} skipped, "
+        f"{report.manual_review_count} manual review, "
+        f"{report.failed_count} failed."
+    )
+    if report.reindexed_lesson_ids:
+        click.echo(f"Re-indexed: {', '.join(report.reindexed_lesson_ids)}.")
+    if report.deleted_index_ids:
+        click.echo(f"Deleted stale: {', '.join(report.deleted_index_ids)}.")
+    click.echo(
+        "Re-run audit to verify: "
+        "python -m experiments.corpus_ufli.ingest audit --data-dir " + data_dir
+    )
+
+
+@cli.command(name="run-all")
+@click.option("--data-dir", default="data/ufli", help="Data directory.")
+@click.option("--db-path", default="vector_store", help="ChromaDB path.")
+@click.option("--delay", default=1.5, help="Seconds between downloads.")
+def run_all(data_dir: str, db_path: str, delay: float) -> None:
+    """Run full pipeline: crawl -> acquire -> extract -> index."""
+    from experiments.corpus_ufli.acquire import acquire_resources
+    from experiments.corpus_ufli.crawl import crawl_toolbox
+    from experiments.corpus_ufli.extract import extract_all
+
+    click.echo("Step 1/4: Crawling UFLI Toolbox...")
+    crawl_toolbox(output_dir=data_dir)
+
+    click.echo("Step 2/4: Downloading resources...")
+    acquire_resources(data_dir=data_dir, delay=delay)
+
+    click.echo("Step 3/4: Extracting text...")
+    extract_all(data_dir=data_dir)
+
+    click.echo("Step 4/4: Embedding and indexing...")
+    count = ingest_curriculum(data_dir=data_dir, db_path=db_path)
+    click.echo(f"Done. Indexed {count} lessons into curriculum collection.")
+
+
+if __name__ == "__main__":
+    cli()

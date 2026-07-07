@@ -1,0 +1,38 @@
+{
+  "grade_level": "1",
+  "domain": "phonics",
+  "specific_skill": "-all, -oll, -ull",
+  "learning_objectives": [
+    "Identify and read words with the -all, -oll, -ull pattern",
+    "Build and manipulate words using target patterns"
+  ],
+  "target_words": [
+    "doll",
+    "roll",
+    "toll",
+    "poll",
+    "mop",
+    "jazz"
+  ],
+  "response_types": [
+    "write",
+    "read_aloud"
+  ],
+  "source_items": [
+    {
+      "item_type": "word_list",
+      "content": "doll, roll, toll, mop, jazz",
+      "source_region_index": 1,
+      "metadata": {}
+    },
+    {
+      "item_type": "word_chain",
+      "content": "oll -> doll -> roll -> toll",
+      "source_region_index": 2,
+      "metadata": {}
+    }
+  ],
+  "extraction_confidence": 0.8925,
+  "template_type": "ufli_word_work",
+  "lesson_number": 43
+}

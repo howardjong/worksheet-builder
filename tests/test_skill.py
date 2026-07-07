@@ -456,3 +456,433 @@ class TestSkillSchema:
         restored = LiteracySkillModel.model_validate_json(json_str)
         assert restored.domain == model.domain
         assert restored.template_type == model.template_type
+
+
+class TestSourceNotationStripping:
+    """Tests for stripping source notation artifacts from student-facing content."""
+
+    def test_sight_words_strip_asterisk_markers(self) -> None:
+        """RED: sight_words item should have clean content, markers in metadata."""
+        source = SourceWorksheetModel(
+            source_image_hash="test_sight_asterisk",
+            pipeline_version=PIPELINE_VERSION,
+            template_type="ufli_word_work",
+            regions=[
+                SourceRegion(
+                    type="sight_word_list",
+                    content="who, by*, my*, one",
+                    bbox=(100, 550, 350, 580),
+                    confidence=0.90,
+                    metadata={},
+                ),
+            ],
+            raw_text="who, by*, my*, one",
+            ocr_engine="paddleocr",
+            low_confidence_flags=[],
+        )
+        model = extract_skill(source)
+        sight_items = [si for si in model.source_items if si.item_type == "sight_words"]
+        assert len(sight_items) == 1
+        item = sight_items[0]
+        # Content should be clean (no asterisks)
+        assert "*" not in item.content
+        assert "by" in item.content
+        assert "my" in item.content
+        # Markers should be in metadata
+        assert "notation_markers" in item.metadata
+        markers = item.metadata["notation_markers"]
+        assert isinstance(markers, str)
+        assert "by*" in markers
+        assert "my*" in markers
+
+    def test_sight_words_strip_heart_markers(self) -> None:
+        """Heart markers should also be stripped."""
+        source = SourceWorksheetModel(
+            source_image_hash="test_sight_heart",
+            pipeline_version=PIPELINE_VERSION,
+            template_type="ufli_word_work",
+            regions=[
+                SourceRegion(
+                    type="sight_word_list",
+                    content="the♥, was❤, said*",
+                    bbox=(100, 550, 350, 580),
+                    confidence=0.90,
+                    metadata={},
+                ),
+            ],
+            raw_text="the♥, was❤, said*",
+            ocr_engine="paddleocr",
+            low_confidence_flags=[],
+        )
+        model = extract_skill(source)
+        sight_items = [si for si in model.source_items if si.item_type == "sight_words"]
+        assert len(sight_items) == 1
+        item = sight_items[0]
+        assert "♥" not in item.content
+        assert "❤" not in item.content
+        assert "*" not in item.content
+        assert "the" in item.content.lower()
+        assert "was" in item.content.lower()
+        assert "said" in item.content.lower()
+        assert "notation_markers" in item.metadata
+
+    def test_word_list_strip_markers(self) -> None:
+        """word_list items (from sample_words) should strip markers."""
+        source = SourceWorksheetModel(
+            source_image_hash="test_word_list",
+            pipeline_version=PIPELINE_VERSION,
+            template_type="ufli_word_work",
+            regions=[
+                SourceRegion(
+                    type="sample_words",
+                    content="cat, dog*, fish♥",
+                    bbox=(100, 210, 400, 250),
+                    confidence=0.93,
+                    metadata={},
+                ),
+            ],
+            raw_text="cat, dog*, fish♥",
+            ocr_engine="paddleocr",
+            low_confidence_flags=[],
+        )
+        model = extract_skill(source)
+        word_list_items = [si for si in model.source_items if si.item_type == "word_list"]
+        assert len(word_list_items) == 1
+        item = word_list_items[0]
+        assert "*" not in item.content
+        assert "♥" not in item.content
+        assert "dog" in item.content
+        assert "fish" in item.content
+        assert "notation_markers" in item.metadata
+
+    def test_sentence_strip_markers(self) -> None:
+        """sentence items (from practice_sentences) should strip markers."""
+        source = SourceWorksheetModel(
+            source_image_hash="test_sentence",
+            pipeline_version=PIPELINE_VERSION,
+            template_type="ufli_word_work",
+            regions=[
+                SourceRegion(
+                    type="practice_sentences",
+                    content="The dog* ran fast.",
+                    bbox=(550, 550, 900, 580),
+                    confidence=0.95,
+                    metadata={},
+                ),
+            ],
+            raw_text="The dog* ran fast.",
+            ocr_engine="paddleocr",
+            low_confidence_flags=[],
+        )
+        model = extract_skill(source)
+        sentence_items = [si for si in model.source_items if si.item_type == "sentence"]
+        assert len(sentence_items) == 1
+        item = sentence_items[0]
+        assert "*" not in item.content
+        assert "dog" in item.content
+        assert "notation_markers" in item.metadata
+
+    def test_clean_sight_words_no_metadata_key(self) -> None:
+        """Regression: clean sight_words (no markers) should NOT have metadata key."""
+        source = SourceWorksheetModel(
+            source_image_hash="test_clean",
+            pipeline_version=PIPELINE_VERSION,
+            template_type="ufli_word_work",
+            regions=[
+                SourceRegion(
+                    type="sight_word_list",
+                    content="the, was, said",
+                    bbox=(100, 550, 350, 580),
+                    confidence=0.90,
+                    metadata={},
+                ),
+            ],
+            raw_text="the, was, said",
+            ocr_engine="paddleocr",
+            low_confidence_flags=[],
+        )
+        model = extract_skill(source)
+        sight_items = [si for si in model.source_items if si.item_type == "sight_words"]
+        assert len(sight_items) == 1
+        item = sight_items[0]
+        # Content is unchanged
+        assert item.content == "the, was, said"
+        # NO notation_markers key should be present
+        assert "notation_markers" not in item.metadata
+
+    def test_chain_script_not_stripped(self) -> None:
+        """chain_script items should NOT be stripped (brackets are structural)."""
+        source = SourceWorksheetModel(
+            source_image_hash="test_chain_script",
+            pipeline_version=PIPELINE_VERSION,
+            template_type="ufli_word_work",
+            regions=[
+                SourceRegion(
+                    type="chain_script",
+                    content="1. Write the word all. [spelling]",
+                    bbox=(550, 410, 950, 450),
+                    confidence=0.94,
+                    metadata={},
+                ),
+            ],
+            raw_text="1. Write the word all. [spelling]",
+            ocr_engine="paddleocr",
+            low_confidence_flags=[],
+        )
+        model = extract_skill(source)
+        chain_script_items = [si for si in model.source_items if si.item_type == "chain_script"]
+        assert len(chain_script_items) == 1
+        item = chain_script_items[0]
+        # Brackets must be preserved (structural)
+        assert "[spelling]" in item.content
+        # No stripping happened
+        assert "notation_markers" not in item.metadata
+
+    def test_sight_words_strip_bracketed_annotations(self) -> None:
+        """RED: bracketed annotations should be stripped from sight_words."""
+        source = SourceWorksheetModel(
+            source_image_hash="test_bracket_annotation",
+            pipeline_version=PIPELINE_VERSION,
+            template_type="ufli_word_work",
+            regions=[
+                SourceRegion(
+                    type="sight_word_list",
+                    content="who [heart word], by*, my, one",
+                    bbox=(100, 550, 350, 580),
+                    confidence=0.90,
+                    metadata={},
+                ),
+            ],
+            raw_text="who [heart word], by*, my, one",
+            ocr_engine="paddleocr",
+            low_confidence_flags=[],
+        )
+        model = extract_skill(source)
+        sight_items = [si for si in model.source_items if si.item_type == "sight_words"]
+        assert len(sight_items) == 1
+        item = sight_items[0]
+        # Content should be clean (no brackets or annotation text)
+        assert "[" not in item.content
+        assert "]" not in item.content
+        assert "heart word" not in item.content
+        assert "who" in item.content
+        assert "by" in item.content
+        assert "my" in item.content
+        assert "one" in item.content
+        # Both bracket annotation and asterisk marker should be in metadata
+        assert "notation_markers" in item.metadata
+        markers = item.metadata["notation_markers"]
+        assert isinstance(markers, str)
+        assert "by*" in markers
+        assert "[heart word]" in markers
+
+    def test_sentence_strip_parenthesized_annotations(self) -> None:
+        """RED: parenthesized annotations should be stripped from sentences."""
+        source = SourceWorksheetModel(
+            source_image_hash="test_paren_annotation",
+            pipeline_version=PIPELINE_VERSION,
+            template_type="ufli_word_work",
+            regions=[
+                SourceRegion(
+                    type="practice_sentences",
+                    content="Run to the den. (sight: the)",
+                    bbox=(550, 550, 900, 580),
+                    confidence=0.95,
+                    metadata={},
+                ),
+            ],
+            raw_text="Run to the den. (sight: the)",
+            ocr_engine="paddleocr",
+            low_confidence_flags=[],
+        )
+        model = extract_skill(source)
+        sentence_items = [si for si in model.source_items if si.item_type == "sentence"]
+        assert len(sentence_items) == 1
+        item = sentence_items[0]
+        # Content should be clean (no parentheses or annotation text)
+        assert "(" not in item.content
+        assert ")" not in item.content
+        assert "sight:" not in item.content.lower()
+        assert "Run to the den." in item.content
+        # Annotation should be in metadata
+        assert "notation_markers" in item.metadata
+        markers = item.metadata["notation_markers"]
+        assert isinstance(markers, str)
+        assert "(sight: the)" in markers
+
+    def test_word_list_strip_mixed_annotations(self) -> None:
+        """RED: mixed brackets, parens, and markers should all be stripped."""
+        source = SourceWorksheetModel(
+            source_image_hash="test_mixed_annotations",
+            pipeline_version=PIPELINE_VERSION,
+            template_type="ufli_word_work",
+            regions=[
+                SourceRegion(
+                    type="sample_words",
+                    content="cat, dog* [trick], fish (new), bird♥",
+                    bbox=(100, 210, 400, 250),
+                    confidence=0.93,
+                    metadata={},
+                ),
+            ],
+            raw_text="cat, dog* [trick], fish (new), bird♥",
+            ocr_engine="paddleocr",
+            low_confidence_flags=[],
+        )
+        model = extract_skill(source)
+        word_list_items = [si for si in model.source_items if si.item_type == "word_list"]
+        assert len(word_list_items) == 1
+        item = word_list_items[0]
+        # Content should be clean
+        assert "*" not in item.content
+        assert "[" not in item.content
+        assert "]" not in item.content
+        assert "(" not in item.content
+        assert ")" not in item.content
+        assert "♥" not in item.content
+        assert "trick" not in item.content
+        assert "new" not in item.content
+        # All words should be present
+        assert "cat" in item.content
+        assert "dog" in item.content
+        assert "fish" in item.content
+        assert "bird" in item.content
+        # All markers should be recorded
+        assert "notation_markers" in item.metadata
+        markers = item.metadata["notation_markers"]
+        assert isinstance(markers, str)
+        assert "dog*" in markers
+        assert "[trick]" in markers
+        assert "(new)" in markers
+        assert "bird♥" in markers
+
+    def test_duplicate_marked_token_no_double_record(self) -> None:
+        """Duplicate marked tokens should be recorded separately (no spurious extras)."""
+        source = SourceWorksheetModel(
+            source_image_hash="test_duplicate_marker",
+            pipeline_version=PIPELINE_VERSION,
+            template_type="ufli_word_work",
+            regions=[
+                SourceRegion(
+                    type="sight_word_list",
+                    content="sit*, cat, sit*",
+                    bbox=(100, 550, 350, 580),
+                    confidence=0.90,
+                    metadata={},
+                ),
+            ],
+            raw_text="sit*, cat, sit*",
+            ocr_engine="paddleocr",
+            low_confidence_flags=[],
+        )
+        model = extract_skill(source)
+        sight_items = [si for si in model.source_items if si.item_type == "sight_words"]
+        assert len(sight_items) == 1
+        item = sight_items[0]
+        # Content should be clean
+        assert "*" not in item.content
+        assert item.content == "sit, cat, sit"
+        # Metadata should record both sit* markers (2 occurrences is correct)
+        assert "notation_markers" in item.metadata
+        markers = item.metadata["notation_markers"]
+        assert isinstance(markers, str)
+        # The markers list should contain exactly 2 "sit*" entries, no extras
+        marker_list = [m.strip() for m in markers.split(",")]
+        assert marker_list.count("sit*") == 2
+
+    def test_marker_inside_bracket_no_double_count(self) -> None:
+        """RED: Marker inside a bracket annotation should NOT be separately recorded."""
+        source = SourceWorksheetModel(
+            source_image_hash="test_marker_in_bracket",
+            pipeline_version=PIPELINE_VERSION,
+            template_type="ufli_word_work",
+            regions=[
+                SourceRegion(
+                    type="sight_word_list",
+                    content="who [by* trick], cat",
+                    bbox=(100, 550, 350, 580),
+                    confidence=0.90,
+                    metadata={},
+                ),
+            ],
+            raw_text="who [by* trick], cat",
+            ocr_engine="paddleocr",
+            low_confidence_flags=[],
+        )
+        model = extract_skill(source)
+        sight_items = [si for si in model.source_items if si.item_type == "sight_words"]
+        assert len(sight_items) == 1
+        item = sight_items[0]
+        # Content should be clean
+        assert "[" not in item.content
+        assert "]" not in item.content
+        assert "*" not in item.content
+        assert "by*" not in item.content
+        assert "trick" not in item.content
+        assert "who" in item.content
+        assert "cat" in item.content
+        # Metadata should record the bracket annotation
+        assert "notation_markers" in item.metadata
+        markers = item.metadata["notation_markers"]
+        assert isinstance(markers, str)
+        assert "[by* trick]" in markers
+        # The standalone "by*" should NOT be redundantly present as a separate marker
+        # since it was only ever removed as part of the bracket annotation
+        marker_list = [m.strip() for m in markers.split(",")]
+        # Should only have one entry: the bracket annotation
+        assert len(marker_list) == 1
+        assert marker_list[0] == "[by* trick]"
+
+    def test_multi_comma_collapse(self) -> None:
+        """RED: After stripping interior annotations, adjacent commas should collapse."""
+        source = SourceWorksheetModel(
+            source_image_hash="test_multi_comma",
+            pipeline_version=PIPELINE_VERSION,
+            template_type="ufli_word_work",
+            regions=[
+                SourceRegion(
+                    type="sight_word_list",
+                    content="who, [annotation], cat",
+                    bbox=(100, 550, 350, 580),
+                    confidence=0.90,
+                    metadata={},
+                ),
+            ],
+            raw_text="who, [annotation], cat",
+            ocr_engine="paddleocr",
+            low_confidence_flags=[],
+        )
+        model = extract_skill(source)
+        sight_items = [si for si in model.source_items if si.item_type == "sight_words"]
+        assert len(sight_items) == 1
+        item = sight_items[0]
+        # Content should have no doubled commas
+        assert ", ," not in item.content
+        assert item.content == "who, cat"
+
+    def test_multi_comma_collapse_three_plus(self) -> None:
+        """RED: Three or more adjacent commas should collapse to one."""
+        source = SourceWorksheetModel(
+            source_image_hash="test_triple_comma",
+            pipeline_version=PIPELINE_VERSION,
+            template_type="ufli_word_work",
+            regions=[
+                SourceRegion(
+                    type="sight_word_list",
+                    content="who, [ann1], [ann2], cat",
+                    bbox=(100, 550, 350, 580),
+                    confidence=0.90,
+                    metadata={},
+                ),
+            ],
+            raw_text="who, [ann1], [ann2], cat",
+            ocr_engine="paddleocr",
+            low_confidence_flags=[],
+        )
+        model = extract_skill(source)
+        sight_items = [si for si in model.source_items if si.item_type == "sight_words"]
+        assert len(sight_items) == 1
+        item = sight_items[0]
+        # Content should have no doubled commas
+        assert ", ," not in item.content
+        assert item.content == "who, cat"
