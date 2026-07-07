@@ -79,6 +79,65 @@ worksheet count, time budget, exercise variety, and whether the deeper content-p
 question above needs resolving. Then proceed to Goal 2 (hybrid renderer) — it directly targets
 the remaining chrome/typography-consistency complaints.
 
+### Session 58b — 2026-07-07 (double-check pass: planner-default hole found+fixed, cost guardrails)
+
+**Status:** Owner asked for a verification pass on the Session 58 fixes ("don't burn LLM calls
+due to missing guardrails"). The audit FOUND A REAL HOLE in the Session 58 fix and closed it,
+plus added cost/model guardrails. Gates green: ruff clean, mypy 3 pre-existing mutagen errors
+only, **725 passed** (719 → 725).
+
+**The hole (now fixed):** `plan_lesson_llm()` is a NO-OP unless `WORKSHEET_LLM_ADAPT` is also
+set (llm_planner.py gate). Session 58 defaulted only `WORKSHEET_PLANNER_V2=1` — on a machine
+without `WORKSHEET_LLM_ADAPT` in `.env`, lesson mode would have silently fallen to the
+deterministic engine and reproduced the exact 10-worksheet overflow the fix targeted (with
+zero adapt-stage LLM calls, but then burned ~1 advisory judge + up to 3 ai_review calls ×
+N worksheets on the oversized package). Lesson mode now defaults BOTH flags, same scoped
+save/restore, explicit overrides always win (tested both directions). The owner's own .env
+evidently sets WORKSHEET_LLM_ADAPT (the live run's legacy loop made LLM calls), so their runs
+were unaffected — but the guardrail no longer depends on that accident.
+
+**Related pre-existing bug fixed:** all three LLM-path gates used
+`if not os.environ.get("WORKSHEET_LLM_ADAPT")` — the string "0" is truthy, so the documented
+D31 opt-out (`WORKSHEET_LLM_ADAPT=0`) actually ENABLED the LLM paths. New shared helper
+`adapt.rules.llm_adapt_enabled()` ("", "0", unset → off) used by planner/orchestrator/adapter;
+no existing test relied on the old quirk (all used "1"/unset).
+
+**Verified end-to-end call budget for `--lesson N` (image_gen mode):**
+- Adapt stage, planner-v2 happy path: 1 plan call + 1 judge call (judge samples default 1,
+  `WORKSHEET_JUDGE_SAMPLES`). Worst case 2+2, then deterministic fallback.
+- Planner-approved output SKIPS the per-worksheet ai_review loop entirely
+  (`_skip_ai_review` reads `planner_version: 2` from judge_verdict.json — verified the
+  rejected-fallback path deliberately writes planner_attempts.json instead, so deterministic
+  output still gets reviewed; that asymmetry is correct, do not "fix" it).
+- Render: per page ≤ providers(2) × attempts × (1 image + 1 text gate + 1 character judge).
+- Net vs the observed 10-worksheet run: ~200+ calls → roughly 25-45 for a 3-worksheet
+  planner-approved package. Page cache (`assets/cache/page_<hash>/`) makes repeat runs ~0.
+
+**New cost/model knobs (all default-unchanged):**
+- `WORKSHEET_IMAGE_MAX_ATTEMPTS` — per-provider page-gen attempts (default 3, min 1). Set 1-2
+  to cap image-API spend per page.
+- `WORKSHEET_OPENAI_TEXT_MODEL` — one knob for the OpenAI text model shared by the judge,
+  planner (openai leg), and ai_review (default `gpt-5.4`). Exists because the owner wants to
+  swap under-performing models without code changes. Vision-capable call sites
+  (`render/page_gates.py`) and the legacy orchestrator's log label deliberately NOT included.
+- Already existed, now load-bearing for lesson mode: `WORKSHEET_PLANNER_PROVIDERS`
+  (default `openai,gemini`), `WORKSHEET_PLANNER_GEMINI_MODEL`, `WORKSHEET_JUDGE_SAMPLES`.
+
+**Workload-balance policy (owner directive, 2026-07-07):** achieving the lesson's learning
+objectives outranks hitting a sheet count, BUT total workload must stay inside what an ADHD
+child can sustain. Encoding: the 20-minute lesson budget + ~8-minute per-worksheet budget in
+`validate_lesson_time_budget` are the binding constraint (these align with the ADHD
+intervention literature's consistent findings — shortened/chunked tasks, activity breaks
+between segments, immediate feedback; a proper citation pass is still owed — a PubMed sweep
+this session found the school-psychology task-duration literature poorly indexed there, so
+no specific citations are recorded yet). Objectives should be met WITHIN that time budget;
+worksheet count is the free variable, warned at >3 (`TARGET_MAX_WORKSHEETS_PER_LESSON`) and
+bounded in practice by the time budget. If planner-v2 output still exceeds 20 minutes on
+dense lessons, the next lever is objective-prioritized trimming — an owner decision (it
+breaks the "never trimmed" invariant in adapt/section_cap.py).
+
+**Next:** unchanged from Session 58 — owner re-runs `--lesson 74`, then Goal 2.
+
 ### Session 57 — 2026-07-06 (Goal 1: intensity dial + lesson-number entry point)
 
 **Status:** Shipped **Phases 0 + A + B** of `plans/2026-07-07-intensity-dial-hybrid-renderer-plan.md`

@@ -136,24 +136,37 @@ Approve if overall_score >= 0.7 and no criterion is below 0.5.
 Be rigorous but fair — the worksheets should teach the concept effectively."""
 
 
+DEFAULT_OPENAI_TEXT_MODEL = "gpt-5.4"
+
+
+def openai_text_model() -> str:
+    """OpenAI model for judge + planner text calls (WORKSHEET_OPENAI_TEXT_MODEL).
+
+    One knob for both call sites so a poorly-performing or overpriced model can
+    be swapped without a code change.
+    """
+    return os.environ.get("WORKSHEET_OPENAI_TEXT_MODEL", DEFAULT_OPENAI_TEXT_MODEL)
+
+
 def _call_openai(prompt: str, max_completion_tokens: int = 1024) -> str | None:
-    """Call GPT 5.4 and return the response text."""
+    """Call the configured OpenAI text model and return the response text."""
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
         return None
 
+    model = openai_text_model()
     try:
         from openai import OpenAI
 
         client = OpenAI(api_key=api_key)
         response = client.chat.completions.create(
-            model="gpt-5.4",
+            model=model,
             messages=[{"role": "user", "content": prompt}],
             max_completion_tokens=max_completion_tokens,
         )
         return response.choices[0].message.content or ""
     except Exception as e:
-        logger.warning("GPT 5.4 judge call failed: %s", e)
+        logger.warning("OpenAI %s call failed: %s", model, e)
         return None
 
 

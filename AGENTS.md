@@ -75,7 +75,9 @@ Paper → Capture → Normalize → Source Extract → Skill Model → ADHD Adap
 - Curated theme assets committed to repo; generated assets cached in `asset_cache/` (gitignored).
 - RAG store in `vector_store/`; UFLI curriculum corpus lives in the `curriculum` collection.
 - RAG embedding auto-selects API-key Gemini when available in `.env`; Vertex is available via `RAG_GEMINI_BACKEND=vertex`.
-- Image renderer (`image_gen`, the default render mode) env: `WORKSHEET_IMAGE_PROVIDERS` (comma-ordered fallback chain, default `openai,gemini`), `WORKSHEET_GEMINI_IMAGE_MODEL` (default `gemini-3-pro-image`), `WORKSHEET_OPENAI_IMAGE_MODEL` (default `gpt-image-2-2026-04-21`). See decision D29.
+- Image renderer (`image_gen`, the default render mode) env: `WORKSHEET_IMAGE_PROVIDERS` (comma-ordered fallback chain, default `openai,gemini`), `WORKSHEET_GEMINI_IMAGE_MODEL` (default `gemini-3-pro-image`), `WORKSHEET_OPENAI_IMAGE_MODEL` (default `gpt-image-2-2026-04-21`), `WORKSHEET_IMAGE_MAX_ATTEMPTS` (per-provider page-gen attempts, default 3 — cost guardrail). See decision D29.
+- Text-model env: `WORKSHEET_OPENAI_TEXT_MODEL` (default `gpt-5.4`) — one knob for the judge, planner (openai leg), and ai_review. `WORKSHEET_PLANNER_PROVIDERS` (default `openai,gemini`) orders the planner chain.
+- Lesson mode (`--lesson N`) defaults `WORKSHEET_PLANNER_V2=1` + `WORKSHEET_LLM_ADAPT=1`, scoped to the run; explicit values win, and `WORKSHEET_LLM_ADAPT=0` is a real opt-out (`adapt.rules.llm_adapt_enabled()`). The photo workflow's defaults are unchanged (legacy loop; D30/D31 promotion gate still pending).
 - `WORKSHEET_SKIP_ASSET_GEN=1` disables all image generation and forces the deterministic `pdf_classic` fallback (used by tests/CI). Offline runs with no API keys degrade to `pdf_classic` the same way.
 
 ## Session Handoff

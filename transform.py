@@ -453,15 +453,18 @@ def run_lesson_pipeline_collect_artifacts(
     is a pure function of the lesson number, so repeated runs land on the same
     ``lesson_<hash>.pdf``.
 
-    Defaults the adapt stage to the single-call planner (WORKSHEET_PLANNER_V2)
-    rather than the legacy Gemini-plan/GPT-judge/retry loop. This is scoped to
-    lesson mode only — the photo workflow's own default is untouched, since that
-    path has its own historical A/B gate history (see .claude/worksheet-project-
-    context.md, decision D30/D31). Lesson mode is new and has no such history;
-    the legacy loop was observed live on a full UFLI lesson producing an
-    over-cap 10-worksheet package after a rejected pedagogical judge verdict —
-    exactly the failure mode planner-v2 was built to fix. Set
-    WORKSHEET_PLANNER_V2=0 explicitly to opt back into the legacy loop.
+    Defaults the adapt stage to the single-call planner (WORKSHEET_PLANNER_V2=1
+    plus its prerequisite WORKSHEET_LLM_ADAPT=1 — the planner is a no-op without
+    it) rather than the legacy Gemini-plan/GPT-judge/retry loop. This is scoped
+    to lesson mode only — the photo workflow's own default is untouched, since
+    that path has its own historical A/B gate history (see .claude/worksheet-
+    project-context.md, decisions D30/D31). Lesson mode is new and has no such
+    history; the legacy loop was observed live on a full UFLI lesson producing
+    an over-cap 10-worksheet package after a rejected pedagogical judge verdict —
+    exactly the failure mode planner-v2 was built to fix. Explicitly set
+    WORKSHEET_PLANNER_V2=0 to opt back into the legacy loop, or
+    WORKSHEET_LLM_ADAPT=0 to disable LLM adaptation entirely (deterministic
+    engine, zero adapt-stage LLM calls).
     """
     from skill.lesson_loader import skill_model_from_lesson
 
@@ -482,13 +485,19 @@ def run_lesson_pipeline_collect_artifacts(
     # Deterministic source hash for the content-hash chain (transform.py content_hash).
     source_image_hash = hashlib.sha256(f"ufli_lesson:{lesson_number}".encode()).hexdigest()[:16]
 
-    # Scoped, restorable default — only takes effect if the caller hasn't set
-    # WORKSHEET_PLANNER_V2 themselves, and never leaks the setting beyond this
-    # call (important since os.environ is process-global and shared across
-    # tests in the same session).
-    had_planner_v2 = "WORKSHEET_PLANNER_V2" in os.environ
-    if not had_planner_v2:
-        os.environ["WORKSHEET_PLANNER_V2"] = "1"
+    # Scoped, restorable defaults — each only takes effect if the caller hasn't
+    # set that variable themselves, and never leaks beyond this call (important
+    # since os.environ is process-global and shared across tests in the same
+    # session). WORKSHEET_LLM_ADAPT must be defaulted alongside PLANNER_V2:
+    # plan_lesson_llm() is a no-op without it, and silently falling to the
+    # deterministic engine reproduces the 10-worksheet overflow this default
+    # exists to prevent.
+    lesson_mode_defaults = {"WORKSHEET_PLANNER_V2": "1", "WORKSHEET_LLM_ADAPT": "1"}
+    applied: list[str] = []
+    for key, value in lesson_mode_defaults.items():
+        if key not in os.environ:
+            os.environ[key] = value
+            applied.append(key)
     try:
         return _run_from_skill_model(
             skill_model,
@@ -506,8 +515,8 @@ def run_lesson_pipeline_collect_artifacts(
             render_mode=render_mode,
         )
     finally:
-        if not had_planner_v2:
-            os.environ.pop("WORKSHEET_PLANNER_V2", None)
+        for key in applied:
+            os.environ.pop(key, None)
 
 
 def _run_single_worksheet_pipeline(

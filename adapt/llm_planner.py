@@ -34,6 +34,7 @@ from adapt.llm_judge import (
     derive_objective_approval,
     judge_adaptation_samples,
     judge_objective_adaptation_samples,
+    openai_text_model,
 )
 from adapt.objective_ledger import (
     ObjectiveCell,
@@ -41,7 +42,7 @@ from adapt.objective_ledger import (
     RequiredForm,
     build_objective_ledger,
 )
-from adapt.rules import AccommodationRules, build_rules
+from adapt.rules import AccommodationRules, build_rules, llm_adapt_enabled
 from adapt.schema import AdaptedActivityModel
 from adapt.section_cap import enforce_section_cap
 from companion.schema import LearnerProfile
@@ -98,7 +99,7 @@ def _call_planner(prompt: str) -> tuple[str | None, str]:
         if provider == "openai" and os.environ.get("OPENAI_API_KEY"):
             text = _call_openai(prompt, max_completion_tokens=PLANNER_MAX_COMPLETION_TOKENS)
             if text:
-                return text, "gpt-5.4"
+                return text, openai_text_model()
         elif provider == "gemini" and os.environ.get("GEMINI_API_KEY"):
             model = os.environ.get("WORKSHEET_PLANNER_GEMINI_MODEL", DEFAULT_PLANNER_GEMINI_MODEL)
             text = _call_gemini(prompt, model=model)
@@ -445,7 +446,7 @@ def plan_lesson_llm(
     Returns worksheets on success, or None when the deterministic engine
     should take over (no keys, parse failure, or judge rejected twice).
     """
-    if not os.environ.get("WORKSHEET_LLM_ADAPT"):
+    if not llm_adapt_enabled():
         return None
 
     # Flag mutual-exclusion: never run both coverage systems at once. No-op unless

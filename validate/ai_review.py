@@ -227,15 +227,17 @@ def _review_with_gemini(adapted: AdaptedActivityModel, api_key: str) -> ReviewRe
 
 
 def _review_with_openai(adapted: AdaptedActivityModel, api_key: str) -> ReviewResult | None:
-    """Run quality review using OpenAI GPT-5.4."""
+    """Run quality review using the configured OpenAI text model."""
     try:
         from openai import OpenAI
+
+        from adapt.llm_judge import openai_text_model
 
         client = OpenAI(api_key=api_key)
         prompt = _build_review_prompt(adapted)
 
         response = client.chat.completions.create(
-            model="gpt-5.4",
+            model=openai_text_model(),
             messages=[{"role": "user", "content": prompt}],
             max_completion_tokens=1024,
         )

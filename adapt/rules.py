@@ -2,9 +2,22 @@
 
 from __future__ import annotations
 
+import os
+
 from pydantic import BaseModel
 
 from companion.schema import LearnerProfile
+
+
+def llm_adapt_enabled() -> bool:
+    """Whether LLM-assisted adaptation is enabled (WORKSHEET_LLM_ADAPT).
+
+    Single source of truth for the flag shared by the planner (v2), the legacy
+    orchestrator, and the direct Gemini adapter. "0" is an explicit opt-out —
+    the documented D31 semantics — not a truthy enable, so callers must use
+    this helper instead of `os.environ.get("WORKSHEET_LLM_ADAPT")` directly.
+    """
+    return os.environ.get("WORKSHEET_LLM_ADAPT", "") not in {"", "0"}
 
 # Items per chunk by grade level and chunking preference
 CHUNKING_RULES: dict[str, dict[str, int]] = {

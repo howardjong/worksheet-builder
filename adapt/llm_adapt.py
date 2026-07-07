@@ -21,7 +21,7 @@ import re
 
 from pydantic import BaseModel, Field
 
-from adapt.rules import AccommodationRules, build_rules
+from adapt.rules import AccommodationRules, build_rules, llm_adapt_enabled
 from adapt.schema import (
     ActivityChunk,
     ActivityItem,
@@ -652,7 +652,7 @@ def llm_adapt_lesson(
     Returns a list of AdaptedActivityModel on success, or None if LLM
     is unavailable or fails (caller should fall back to deterministic engine).
     """
-    if not os.environ.get("WORKSHEET_LLM_ADAPT"):
+    if not llm_adapt_enabled():
         return None
 
     if rules is None:

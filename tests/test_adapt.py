@@ -5,12 +5,15 @@ from __future__ import annotations
 import tempfile
 from pathlib import Path
 
+import pytest
+
 from adapt.engine import adapt_activity, adapt_lesson
 from adapt.rules import (
     CHUNKING_RULES,
     INTENSITY_VISUALS,
     build_rules,
     get_substitute_format,
+    llm_adapt_enabled,
 )
 from adapt.schema import AdaptedActivityModel
 from companion.schema import (
@@ -266,6 +269,28 @@ class TestAccommodationRules:
         rules = build_rules(profile)
         assert rules.visual_intensity == "low"
         assert rules.max_decorative_elements == 1
+
+
+class TestLlmAdaptEnabled:
+    """WORKSHEET_LLM_ADAPT gate: '0' is a real opt-out (documented D31 semantics)."""
+
+    def test_unset_is_disabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("WORKSHEET_LLM_ADAPT", raising=False)
+        assert llm_adapt_enabled() is False
+
+    def test_empty_is_disabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("WORKSHEET_LLM_ADAPT", "")
+        assert llm_adapt_enabled() is False
+
+    def test_zero_is_disabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        # Before the shared helper, "0" was truthy and silently ENABLED the LLM
+        # paths — the opposite of the documented opt-out.
+        monkeypatch.setenv("WORKSHEET_LLM_ADAPT", "0")
+        assert llm_adapt_enabled() is False
+
+    def test_one_is_enabled(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("WORKSHEET_LLM_ADAPT", "1")
+        assert llm_adapt_enabled() is True
 
 
 # --- Adaptation Engine Tests ---

@@ -37,6 +37,19 @@ PAGE_WIDTH_PT = 612
 PAGE_HEIGHT_PT = 792
 
 
+def _attempts_per_provider() -> int:
+    """Per-provider generation attempts (WORKSHEET_IMAGE_MAX_ATTEMPTS, min 1).
+
+    Cost guardrail: each attempt is one image-generation call plus 1-2 gate
+    calls, across up to two providers per page. Dial down to 1-2 to cap spend
+    on runs where retry-until-the-gate-passes isn't worth the API cost.
+    """
+    try:
+        return max(1, int(os.environ.get("WORKSHEET_IMAGE_MAX_ATTEMPTS", "")))
+    except ValueError:
+        return MAX_ATTEMPTS_PER_PROVIDER
+
+
 class ImageGenRenderer:
     """Renders the whole worksheet page with an image model, gated and cached."""
 
@@ -47,10 +60,14 @@ class ImageGenRenderer:
     def __init__(
         self,
         providers: list[ImageProvider] | None = None,
-        max_attempts_per_provider: int = MAX_ATTEMPTS_PER_PROVIDER,
+        max_attempts_per_provider: int | None = None,
     ) -> None:
         self._providers = providers
-        self._max_attempts = max_attempts_per_provider
+        self._max_attempts = (
+            max_attempts_per_provider
+            if max_attempts_per_provider is not None
+            else _attempts_per_provider()
+        )
 
     def render(self, context: RenderContext) -> RenderResult:
         from companion.character_identity import CharacterIdentity

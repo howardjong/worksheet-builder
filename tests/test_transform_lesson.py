@@ -87,12 +87,20 @@ def test_lesson_mode_skips_capture_and_hashes_deterministically(
 def test_lesson_mode_defaults_planner_v2_and_restores_env(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Lesson mode defaults the adapt stage to planner-v2, scoped to the call only."""
+    """Lesson mode defaults planner-v2 AND its LLM_ADAPT prerequisite, call-scoped.
+
+    Both must be defaulted together: WORKSHEET_PLANNER_V2 alone routes the
+    engine to plan_lesson_llm, which is a no-op without WORKSHEET_LLM_ADAPT —
+    silently reproducing the deterministic 10-worksheet overflow.
+    """
     monkeypatch.delenv("WORKSHEET_PLANNER_V2", raising=False)
-    seen: list[str | None] = []
+    monkeypatch.delenv("WORKSHEET_LLM_ADAPT", raising=False)
+    seen: list[tuple[str | None, str | None]] = []
 
     def fake_run_from_skill_model(skill_model: Any, **kwargs: Any) -> RunArtifacts:
-        seen.append(os.environ.get("WORKSHEET_PLANNER_V2"))
+        seen.append(
+            (os.environ.get("WORKSHEET_PLANNER_V2"), os.environ.get("WORKSHEET_LLM_ADAPT"))
+        )
         return RunArtifacts(
             source_image_path=str(kwargs["source_image_path"]),
             source_image_hash=str(kwargs["source_image_hash"]),
@@ -121,19 +129,23 @@ def test_lesson_mode_defaults_planner_v2_and_restores_env(
         index_results=False,
     )
 
-    assert seen == ["1"]  # defaulted on for the duration of the call
+    assert seen == [("1", "1")]  # both defaulted on for the duration of the call
     assert "WORKSHEET_PLANNER_V2" not in os.environ  # restored afterward
+    assert "WORKSHEET_LLM_ADAPT" not in os.environ  # restored afterward
 
 
 def test_lesson_mode_respects_explicit_planner_v2_override(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """An explicit WORKSHEET_PLANNER_V2 (e.g. opting back into the legacy loop) wins."""
+    """Explicit overrides win: PLANNER_V2=0 (legacy opt-in) and LLM_ADAPT=0 (all-LLM off)."""
     monkeypatch.setenv("WORKSHEET_PLANNER_V2", "0")
-    seen: list[str | None] = []
+    monkeypatch.setenv("WORKSHEET_LLM_ADAPT", "0")
+    seen: list[tuple[str | None, str | None]] = []
 
     def fake_run_from_skill_model(skill_model: Any, **kwargs: Any) -> RunArtifacts:
-        seen.append(os.environ.get("WORKSHEET_PLANNER_V2"))
+        seen.append(
+            (os.environ.get("WORKSHEET_PLANNER_V2"), os.environ.get("WORKSHEET_LLM_ADAPT"))
+        )
         return RunArtifacts(
             source_image_path=str(kwargs["source_image_path"]),
             source_image_hash=str(kwargs["source_image_hash"]),
@@ -162,8 +174,9 @@ def test_lesson_mode_respects_explicit_planner_v2_override(
         index_results=False,
     )
 
-    assert seen == ["0"]  # explicit override is never clobbered
+    assert seen == [("0", "0")]  # explicit overrides are never clobbered
     assert os.environ["WORKSHEET_PLANNER_V2"] == "0"  # left exactly as the caller set it
+    assert os.environ["WORKSHEET_LLM_ADAPT"] == "0"
 
 
 def _worksheet(number: int, contents: list[str]) -> AdaptedActivityModel:

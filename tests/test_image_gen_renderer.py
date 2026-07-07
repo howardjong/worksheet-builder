@@ -302,3 +302,25 @@ def test_page_judge_criteria_expect_instructional_text() -> None:
     assert "no text" not in joined.lower()
     assert "THEME FIDELITY: Rainbow hair preserved" in criteria
     assert not any("EQUIPPED ITEMS" in criterion for criterion in criteria)
+
+
+def test_attempts_per_provider_env_knob(monkeypatch: pytest.MonkeyPatch) -> None:
+    """WORKSHEET_IMAGE_MAX_ATTEMPTS caps per-provider retries (cost guardrail)."""
+    from render.image_gen import ImageGenRenderer, _attempts_per_provider
+
+    monkeypatch.delenv("WORKSHEET_IMAGE_MAX_ATTEMPTS", raising=False)
+    assert _attempts_per_provider() == 3  # default unchanged
+
+    monkeypatch.setenv("WORKSHEET_IMAGE_MAX_ATTEMPTS", "1")
+    assert _attempts_per_provider() == 1
+    assert ImageGenRenderer()._max_attempts == 1
+
+    monkeypatch.setenv("WORKSHEET_IMAGE_MAX_ATTEMPTS", "0")
+    assert _attempts_per_provider() == 1  # clamped to at least one attempt
+
+    monkeypatch.setenv("WORKSHEET_IMAGE_MAX_ATTEMPTS", "not-a-number")
+    assert _attempts_per_provider() == 3  # garbage falls back to the default
+
+    # An explicit constructor arg still wins over the env.
+    monkeypatch.setenv("WORKSHEET_IMAGE_MAX_ATTEMPTS", "1")
+    assert ImageGenRenderer(max_attempts_per_provider=2)._max_attempts == 2

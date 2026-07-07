@@ -29,7 +29,7 @@ from adapt.llm_judge import (
     _call_openai,
     judge_adaptation,
 )
-from adapt.rules import AccommodationRules, build_rules
+from adapt.rules import AccommodationRules, build_rules, llm_adapt_enabled
 from adapt.schema import AdaptedActivityModel
 from companion.schema import LearnerProfile
 from skill.schema import LiteracySkillModel
@@ -70,7 +70,7 @@ def orchestrate_llm_adaptation(
     Returns worksheets on success, or None if both LLMs are unavailable
     (caller should fall back to deterministic engine).
     """
-    if not os.environ.get("WORKSHEET_LLM_ADAPT"):
+    if not llm_adapt_enabled():
         return None
 
     if rules is None:

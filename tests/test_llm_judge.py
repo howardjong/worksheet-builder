@@ -15,6 +15,7 @@ from adapt.llm_judge import (
     _build_judge_prompt,
     _build_objective_judge_prompt,
     judge_adaptation_samples,
+    openai_text_model,
 )
 from adapt.objective_ledger import EvidenceItem, build_objective_ledger
 from adapt.schema import (
@@ -88,6 +89,15 @@ def _worksheet() -> AdaptedActivityModel:
         worksheet_count=1,
         worksheet_title="Magic E",
     )
+
+
+def test_openai_text_model_defaults_and_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
+    """One knob (WORKSHEET_OPENAI_TEXT_MODEL) swaps the judge/planner/review model."""
+    monkeypatch.delenv("WORKSHEET_OPENAI_TEXT_MODEL", raising=False)
+    assert openai_text_model() == "gpt-5.4"
+
+    monkeypatch.setenv("WORKSHEET_OPENAI_TEXT_MODEL", "gpt-6-mini")
+    assert openai_text_model() == "gpt-6-mini"
 
 
 def test_judge_prompt_carries_full_item_text() -> None:
