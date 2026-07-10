@@ -84,9 +84,12 @@ Replace `self_assessment: list[str]` in `adapt/schema.py` with a structured
 - **Every sheet — child strip ("How did it go?"):** one traffic-light row
   (green / yellow / red circle) per section on that sheet. Child circles one per
   section.
-- **Last sheet only — parent quick-log box:** per section `__ / N correct`;
-  smooth vs. choppy circle; help level (none / some / lots); plus a printed
-  next-step hint using the research thresholds:
+- **Every sheet — parent quick-log rows** (amended during planning: a
+  last-sheet-only box cannot enumerate other sheets' sections, because design
+  specs compile per worksheet; logging while fresh is also better for the
+  parent): per section on that sheet `__ / N correct`; smooth vs. choppy
+  circle; help level (none / some / lots). The printed next-step hint appears
+  on the **last sheet only**, using the research thresholds:
   - mostly green + ≥90% correct + no help → next lesson
   - mixed / slow / some help → repeat this skill with fresh words
   - lots of red or <70% correct → step back one lesson
