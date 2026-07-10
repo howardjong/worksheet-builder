@@ -33,7 +33,6 @@ from extract.ocr import extract_text_with_fallback
 from extract.schema import SourceWorksheetModel
 from extract.vision import extract_with_vision
 from render.design_spec import RenderMode, WorksheetDesignSpec, compile_worksheet_design_spec
-from render.pdf import render_cover_page
 from render.strategies import RenderContext, RenderResult, RenderStrategy, resolve_render_strategy
 from skill.extractor import extract_skill
 from skill.schema import LiteracySkillModel
@@ -976,17 +975,10 @@ def _run_multi_worksheet_pipeline(
         and strategy.produces_pdf
     )
 
-    # Generate cover image + cover page + merge into single PDF
+    # Merge worksheets into a single lesson PDF (no cover — session 60)
     if strategy.produces_pdf:
         pdf_paths = _merge_lesson_package(
-            skill_model=skill_model,
-            worksheets=worksheets,
-            theme=theme,
-            theme_id=theme_id,
-            profile=profile,
-            content_hash=content_hash,
-            pdf_paths=pdf_paths,
-            output=output,
+            content_hash=content_hash, pdf_paths=pdf_paths, output=output
         )
         renderer_artifact_paths = pdf_paths
         final_print_result = _validate_final_print_quality(pdf_paths[0], artifacts)
@@ -1038,67 +1030,16 @@ def _render_artifacts_dir(artifacts: Path, strategy: RenderStrategy, worksheet_n
     return artifacts / f"render_{worksheet_number}"
 
 
-def _merge_lesson_package(
-    skill_model: object,
-    worksheets: list[AdaptedActivityModel],
-    theme: object,
-    theme_id: str,
-    profile: object,
-    content_hash: str,
-    pdf_paths: list[str],
-    output: Path,
-) -> list[str]:
-    """Generate cover page + merge all worksheets into a single lesson PDF.
+def _merge_lesson_package(content_hash: str, pdf_paths: list[str], output: Path) -> list[str]:
+    """Merge all worksheet PDFs into a single lesson package (no cover page).
 
-    Returns updated pdf_paths (single merged file).
+    Owner decision 2026-07-10: the cover delivered zero practice value; the
+    learning goal moved into page banners. Printed pages == budgeted sheets.
     """
-    from companion.character_identity import resolve_character_identity
-    from companion.schema import LearnerProfile
-    from render.asset_gen import generate_cover_image
     from render.merge import merge_worksheet_package
-    from skill.schema import LiteracySkillModel
-    from theme.schema import ThemeConfig
 
-    assert isinstance(skill_model, LiteracySkillModel)
-    assert isinstance(profile, LearnerProfile)
-    assert isinstance(theme, ThemeConfig)
-    avatar = getattr(profile, "avatar", None)
-    identity = resolve_character_identity(
-        profile,
-        theme_id,
-        pose="celebrating",
-        character_spec=theme.character_spec if theme.character_spec.art_style else None,
-    )
-
-    # Generate cover image (optional — falls back gracefully)
-    cover_image_path = generate_cover_image(
-        skill_description=f"{skill_model.domain}: {skill_model.specific_skill}",
-        target_words=skill_model.target_words[:10],
-        theme_spec=theme.character_spec if theme.character_spec.art_style else None,
-        worksheet_hash=content_hash,
-        character_name=avatar.base_character if avatar else "rainbow_roblox",
-        style_sheet=(avatar.style_sheet if avatar and avatar.style_sheet else None),
-        profile=profile,
-        theme_id=theme_id,
-        identity=identity,
-    )
-
-    # Render cover page PDF
-    cover_path = str(output / f"_cover_{content_hash}.pdf")
-    render_cover_page(
-        skill_model=skill_model,
-        worksheets=worksheets,
-        theme=theme,
-        output_path=cover_path,
-        cover_image_path=cover_image_path,
-        profile_name=getattr(profile, "name", None),
-    )
-
-    # Merge into single PDF
-    merged_filename = f"lesson_{content_hash}.pdf"
-    merged_path = str(output / merged_filename)
-    merge_worksheet_package(cover_path, pdf_paths, merged_path, cleanup=True)
-
+    merged_path = str(output / f"lesson_{content_hash}.pdf")
+    merge_worksheet_package(pdf_paths, merged_path, cleanup=True)
     return [merged_path]
 
 

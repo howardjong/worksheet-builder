@@ -14,7 +14,14 @@ from click.testing import CliRunner
 
 import corpus.ufli.lookup as lookup_module
 import transform as transform_module
-from adapt.schema import ActivityChunk, ActivityItem, AdaptedActivityModel, ScaffoldConfig, Step
+from adapt.schema import (
+    ActivityChunk,
+    ActivityItem,
+    AdaptedActivityModel,
+    FeedbackPanel,
+    ScaffoldConfig,
+    Step,
+)
 from corpus.ufli.lookup import reset_lookup_cache
 from transform import RunArtifacts, run_lesson_pipeline_collect_artifacts, transform
 from validate.ai_review import ReviewResult
@@ -264,7 +271,7 @@ def _worksheet(number: int, contents: list[str]) -> AdaptedActivityModel:
         decoration_zones=[],
         worksheet_number=number,
         worksheet_count=3,
-        self_assessment=["I practiced ay words."],
+        feedback=FeedbackPanel(goal_statement="I practiced ay words."),
     )
 
 
@@ -349,6 +356,89 @@ def test_lesson_mode_produces_stable_lesson_pdf(
     content_hash = hashlib.sha256(f"{source_hash}:Ian:roblox_obby".encode()).hexdigest()[:12]
     assert first.pdf_paths == second.pdf_paths  # stable across runs
     assert first.pdf_paths[0].endswith(f"lesson_{content_hash}.pdf")
+
+
+def test_lesson_pdf_has_no_cover_page(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The merged lesson PDF has no cover — session 60 dropped it entirely.
+
+    page_count must equal the worksheet count (previously worksheets + 1
+    cover), and page 1 must open on a worksheet (section banner), not the
+    old "What's Inside" cover text.
+
+    Unlike other lesson-pipeline tests, this one needs the real merge to run
+    over real per-worksheet PDFs, so it stubs render_worksheet to write an
+    actual one-page PDF (banner text stands in for the section banner)
+    instead of using _stub_lesson_pipeline's no-op, and leaves
+    _merge_lesson_package unstubbed.
+    """
+    import fitz
+    from reportlab.lib.pagesizes import letter
+    from reportlab.pdfgen.canvas import Canvas
+
+    monkeypatch.setenv("WORKSHEET_SKIP_ASSET_GEN", "1")
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    profile_path = tmp_path / "profile.yaml"
+    profile_path.write_text("name: Ian\ngrade_level: '2'\n", encoding="utf-8")
+
+    worksheets = [
+        _worksheet(1, ["day", "play", "stay"]),
+        _worksheet(2, ["say", "way", "tray"]),
+        _worksheet(3, ["clay", "gray"]),
+    ]
+
+    def fake_adapt_lesson(*a: Any, **k: Any) -> list[AdaptedActivityModel]:
+        artifacts_dir = k.get("artifacts_dir")
+        if artifacts_dir:
+            verdict = json.dumps({"approved": True, "overall_score": 1.0})
+            (Path(str(artifacts_dir)) / "judge_verdict.json").write_text(verdict)
+        return worksheets
+
+    def fake_review(
+        adapted: AdaptedActivityModel,
+    ) -> tuple[AdaptedActivityModel, list[ReviewResult]]:
+        review = ReviewResult(passed=True, issues=[], suggestions=[], skipped_no_api_key=True)
+        return adapted, [review]
+
+    def fake_print(*a: Any, **k: Any) -> ValidationResult:
+        return ValidationResult(validator="print_quality", passed=True, checks_run=1)
+
+    def fake_render_worksheet(
+        adapted: AdaptedActivityModel, theme: Any, output_path: str, *a: Any, **k: Any
+    ) -> str:
+        c = Canvas(output_path, pagesize=letter)
+        c.drawString(72, 720, f"Worksheet {adapted.worksheet_number} banner")
+        c.save()
+        return output_path
+
+    monkeypatch.setattr(transform_module, "adapt_lesson", fake_adapt_lesson)
+    monkeypatch.setattr(transform_module, "apply_theme", lambda *a, **k: None)
+    monkeypatch.setattr(transform_module, "review_adapted_worksheet", fake_review)
+    monkeypatch.setattr(transform_module, "validate_print_quality", fake_print)
+    monkeypatch.setattr(transform_module, "_should_generate_chunk_assets", lambda _mode: False)
+    monkeypatch.setattr("render.strategies.render_worksheet", fake_render_worksheet)
+
+    art = tmp_path / "art"
+    art.mkdir(exist_ok=True)
+
+    result = run_lesson_pipeline_collect_artifacts(
+        74,
+        str(profile_path),
+        "roblox_obby",
+        str(tmp_path / "out"),
+        str(art),
+        index_results=False,
+        render_mode="pdf_classic",
+    )
+
+    doc = fitz.open(result.pdf_paths[0])
+    try:
+        assert doc.page_count == len(worksheets)
+        first_page_text = doc.load_page(0).get_text()
+        assert "What's Inside" not in first_page_text
+    finally:
+        doc.close()
 
 
 def test_stale_run_artifacts_cleared_before_adapt(

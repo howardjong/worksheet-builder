@@ -14,7 +14,6 @@ from companion.character_identity import CharacterIdentity
 from companion.character_judge import CharacterJudgeResult
 from companion.schema import Accommodations, AvatarConfig, CharacterStyleSheet, LearnerProfile
 from render.asset_gen import (
-    _build_cover_prompt,
     _build_scene_generation_prompt,
     compute_worksheet_hash,
     generate_worksheet_assets,
@@ -25,7 +24,6 @@ from render.pdf import (
     MARGIN,
     PAGE_HEIGHT,
     PAGE_WIDTH,
-    render_cover_page,
     render_worksheet,
 )
 from render.pose_planner import ScenePlan, plan_scenes, plan_word_pictures
@@ -142,34 +140,6 @@ class TestRenderWorksheet:
             theme = load_theme("space")
             render_worksheet(adapted, theme, pdf_path)
             assert Path(pdf_path).exists()
-
-    def test_cover_page_renders(self) -> None:
-        """Cover page should render with skill info and worksheet list."""
-        skill = _phonics_skill()
-        worksheets = adapt_lesson(skill, _profile())
-        theme = load_theme("space")
-
-        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
-            cover_path = f.name
-
-        render_cover_page(
-            skill_model=skill,
-            worksheets=worksheets,
-            theme=theme,
-            output_path=cover_path,
-            profile_name="Test",
-        )
-        assert Path(cover_path).exists()
-        assert Path(cover_path).stat().st_size > 0
-
-        # Verify content
-        doc = fitz.open(cover_path)
-        assert doc.page_count == 1
-        text = doc.load_page(0).get_text()
-        assert "What's Inside" in text
-        assert "Grade 1" in text
-        doc.close()
-        Path(cover_path).unlink()
 
     def test_page_geometry_constants(self) -> None:
         assert PAGE_WIDTH == 612.0
@@ -665,33 +635,6 @@ class TestMultiWorksheetRender:
         assert "calm printable learning panels" in prompt
         assert "backpack=brown_backpack" in prompt
         assert "Calm printable Roblox/obby learning environment" in prompt
-
-    def test_cover_prompt_uses_identity_without_pixar_style_conflict(self) -> None:
-        theme = load_theme("roblox_obby")
-        identity = CharacterIdentity(
-            base_character="ian_learning_buddy",
-            base_image_path="assets/characters/ian_learning_buddy.png",
-            reference_image_dir="assets/style_sheets/ian_roblox_buddy",
-            canonical_reference_path="assets/style_sheets/ian_roblox_buddy/ref_front_character_crop.png",
-            pose_reference_path=None,
-            character_block="Ian has rainbow spiky hair and a blue lightning shirt.",
-            scene_guidelines="Use calm printable learning panels.",
-            item_style_notes="Accessories must not hide Ian's hair or shirt.",
-            equipped_items={},
-            identity_version="identity_v1_plain",
-        )
-
-        prompt = _build_cover_prompt(
-            "phonics: cvce_pattern",
-            ["grade", "slide"],
-            theme.character_spec,
-            identity,
-        )
-
-        assert "Ian has rainbow spiky hair" in prompt
-        assert "calm printable learning panels" in prompt
-        assert "Calm printable Roblox/obby learning environment" in prompt
-        assert "Pixar-like" not in prompt
 
     def test_scene_generation_invokes_judge_with_reference_and_generated_bytes(
         self,
