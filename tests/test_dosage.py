@@ -1,6 +1,7 @@
 """Dosage derivations from profile facts (spec 2026-07-10)."""
 
 from datetime import date
+from pathlib import Path
 
 import pytest
 
@@ -27,8 +28,8 @@ class _FrozenDate(date):
         return cls(2026, 7, 10)
 
 
-def _profile(**overrides) -> LearnerProfile:
-    data = {"name": "Ian", "grade_level": "2"}
+def _profile(**overrides: object) -> LearnerProfile:
+    data: dict[str, object] = {"name": "Ian", "grade_level": "2"}
     data.update(overrides)
     return LearnerProfile.model_validate(data)
 
@@ -91,7 +92,7 @@ def test_session_minutes_norm_and_clamps() -> None:
     assert session_minutes(g1, JULY) == 12  # 10 -> clamp 12
 
 
-def test_profile_yaml_roundtrip_with_new_fields(tmp_path) -> None:
+def test_profile_yaml_roundtrip_with_new_fields(tmp_path: Path) -> None:
     from companion.schema import load_profile, save_profile
 
     p = _profile(birthdate=IAN_BD, jurisdiction="CA-ON", adhd_severity="moderate")
