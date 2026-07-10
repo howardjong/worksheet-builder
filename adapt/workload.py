@@ -32,12 +32,14 @@ from __future__ import annotations
 
 import logging
 import math
+from datetime import date
 from typing import Literal
 
 from pydantic import BaseModel
 
 from adapt.objective_ledger import build_objective_ledger
 from adapt.rules import AccommodationRules
+from companion import dosage
 from companion.schema import LearnerProfile
 from skill.schema import LiteracySkillModel
 
@@ -53,6 +55,18 @@ GRADE_WORKLOAD: dict[str, tuple[int, int]] = {
     "3": (10, 30),
 }
 
+# Nominal essential-practice minutes per objective (policy encoding, same
+# spirit as GRADE_WORKLOAD; connected text is larger per its "1 page chunk"
+# sufficiency rule in adapt/objective_ledger.py).
+OBJECTIVE_MINUTES: dict[str, int] = {
+    "obj_decode": 4,
+    "obj_encode": 4,
+    "obj_manipulation": 4,
+    "obj_connected_text": 8,
+    "obj_irregular": 3,
+}
+_DEFAULT_OBJECTIVE_MINUTES = 4
+
 
 class PackageBudget(BaseModel):
     """Derived workload budget for one lesson + learner."""
@@ -67,23 +81,38 @@ class PackageBudget(BaseModel):
     max_worksheets: int
     objectives_overflow: bool
     rationale: str
+    age_years: float | None = None
+    severity: str = "moderate"
+    essential_minutes: int = 0
+    minute_sheets: int = 1
+    grade_source: str = "profile"
 
 
 def derive_package_budget(
     skill: LiteracySkillModel,
     profile: LearnerProfile,
     rules: AccommodationRules,
+    today: date | None = None,
 ) -> PackageBudget:
     """Balance objective demand against the evidence-based attention budget.
 
-    Objectives push the sheet count UP (they must be met first); the attention
-    budget is the hard ceiling (an unfinishable package teaches nothing). When
-    demand exceeds the ceiling, the package is capped and the overflow is
-    flagged loudly — the remainder belongs to a second sitting, not this one.
+    The CHILD owns the attention budget (derived from birthdate/jurisdiction/
+    severity when present, else the profile grade's table row) — the lesson's
+    grade never sets dosage (P4). Objectives push the sheet count UP in two
+    currencies (sections AND essential minutes); the attention ceiling is the
+    hard cap.
     """
-    segment_minutes, session_minutes = GRADE_WORKLOAD.get(
-        skill.grade_level, GRADE_WORKLOAD["1"]
+    today = today or date.today()
+    budget_grade, grade_source = dosage.grade_with_source(profile, today)
+    table_segment, table_session = GRADE_WORKLOAD.get(budget_grade, GRADE_WORKLOAD["1"])
+    segment_minutes = dosage.segment_minutes(profile, today) or table_segment
+    session_minutes = dosage.session_minutes(profile, today) or table_session
+    child_age = (
+        round(dosage.age_years(profile.birthdate, today), 1)
+        if profile.birthdate is not None
+        else None
     )
+    child_severity = dosage.severity(profile)
 
     adjustments: list[str] = []
 
@@ -105,24 +134,29 @@ def derive_package_budget(
     if profile.accommodations.chunking_level == "small":
         reduced = max(segment_minutes, session_minutes - segment_minutes)
         if reduced != session_minutes:
-            adjustments.append(
-                f"session {session_minutes}->{reduced} min (chunking_level=small)"
-            )
+            adjustments.append(f"session {session_minutes}->{reduced} min (chunking_level=small)")
             session_minutes = reduced
 
-    attention_max = max(1, session_minutes // segment_minutes)
+    attention_max = max(1, math.floor(session_minutes / segment_minutes + 0.5))
 
-    essential, sections_needed = _objective_demand(skill, rules)
-    sheets_needed = max(1, math.ceil(sections_needed / rules.max_sections_per_worksheet))
+    essential, sections_needed, essential_minutes = _objective_demand(skill, rules)
+    section_sheets = max(1, math.ceil(sections_needed / rules.max_sections_per_worksheet))
+    minute_sheets = (
+        max(1, math.ceil(essential_minutes / segment_minutes)) if essential_minutes else 1
+    )
+    sheets_needed = max(section_sheets, minute_sheets)
     max_worksheets = min(attention_max, sheets_needed)
     overflow = sheets_needed > attention_max
 
     rationale = (
-        f"grade {skill.grade_level}: segment {segment_minutes} min, session "
+        f"grade {budget_grade} ({grade_source}): segment {segment_minutes} min, session "
         f"{session_minutes} min -> attention ceiling {attention_max} sheet(s); "
-        f"{essential} essential objective(s) -> {sections_needed} section(s) -> "
-        f"{sheets_needed} sheet(s) needed -> cap {max_worksheets}"
+        f"{essential} essential objective(s) -> {sections_needed} section(s) + "
+        f"{essential_minutes} essential min -> {sheets_needed} sheet(s) needed "
+        f"-> cap {max_worksheets}"
     )
+    if child_age is not None:
+        rationale += f"; dosage: age {child_age}y x {child_severity}"
     if adjustments:
         rationale += "; adjustments: " + ", ".join(adjustments)
     if overflow:
@@ -132,7 +166,7 @@ def derive_package_budget(
         )
 
     return PackageBudget(
-        grade=skill.grade_level,
+        grade=budget_grade,
         segment_minutes=segment_minutes,
         session_minutes=session_minutes,
         attention_max_worksheets=attention_max,
@@ -142,14 +176,19 @@ def derive_package_budget(
         max_worksheets=max_worksheets,
         objectives_overflow=overflow,
         rationale=rationale,
+        age_years=child_age,
+        severity=child_severity,
+        essential_minutes=essential_minutes,
+        minute_sheets=minute_sheets,
+        grade_source=grade_source,
     )
 
 
 def _objective_demand(
     skill: LiteracySkillModel,
     rules: AccommodationRules,
-) -> tuple[int, int]:
-    """(essential objective count, practice sections needed to meet them).
+) -> tuple[int, int, int]:
+    """(essential count, sections needed, essential nominal minutes).
 
     Each essential objective cell needs ceil(min_practice_count /
     max_items_per_chunk) sections. Falls back to a per-source-item-category
@@ -163,13 +202,16 @@ def _objective_demand(
                 max(1, math.ceil(cell.min_practice_count / rules.max_items_per_chunk))
                 for cell in essential
             )
-            return len(essential), sections
+            minutes = sum(
+                OBJECTIVE_MINUTES.get(cell.objective_id, _DEFAULT_OBJECTIVE_MINUTES)
+                for cell in essential
+            )
+            return len(essential), sections, minutes
     except Exception as exc:
         logger.warning("Workload budget: objective ledger unavailable (%s)", exc)
 
     categories = {si.item_type for si in skill.source_items}
-    sections = max(1, len(categories))
-    return 0, sections
+    return 0, max(1, len(categories)), 0
 
 
 CapMode = Literal["auto"]
