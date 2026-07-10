@@ -9,6 +9,7 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
+from adapt.feedback import build_feedback_panel
 from adapt.rules import (
     BRAIN_BREAK_PROMPTS,
     AccommodationRules,
@@ -85,8 +86,8 @@ def adapt_activity(
         hint_level="full" if skill.grade_level in ("K", "1") else "partial",
     )
 
-    # Build self-assessment items
-    self_assessment = _build_self_assessment(skill)
+    # Build the print-only feedback panel
+    feedback = build_feedback_panel(skill.domain, skill.specific_skill)
 
     # Define decoration zones (safe areas that won't overlap content)
     decoration_zones = _define_decoration_zones()
@@ -103,7 +104,7 @@ def adapt_activity(
         theme_id=theme_id,
         decoration_zones=decoration_zones,
         avatar_prompts=None,  # MVP: no companion layer
-        self_assessment=self_assessment,
+        feedback=feedback,
     )
 
 
@@ -124,7 +125,7 @@ def _finalize_lesson_package(
         capped = enforce_package_cap(
             capped,
             package_cap,
-            fallback_self_assessment=_build_self_assessment(skill),
+            fallback_feedback=build_feedback_panel(skill.domain, skill.specific_skill),
         )
     return capped
 
@@ -355,7 +356,7 @@ def adapt_lesson(
                 ),
                 theme_id=theme_id,
                 decoration_zones=_define_decoration_zones(),
-                self_assessment=_build_self_assessment(skill),
+                feedback=build_feedback_panel(skill.domain, skill.specific_skill),
                 worksheet_number=1,
                 worksheet_title="Word Discovery",
                 break_prompt=BRAIN_BREAK_PROMPTS[0],
@@ -398,7 +399,7 @@ def adapt_lesson(
                 ),
                 theme_id=theme_id,
                 decoration_zones=_define_decoration_zones(),
-                self_assessment=None,
+                feedback=build_feedback_panel(skill.domain, skill.specific_skill),
                 worksheet_number=len(worksheets) + 1,
                 worksheet_title="Word Builder",
                 break_prompt=BRAIN_BREAK_PROMPTS[1 % len(BRAIN_BREAK_PROMPTS)],
@@ -432,7 +433,7 @@ def adapt_lesson(
                 ),
                 theme_id=theme_id,
                 decoration_zones=_define_decoration_zones(),
-                self_assessment=_build_self_assessment(skill),
+                feedback=build_feedback_panel(skill.domain, skill.specific_skill),
                 worksheet_number=len(worksheets) + 1,
                 worksheet_title="Story Time",
                 break_prompt=None,  # Last worksheet — no break needed
@@ -2002,24 +2003,6 @@ def _generate_micro_goal(
         return f"Read the story (Part {chunk_id})"
     else:
         return f"Complete {item_count} items (Part {chunk_id})"
-
-
-def _build_self_assessment(skill: LiteracySkillModel) -> list[str]:
-    """Build self-assessment checklist items."""
-    items = []
-
-    if skill.domain == "phonics":
-        items.append(f"I can read words with the {skill.specific_skill} pattern")
-        items.append("I can sound out new words")
-    elif skill.domain == "fluency":
-        items.append("I can read the story smoothly")
-        items.append("I can point to words as I read")
-    else:
-        items.append(f"I can practice {skill.domain} skills")
-
-    items.append("I'm still learning (and that's okay!)")
-
-    return items
 
 
 def _define_decoration_zones() -> list[tuple[float, float, float, float]]:

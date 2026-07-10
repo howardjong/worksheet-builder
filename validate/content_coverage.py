@@ -120,8 +120,10 @@ def validate_content_coverage_for_package(
             "worksheet_title": " ".join(
                 adapted.worksheet_title or "" for adapted in adapted_worksheets
             ),
-            "self_assessment": [
-                item for adapted in adapted_worksheets for item in (adapted.self_assessment or [])
+            "feedback_goals": [
+                adapted.feedback.goal_statement
+                for adapted in adapted_worksheets
+                if adapted.feedback
             ],
         }
     )
@@ -133,8 +135,9 @@ def _adapted_text(adapted: AdaptedActivityModel) -> str:
     parts: list[str] = []
     if adapted.worksheet_title:
         parts.append(adapted.worksheet_title)
-    if adapted.self_assessment:
-        parts.extend(adapted.self_assessment)
+    if adapted.feedback:
+        parts.append(adapted.feedback.goal_statement)
+        parts.append(adapted.feedback.child_prompt)
 
     for chunk in adapted.chunks:
         parts.append(chunk.micro_goal)

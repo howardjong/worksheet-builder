@@ -12,7 +12,7 @@ import logging
 import re
 
 from adapt.rules import BRAIN_BREAK_PROMPTS, TARGET_MAX_WORKSHEETS_PER_LESSON, AccommodationRules
-from adapt.schema import AdaptedActivityModel
+from adapt.schema import AdaptedActivityModel, FeedbackPanel
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +46,6 @@ def enforce_section_cap(
                     update={
                         "chunks": renumbered,
                         "worksheet_title": title,
-                        "self_assessment": ws.self_assessment if is_last_part else None,
                         "break_prompt": ws.break_prompt if is_last_part else None,
                     }
                 )
@@ -68,6 +67,11 @@ def enforce_section_cap(
                     "worksheet_number": idx + 1,
                     "worksheet_count": total,
                     "break_prompt": break_prompt,
+                    "feedback": (
+                        ws.feedback.model_copy(update={"show_decision_hint": is_last})
+                        if ws.feedback
+                        else None
+                    ),
                 }
             )
         )
@@ -87,7 +91,7 @@ def enforce_section_cap(
 def enforce_package_cap(
     worksheets: list[AdaptedActivityModel],
     max_worksheets: int,
-    fallback_self_assessment: list[str] | None = None,
+    fallback_feedback: FeedbackPanel | None = None,
 ) -> list[AdaptedActivityModel]:
     """Hard-cap the package size by keeping a family-balanced subset.
 
@@ -139,16 +143,18 @@ def enforce_package_cap(
     for idx, ws in enumerate(selected):
         is_last = idx == total - 1
         break_prompt = None if is_last else BRAIN_BREAK_PROMPTS[idx % len(BRAIN_BREAK_PROMPTS)]
-        self_assessment = ws.self_assessment
-        if is_last and not self_assessment:
-            self_assessment = fallback_self_assessment
+        feedback = ws.feedback or fallback_feedback
         final.append(
             ws.model_copy(
                 update={
                     "worksheet_number": idx + 1,
                     "worksheet_count": total,
                     "break_prompt": break_prompt,
-                    "self_assessment": self_assessment if is_last else None,
+                    "feedback": (
+                        feedback.model_copy(update={"show_decision_hint": is_last})
+                        if feedback
+                        else None
+                    ),
                 }
             )
         )

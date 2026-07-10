@@ -52,6 +52,20 @@ class ScaffoldConfig(BaseModel):
     hint_level: str = "full"  # "full" | "partial" | "none"
 
 
+class FeedbackPanel(BaseModel):
+    """Print-only feedback capture (spec 2026-07-10).
+
+    Child traffic-light strip + grown-up log rows render on every sheet; the
+    decision hint renders only where show_decision_hint is True (last sheet).
+    Field shape deliberately matches a future --record-results ingestion loop.
+    """
+
+    goal_statement: str  # child-friendly "I can..." goal; also the page banner ribbon
+    child_prompt: str = "How did it go? Circle one for each part."
+    parent_log_title: str = "Grown-up quick log"
+    show_decision_hint: bool = False
+
+
 class AdaptedActivityModel(BaseModel):
     """Stage 5 output: ADHD-optimized activity ready for theming and rendering."""
 
@@ -66,7 +80,7 @@ class AdaptedActivityModel(BaseModel):
     theme_id: str
     decoration_zones: list[tuple[float, float, float, float]]  # safe areas for illustrations
     avatar_prompts: list[str] | None = None  # None for MVP
-    self_assessment: list[str] | None = None  # "I can..." checklist items
+    feedback: FeedbackPanel | None = None  # print-only feedback panel (spec 2026-07-10)
     worksheet_number: int = 1  # which mini-worksheet this is (1, 2, or 3)
     worksheet_count: int = 1  # total mini-worksheets for this lesson
     worksheet_title: str | None = None  # e.g., "Word Discovery", "Word Builder"

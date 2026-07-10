@@ -357,12 +357,11 @@ class TestAdaptActivity:
             for item in chunk.items:
                 assert item.response_format == "read_aloud"
 
-    def test_self_assessment_generated(self) -> None:
+    def test_feedback_panel_generated(self) -> None:
         model = adapt_activity(_phonics_skill(), _grade_1_profile())
-        assert model.self_assessment is not None
-        assert len(model.self_assessment) >= 2
-        # Should end with growth mindset item
-        assert "still learning" in model.self_assessment[-1].lower()
+        assert model.feedback is not None
+        assert model.feedback.goal_statement == "I can read words with the cvc_blending pattern"
+        assert model.feedback.child_prompt == "How did it go? Circle one for each part."
 
     def test_decoration_zones_defined(self) -> None:
         model = adapt_activity(_phonics_skill(), _grade_1_profile())
@@ -933,9 +932,7 @@ class TestLessonPackageCapWiring:
         assert worksheets[-1].worksheet_count == len(worksheets)
         assert (tmp_path / "workload_budget.json").exists()
 
-    def test_unset_env_means_no_package_cap(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
+    def test_unset_env_means_no_package_cap(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("WORKSHEET_MAX_WORKSHEETS", raising=False)
         monkeypatch.delenv("WORKSHEET_LLM_ADAPT", raising=False)
         monkeypatch.delenv("WORKSHEET_PLANNER_V2", raising=False)

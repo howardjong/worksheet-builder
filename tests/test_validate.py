@@ -10,6 +10,7 @@ from adapt.schema import (
     ActivityChunk,
     ActivityItem,
     AdaptedActivityModel,
+    FeedbackPanel,
     ScaffoldConfig,
     Step,
 )
@@ -76,7 +77,7 @@ def _make_adapted(
     num_chunks: int = 1,
     response_format: str = "write",
     has_worked_example: bool = True,
-    has_self_assessment: bool = True,
+    has_feedback: bool = True,
     decoration_zones: list[tuple[float, float, float, float]] | None = None,
 ) -> AdaptedActivityModel:
     """Build a custom adapted model for testing specific violations."""
@@ -119,9 +120,7 @@ def _make_adapted(
         scaffolding=ScaffoldConfig(),
         theme_id="default",
         decoration_zones=decoration_zones or [(0.85, 0.0, 1.0, 0.12)],
-        self_assessment=(
-            ["I can read CVC words", "I'm still learning"] if has_self_assessment else None
-        ),
+        feedback=(FeedbackPanel(goal_statement="I can read CVC words") if has_feedback else None),
     )
 
 
@@ -291,10 +290,10 @@ class TestAdhdCompliance:
         without_rules = validate_adhd_compliance(adapted)
         assert [v for v in without_rules.violations if v.check == "decoration_budget"]
 
-    def test_missing_self_assessment_warns(self) -> None:
-        adapted = _make_adapted(has_self_assessment=False)
+    def test_missing_feedback_panel_warns(self) -> None:
+        adapted = _make_adapted(has_feedback=False)
         result = validate_adhd_compliance(adapted)
-        violations = [v for v in result.violations if v.check == "self_assessment_present"]
+        violations = [v for v in result.violations if v.check == "feedback_panel_present"]
         assert len(violations) == 1
         assert violations[0].severity == "warning"
 
@@ -434,7 +433,7 @@ def _worksheet_with_n_chunks(count: int, grade: str = "1") -> AdaptedActivityMod
         scaffolding=ScaffoldConfig(),
         theme_id="default",
         decoration_zones=[(0.85, 0.0, 1.0, 0.12)],
-        self_assessment=["I can read CVC words"],
+        feedback=FeedbackPanel(goal_statement="I can read CVC words"),
     )
 
 

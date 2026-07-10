@@ -133,12 +133,12 @@ def validate_adhd_compliance(
             severity="warning",
         )
 
-    # Check 7: Self-assessment checklist
+    # Check 7: Feedback panel
     result.checks_run += 1
-    if not adapted.self_assessment:
+    if not adapted.feedback:
         result.add_violation(
-            check="self_assessment_present",
-            message="Self-assessment checklist is missing",
+            check="feedback_panel_present",
+            message="Feedback panel is missing",
             severity="warning",
         )
 

@@ -73,9 +73,7 @@ def review_adapted_worksheet(
             logger.info(f"  AI review passed on iteration {iteration}")
             return adapted, reviews
 
-        logger.info(
-            f"  Found {len(result.issues)} issues, " f"{len(result.suggestions)} suggestions"
-        )
+        logger.info(f"  Found {len(result.issues)} issues, {len(result.suggestions)} suggestions")
 
         # Apply suggestions
         if result.suggestions:
@@ -117,7 +115,7 @@ def _build_review_prompt(adapted: AdaptedActivityModel) -> str:
         items_desc = []
         for item in chunk.items:
             items_desc.append(
-                f'    - Item {item.item_id}: "{item.content}" ' f"(format: {item.response_format})"
+                f'    - Item {item.item_id}: "{item.content}" (format: {item.response_format})'
             )
         chunks_desc.append(
             f"  Chunk {chunk.chunk_id}: {chunk.micro_goal}\n"
@@ -131,9 +129,10 @@ def _build_review_prompt(adapted: AdaptedActivityModel) -> str:
         f"Theme: {adapted.theme_id}\n\n" + "\n\n".join(chunks_desc)
     )
 
-    if adapted.self_assessment:
-        worksheet_text += "\n\nSelf-assessment:\n"
-        worksheet_text += "\n".join(f"  - {s}" for s in adapted.self_assessment)
+    if adapted.feedback:
+        worksheet_text += "\nFeedback panel:\n"
+        worksheet_text += f"  - Goal: {adapted.feedback.goal_statement}\n"
+        worksheet_text += f"  - {adapted.feedback.child_prompt}"
 
     criteria_text = "\n".join(f"- {c}" for c in QUALITY_CRITERIA)
 

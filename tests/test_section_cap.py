@@ -11,6 +11,7 @@ from adapt.schema import (
     ActivityChunk,
     ActivityItem,
     AdaptedActivityModel,
+    FeedbackPanel,
     ScaffoldConfig,
     Step,
 )
@@ -47,7 +48,7 @@ def _worksheet(
     count: int = 1,
     title: str | None = "Word Work",
     break_prompt: str | None = None,
-    self_assessment: list[str] | None = None,
+    feedback: FeedbackPanel | None = None,
 ) -> AdaptedActivityModel:
     return AdaptedActivityModel(
         source_hash="s",
@@ -64,14 +65,14 @@ def _worksheet(
         worksheet_count=count,
         worksheet_title=title,
         break_prompt=break_prompt,
-        self_assessment=self_assessment,
+        feedback=feedback,
     )
 
 
 def test_compliant_package_unchanged() -> None:
     package = [
         _worksheet(2, number=1, count=2, break_prompt="Stretch!"),
-        _worksheet(3, number=2, count=2, self_assessment=["I can read"]),
+        _worksheet(3, number=2, count=2, feedback=FeedbackPanel(goal_statement="I can read")),
     ]
     result = enforce_section_cap(package, _rules("1"))
 
@@ -80,11 +81,12 @@ def test_compliant_package_unchanged() -> None:
     assert all(ws.worksheet_count == 2 for ws in result)
     assert result[0].break_prompt == "Stretch!"
     assert result[1].break_prompt is None
-    assert result[1].self_assessment == ["I can read"]
+    assert result[1].feedback is not None
+    assert result[1].feedback.goal_statement == "I can read"
 
 
 def test_nine_section_worksheet_splits_without_dropping_content() -> None:
-    package = [_worksheet(9, self_assessment=["I can read"])]
+    package = [_worksheet(9, feedback=FeedbackPanel(goal_statement="I can read"))]
     result = enforce_section_cap(package, _rules("1"))
 
     # Grade 1 cap is 3: 9 sections -> 3 worksheets of 3.
@@ -100,9 +102,9 @@ def test_nine_section_worksheet_splits_without_dropping_content() -> None:
     # Titles disambiguated
     assert result[0].worksheet_title == "Word Work (Part 1)"
     assert result[2].worksheet_title == "Word Work (Part 3)"
-    # Self-assessment only on the final part; breaks on non-final parts
-    assert result[0].self_assessment is None
-    assert result[2].self_assessment == ["I can read"]
+    # Feedback panel carries to every part; decision hint only on the final part
+    assert all(ws.feedback is not None for ws in result)
+    assert [ws.feedback.show_decision_hint for ws in result] == [False, False, True]
     assert result[0].break_prompt is not None
     assert result[1].break_prompt is not None
     assert result[2].break_prompt is None
@@ -118,13 +120,15 @@ def test_split_uses_grade_cap() -> None:
 def test_at_target_worksheet_count_logs_no_warning(caplog: pytest.LogCaptureFixture) -> None:
     """3 worksheets (the AGENTS.md target) should not trigger the overflow warning."""
     with caplog.at_level(logging.WARNING, logger="adapt.section_cap"):
-        enforce_section_cap([_worksheet(9, self_assessment=["I can read"])], _rules("1"))
+        enforce_section_cap(
+            [_worksheet(9, feedback=FeedbackPanel(goal_statement="I can read"))], _rules("1")
+        )
     assert not caplog.records
 
 
 def test_over_target_worksheet_count_logs_warning(caplog: pytest.LogCaptureFixture) -> None:
     """Splitting past the 3-worksheet target logs a warning but still preserves content."""
-    package = [_worksheet(13, self_assessment=["I can read"])]
+    package = [_worksheet(13, feedback=FeedbackPanel(goal_statement="I can read"))]
     with caplog.at_level(logging.WARNING, logger="adapt.section_cap"):
         result = enforce_section_cap(package, _rules("1"))
 
@@ -175,15 +179,16 @@ class TestEnforcePackageCap:
         titles = [ws.worksheet_title for ws in result]
         assert titles == ["Word Discovery (Part 1)", "Word Discovery (Part 2)"]
 
-    def test_last_worksheet_gets_fallback_self_assessment(self) -> None:
+    def test_last_worksheet_gets_fallback_feedback(self) -> None:
         package = (
             [_part("Word Discovery", i, 10, i) for i in range(1, 5)]
             + [_part("Word Builder", i, 10, 4 + i) for i in range(1, 5)]
             + [_part("Story Time", i, 10, 8 + i) for i in range(1, 3)]
         )
-        result = enforce_package_cap(package, 3, fallback_self_assessment=["I did it"])
-        assert result[-1].self_assessment == ["I did it"]
-        assert all(ws.self_assessment is None for ws in result[:-1])
+        fallback = FeedbackPanel(goal_statement="I did it")
+        result = enforce_package_cap(package, 3, fallback_feedback=fallback)
+        assert [ws.feedback.goal_statement for ws in result] == ["I did it"] * 3
+        assert [ws.feedback.show_decision_hint for ws in result] == [False, False, True]
 
     def test_cap_logs_dropped_titles(self, caplog: pytest.LogCaptureFixture) -> None:
         package = [_part("Word Discovery", i, 4, i) for i in range(1, 5)]
