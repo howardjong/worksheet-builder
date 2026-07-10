@@ -13,6 +13,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen.canvas import Canvas
 
+from adapt.feedback import DECISION_HINT
 from adapt.schema import ActivityChunk, ActivityItem, AdaptedActivityModel
 from theme.assets import resolve_decoration
 from theme.schema import AssetManifest, ThemeConfig
@@ -56,6 +57,8 @@ LAYOUT_SPACING: dict[str, float] = {
 AVATAR_CLEARANCE = 90
 
 PAGE_BREAK_BUFFER = 20
+
+_TRAFFIC_LIGHT_COLORS = ("#2E9E44", "#E5B800", "#D64545")  # green / yellow / red
 
 _fonts_registered = False
 
@@ -201,13 +204,13 @@ def render_worksheet(
                 effective_bottom=content_bottom,
             )
 
-    # Brain break + self-assessment: treat as a combined block to avoid
+    # Brain break + feedback panel: treat as a combined block to avoid
     # each getting its own mostly-blank page
     tail_height = 0.0
     if adapted.break_prompt:
         tail_height += _estimate_break_prompt_height(sizes) + 12
-    if adapted.self_assessment:
-        tail_height += _estimate_self_assessment_height(adapted.self_assessment, sizes)
+    if adapted.feedback:
+        tail_height += _estimate_feedback_panel_height(adapted, sizes)
 
     if tail_height > 0 and y - tail_height < content_bottom + PAGE_BREAK_BUFFER:
         start_new_page()
@@ -222,10 +225,10 @@ def render_worksheet(
             effective_bottom=content_bottom,
         )
 
-    if adapted.self_assessment:
-        y = _draw_self_assessment(
+    if adapted.feedback:
+        y = _draw_feedback_panel(
             c,
-            adapted.self_assessment,
+            adapted,
             theme,
             sizes,
             y,
@@ -469,10 +472,18 @@ def _estimate_break_prompt_height(sizes: dict[str, int]) -> float:
     return body * 2 + 36
 
 
-def _estimate_self_assessment_height(items: list[str], sizes: dict[str, int]) -> float:
-    """Estimate the self-assessment block height."""
+def _estimate_feedback_panel_height(adapted: AdaptedActivityModel, sizes: dict[str, int]) -> float:
+    """Estimate the feedback panel block height (child strip + grown-up log)."""
     body = sizes["body"]
-    return len(items) * (body + 6) + body + 20
+    small = sizes["small"]
+    rows = len(adapted.chunks)
+    child = body + 10 + rows * (body + 6)
+    parent = body + 10 + rows * (small + 6)
+    hint = 0.0
+    if adapted.feedback and adapted.feedback.show_decision_hint:
+        max_chars = max(1, int((CONTENT_WIDTH - 10) / (small * 0.5)))
+        hint = len(_wrap_text(DECISION_HINT, max_chars)) * (small + 6)
+    return child + parent + hint + 20
 
 
 def _draw_header(
@@ -515,6 +526,12 @@ def _draw_header(
         subtitle = f"Domain: {domain_label} | Grade {adapted.grade_level}"
         c.drawString(MARGIN, y - sizes["small"], subtitle)
         y -= _line_spacing(sizes["small"]) + 4
+
+    if adapted.feedback:
+        c.setFont(theme.fonts.primary, sizes["small"])
+        c.setFillColor(HexColor(theme.colors.directions))
+        c.drawString(MARGIN, y - sizes["small"], adapted.feedback.goal_statement)
+        y -= _line_spacing(sizes["small"])
 
     # Header accent underline (short, colored)
     c.setStrokeColor(HexColor(theme.colors.directions))
@@ -1314,39 +1331,57 @@ def _draw_chunk_with_scene(
     return y_after
 
 
-def _draw_self_assessment(
+def _draw_feedback_panel(
     c: Canvas,
-    items: list[str],
+    adapted: AdaptedActivityModel,
     theme: ThemeConfig,
     sizes: dict[str, int],
     y: float,
     effective_bottom: float = CONTENT_BOTTOM,
 ) -> float:
-    """Draw self-assessment checklist at the bottom."""
-    # Check if enough space, otherwise new page
-    needed = len(items) * (sizes["body"] + 6) + sizes["body"] + 20
-    if y - needed < effective_bottom:
+    """Child traffic-light strip + grown-up quick log (spec 2026-07-10)."""
+    panel = adapted.feedback
+    if panel is None:
+        return y
+    body = sizes["body"]
+    small = sizes["small"]
+    if y - _estimate_feedback_panel_height(adapted, sizes) < effective_bottom:
         c.showPage()
         y = CONTENT_TOP
 
-    # Header
-    c.setFont(theme.fonts.heading, sizes["body"])
+    c.setFont(theme.fonts.heading, body)
     c.setFillColor(HexColor(theme.colors.rewards))
-    c.drawString(MARGIN, y - sizes["body"], "How did I do?")
-    y -= sizes["body"] + 10
-
-    # Checklist items
-    c.setFont(theme.fonts.primary, sizes["body"])
-    c.setFillColor(HexColor(theme.colors.text))
-    for item in items:
-        # Draw rounded checkbox in reward color
-        box_size = sizes["body"]
-        c.setStrokeColor(HexColor(theme.colors.rewards))
-        c.roundRect(MARGIN + 10, y - box_size, box_size, box_size, 3, fill=False, stroke=True)
+    c.drawString(MARGIN, y - body, panel.child_prompt)
+    y -= body + 10
+    for chunk in adapted.chunks:
+        c.setFont(theme.fonts.primary, body)
         c.setFillColor(HexColor(theme.colors.text))
-        c.drawString(MARGIN + 10 + box_size + 6, y - sizes["body"] + 2, item)
-        y -= sizes["body"] + 6
+        c.drawString(MARGIN + 10, y - body + 2, f"Part {chunk.chunk_id}")
+        x = MARGIN + 90
+        for color in _TRAFFIC_LIGHT_COLORS:
+            c.setStrokeColor(HexColor(color))
+            c.circle(x, y - body / 2, body / 2.5, fill=0, stroke=1)
+            x += body + 12
+        y -= body + 6
 
+    c.setFont(theme.fonts.heading, body)
+    c.setFillColor(HexColor(theme.colors.directions))
+    c.drawString(MARGIN, y - body, panel.parent_log_title)
+    y -= body + 10
+    c.setFont(theme.fonts.primary, small)
+    c.setFillColor(HexColor(theme.colors.text))
+    for chunk in adapted.chunks:
+        line = (
+            f"Part {chunk.chunk_id}: ___ of {len(chunk.items)} correct   "
+            "smooth / choppy   help: none / some / lots"
+        )
+        c.drawString(MARGIN + 10, y - small, line)
+        y -= small + 6
+    if panel.show_decision_hint:
+        max_chars = max(1, int((CONTENT_WIDTH - 10) / (small * 0.5)))
+        for ln in _wrap_text(DECISION_HINT, max_chars):
+            c.drawString(MARGIN + 10, y - small, ln)
+            y -= small + 6
     return y
 
 

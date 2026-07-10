@@ -9,6 +9,7 @@ import fitz
 from pytest import MonkeyPatch
 
 from adapt.engine import adapt_activity, adapt_lesson
+from adapt.schema import FeedbackPanel
 from companion.character_identity import CharacterIdentity
 from companion.character_judge import CharacterJudgeResult
 from companion.schema import Accommodations, AvatarConfig, CharacterStyleSheet, LearnerProfile
@@ -176,6 +177,32 @@ class TestRenderWorksheet:
         assert MARGIN > 0
         assert CONTENT_TOP < PAGE_HEIGHT
         assert CONTENT_BOTTOM > 0
+
+    def test_classic_pdf_renders_feedback_panel_and_goal(self) -> None:
+        """Feedback panel (child strip + grown-up log) and goal line should render."""
+        skill = _phonics_skill()
+        adapted = adapt_activity(skill, _profile())
+        adapted.feedback = FeedbackPanel(
+            goal_statement="I can read words with the y pattern",
+            show_decision_hint=True,
+        )
+        theme = load_theme("space")
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as f:
+            pdf_path = f.name
+        render_worksheet(adapted, theme, pdf_path)
+
+        doc = fitz.open(pdf_path)
+        text = "".join(doc.load_page(p).get_text() for p in range(doc.page_count))
+        doc.close()
+        Path(pdf_path).unlink()
+        # Normalize whitespace: the decision hint wraps across lines in the PDF.
+        flat_text = " ".join(text.split())
+
+        assert "I can read words with the y pattern" in flat_text
+        assert "How did it go? Circle one for each part." in flat_text
+        assert "Grown-up quick log" in flat_text
+        assert "step back one lesson" in flat_text
 
 
 class TestPrintQuality:
@@ -408,7 +435,7 @@ class TestMultiWorksheetRender:
             assert Path(pdf_path).stat().st_size > 0
             # Verify print quality
             result = validate_print_quality(pdf_path)
-            assert result.passed, f"Worksheet {i+1} failed print quality: {result.violations}"
+            assert result.passed, f"Worksheet {i + 1} failed print quality: {result.violations}"
             Path(pdf_path).unlink()
 
     def test_render_with_roblox_obby_theme(self) -> None:
