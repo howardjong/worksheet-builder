@@ -87,12 +87,24 @@ TIME_ESTIMATE_MINUTES: dict[str, int] = {
 MAX_SECTIONS_PER_WORKSHEET: dict[str, int] = {"K": 2, "1": 3, "2": 4, "3": 4}
 
 # Target lesson-package size ("2-3 mini-worksheets", AGENTS.md/adapt_lesson()
-# docstring). This is NOT enforced by trimming content — content preservation
-# is a tested invariant (adapt/section_cap.py). It exists so a package that
-# blows past the target is loud in logs instead of silently shipping, e.g. a
-# full UFLI lesson's raw content volume splitting into 10 mini-worksheets.
-# See adapt/section_cap.py:enforce_section_cap.
+# docstring). Splitting past it always logs a warning. When the caller also
+# sets WORKSHEET_MAX_WORKSHEETS (lesson mode defaults it to this value), the
+# package is HARD-capped by dropping lowest-priority parts — owner decision
+# 2026-07-07: a lesson package a child can finish in one sitting beats
+# exhaustive content ("should be 2-3 pages to keep within the ADHD attention
+# window"). The photo path, which doesn't set the env var, keeps the original
+# split-never-trim behavior.
 TARGET_MAX_WORKSHEETS_PER_LESSON = 3
+
+
+def max_worksheets_per_lesson() -> int | None:
+    """Hard package cap from WORKSHEET_MAX_WORKSHEETS (None = no cap)."""
+    raw = os.environ.get("WORKSHEET_MAX_WORKSHEETS", "")
+    try:
+        value = int(raw)
+    except ValueError:
+        return None
+    return value if value >= 1 else None
 
 # Color system — consistent across all worksheets
 COLOR_SYSTEM: dict[str, str] = {

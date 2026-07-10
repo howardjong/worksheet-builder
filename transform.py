@@ -505,10 +505,14 @@ def run_lesson_pipeline_collect_artifacts(
     # requiring every word. That rubric split is intentional: a photographed
     # single page CAN be fully covered, so the photo path keeps the strict
     # rubric and its own defaults.
+    # WORKSHEET_MAX_WORKSHEETS hard-caps the package (family-balanced trim in
+    # adapt/section_cap.py:enforce_package_cap) — owner decision 2026-07-07:
+    # 2-3 pages a child can finish in one sitting beats exhaustive coverage.
     lesson_mode_defaults = {
         "WORKSHEET_PLANNER_V2": "1",
         "WORKSHEET_LLM_ADAPT": "1",
         "WORKSHEET_OBJECTIVE_COVERAGE": "1",
+        "WORKSHEET_MAX_WORKSHEETS": "3",
     }
     if os.environ.get("WORKSHEET_PLANNER_SLOT_CONTRACT"):
         # Mutually exclusive coverage systems (plan_lesson_llm raises when both

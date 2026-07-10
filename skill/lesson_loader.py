@@ -10,6 +10,8 @@ otherwise).
 
 from __future__ import annotations
 
+import re
+
 from corpus.ufli.lookup import lookup_lesson
 from skill.extractor import (
     build_word_work_objectives,
@@ -84,12 +86,28 @@ def skill_model_from_lesson(lesson_number: int) -> LiteracySkillModel:
                 metadata=dict(_CORPUS_SOURCE),
             )
         )
-    # Home-practice sentences — the adapt engine splits and dedupes them.
-    if result.home_practice_text.strip():
+    # Home-practice content. The real corpus's home_practice_text is a raw dump
+    # of the home-practice PDF: section headers ("New Concept and Sample Words"),
+    # word-work chain scripts ("Change the nn to dd. What word is this?"),
+    # arrow chains with blanks, loose word lists, AND real student sentences —
+    # all concatenated. Passing it through raw produced garbled student items
+    # (observed live: lesson 74 "Story Time" shipped teacher-script fragments as
+    # fill-in tasks). Extract the two usable kinds of content and drop the rest.
+    chains, sentences = _home_practice_items(result.home_practice_text)
+    for chain in chains:
+        source_items.append(
+            SourceItem(
+                item_type="word_chain",
+                content=chain,
+                source_region_index=-1,
+                metadata=dict(_CORPUS_SOURCE),
+            )
+        )
+    if sentences:
         source_items.append(
             SourceItem(
                 item_type="sentence",
-                content=result.home_practice_text.strip(),
+                content=" ".join(sentences),
                 source_region_index=-1,
                 metadata=dict(_CORPUS_SOURCE),
             )
@@ -109,6 +127,99 @@ def skill_model_from_lesson(lesson_number: int) -> LiteracySkillModel:
         template_type="ufli_word_work",
         lesson_number=lesson_number,
     )
+
+
+# Chain: 2+ alphabetic words joined by arrows. Blank placeholders ("____ →")
+# ahead of the first real word are common in the source and are skipped.
+_CHAIN_PATTERN = re.compile(r"[a-z]+(?:\s*(?:→|->)\s*[a-z]+)+", re.IGNORECASE)
+
+# Teacher-script stems from UFLI word-work scripts — never student sentences.
+_SCRIPT_STEMS = (
+    "change the",
+    "what word",
+    "now change",
+    "now spell",
+    "if that word",
+    "add the",
+    "take away",
+    "replace the",
+)
+
+
+def _home_practice_items(text: str) -> tuple[list[str], list[str]]:
+    """Extract (word chains, student sentences) from a raw home-practice dump.
+
+    Everything else — section headers, chain scripts, loose word lists, blank
+    markers — is dropped. Conservative on purpose: a dropped sentence costs a
+    little practice; a kept script fragment ships garbage to a child.
+    """
+    if not text.strip():
+        return [], []
+
+    chains = [
+        " → ".join(re.split(r"\s*(?:→|->)\s*", m.group(0)))
+        for m in _CHAIN_PATTERN.finditer(text)
+    ]
+
+    # Sentences: split on terminal punctuation, keep the punctuation.
+    sentences: list[str] = []
+    for fragment in re.findall(r"[^.!?]+[.!?]", text):
+        candidate = _strip_non_sentence_prefix(fragment.strip())
+        if candidate is None:
+            continue
+        if len(candidate.split()) < 3:
+            continue
+        if any(marker in candidate for marker in ("→", "->", "_", "[", "]")):
+            continue
+        if any(stem in candidate.lower() for stem in _SCRIPT_STEMS):
+            continue
+        # Every token must be a plain word (letters, optional apostrophe).
+        body = candidate[:-1]  # drop terminal punctuation
+        if not all(re.fullmatch(r"[A-Za-z][a-z]*(?:'[a-z]+)?", w) for w in body.split()):
+            continue
+        sentences.append(candidate)
+    return chains, sentences
+
+
+# UFLI home-practice section-header vocabulary — a capitalized token from this
+# set is header residue, never the first word of a student sentence.
+_HEADER_TOKENS = frozenset(
+    {
+        "New",
+        "Concept",
+        "Sample",
+        "Word",
+        "Words",
+        "Work",
+        "Chain",
+        "Script",
+        "Sentences",
+        "Irregular",
+        "Lesson",
+        "Practice",
+        "Home",
+        "Roll",
+        "Read",
+    }
+)
+
+
+def _strip_non_sentence_prefix(fragment: str) -> str | None:
+    """Drop header/word-list residue that ran into a sentence without punctuation.
+
+    E.g. "New Irregular Words Sentences forty I will bring a teddy for the baby."
+    → "I will bring a teddy for the baby." A sentence start is a Capitalized word
+    followed by a lowercase word — skipping starts that are themselves header
+    vocabulary ("Sentences forty ..."). Returns None when the fragment contains
+    no plausible sentence start at all.
+    """
+    tokens = fragment.split()
+    for i in range(len(tokens) - 1):
+        if tokens[i] in _HEADER_TOKENS:
+            continue
+        if re.fullmatch(r"[A-Z][a-z']*", tokens[i]) and re.fullmatch(r"[a-z']+", tokens[i + 1]):
+            return " ".join(tokens[i:])
+    return None
 
 
 def _roll_and_read_words(text: str) -> list[str]:

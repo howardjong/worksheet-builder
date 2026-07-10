@@ -27,7 +27,10 @@ logger = logging.getLogger(__name__)
 _CACHE_DIR = Path(__file__).parent.parent / "assets" / "cache"
 _ASSETS_DIR = Path(__file__).parent.parent / "assets"
 _IMAGE_MODEL = "gemini-3.1-flash-image-preview"
-_LOCAL_ASSET_VERSION = "activity_v6"
+# v7: judge rejects blank canvases/frames/easels (owner UAT: cover character
+# pointed at an empty canvas). Bump invalidates cached covers/scenes so the
+# new criterion actually re-judges them.
+_LOCAL_ASSET_VERSION = "activity_v7"
 
 # Fallback character description — used only when no style sheet is available
 _FALLBACK_CHARACTER_DESC = (
@@ -418,6 +421,12 @@ def _scene_judge_criteria(
             "and free of distracting effects."
         ),
         "IMAGE QUALITY: Clean lines, no artifacts, no distortion, no screen effects, no text.",
+        (
+            "COMPLETENESS: No empty easels, blank canvases, blank picture frames, "
+            "blank signs, or placeholder boxes. Anything the character points at, "
+            "holds, or presents must show finished, lesson-relevant artwork "
+            "(e.g. pointing at a picture of a puppy, not at an empty white frame)."
+        ),
     ]
     if identity and identity.equipped_items:
         items = ", ".join(

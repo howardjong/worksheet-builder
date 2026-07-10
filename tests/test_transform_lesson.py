@@ -97,7 +97,8 @@ def test_lesson_mode_defaults_planner_v2_and_restores_env(
     monkeypatch.delenv("WORKSHEET_LLM_ADAPT", raising=False)
     monkeypatch.delenv("WORKSHEET_OBJECTIVE_COVERAGE", raising=False)
     monkeypatch.delenv("WORKSHEET_PLANNER_SLOT_CONTRACT", raising=False)
-    seen: list[tuple[str | None, str | None, str | None]] = []
+    monkeypatch.delenv("WORKSHEET_MAX_WORKSHEETS", raising=False)
+    seen: list[tuple[str | None, str | None, str | None, str | None]] = []
 
     def fake_run_from_skill_model(skill_model: Any, **kwargs: Any) -> RunArtifacts:
         seen.append(
@@ -105,6 +106,7 @@ def test_lesson_mode_defaults_planner_v2_and_restores_env(
                 os.environ.get("WORKSHEET_PLANNER_V2"),
                 os.environ.get("WORKSHEET_LLM_ADAPT"),
                 os.environ.get("WORKSHEET_OBJECTIVE_COVERAGE"),
+                os.environ.get("WORKSHEET_MAX_WORKSHEETS"),
             )
         )
         return RunArtifacts(
@@ -135,10 +137,11 @@ def test_lesson_mode_defaults_planner_v2_and_restores_env(
         index_results=False,
     )
 
-    assert seen == [("1", "1", "1")]  # all defaulted on for the duration of the call
+    assert seen == [("1", "1", "1", "3")]  # all defaulted on for the duration of the call
     assert "WORKSHEET_PLANNER_V2" not in os.environ  # restored afterward
     assert "WORKSHEET_LLM_ADAPT" not in os.environ  # restored afterward
     assert "WORKSHEET_OBJECTIVE_COVERAGE" not in os.environ  # restored afterward
+    assert "WORKSHEET_MAX_WORKSHEETS" not in os.environ  # restored afterward
 
 
 def test_lesson_mode_respects_explicit_planner_v2_override(

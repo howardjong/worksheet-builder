@@ -14,6 +14,7 @@ from adapt.rules import (
     AccommodationRules,
     build_rules,
     get_substitute_format,
+    max_worksheets_per_lesson,
 )
 from adapt.schema import (
     ActivityChunk,
@@ -23,7 +24,7 @@ from adapt.schema import (
     ScaffoldConfig,
     Step,
 )
-from adapt.section_cap import enforce_section_cap
+from adapt.section_cap import enforce_package_cap, enforce_section_cap
 from companion.schema import LearnerProfile
 from skill.schema import LiteracySkillModel
 
@@ -106,6 +107,27 @@ def adapt_activity(
     )
 
 
+def _finalize_lesson_package(
+    worksheets: list[AdaptedActivityModel],
+    rules: AccommodationRules,
+    skill: LiteracySkillModel,
+) -> list[AdaptedActivityModel]:
+    """Apply the section cap (split) then the optional package cap (trim).
+
+    The package cap only engages when WORKSHEET_MAX_WORKSHEETS is set — lesson
+    mode defaults it; the photo path doesn't, keeping split-never-trim there.
+    """
+    capped = enforce_section_cap(worksheets, rules)
+    package_cap = max_worksheets_per_lesson()
+    if package_cap is not None:
+        capped = enforce_package_cap(
+            capped,
+            package_cap,
+            fallback_self_assessment=_build_self_assessment(skill),
+        )
+    return capped
+
+
 def adapt_lesson(
     skill: LiteracySkillModel,
     profile: LearnerProfile,
@@ -138,7 +160,7 @@ def adapt_lesson(
                 character_identity=character_identity,
             )
             if direct_result:
-                return enforce_section_cap(direct_result, rules)
+                return _finalize_lesson_package(direct_result, rules, skill)
         except Exception as exc:
             logger.warning("Direct compiler failed, using fallback adaptation: %s", exc)
 
@@ -157,7 +179,7 @@ def adapt_lesson(
                 artifacts_dir=artifacts_dir,
             )
             if planned:
-                return enforce_section_cap(planned, rules)
+                return _finalize_lesson_package(planned, rules, skill)
         except Exception as exc:
             logger.warning("LLM planner failed, using deterministic engine: %s", exc)
     else:
@@ -174,7 +196,7 @@ def adapt_lesson(
                 artifacts_dir=artifacts_dir,
             )
             if llm_result:
-                return enforce_section_cap(llm_result, rules)
+                return _finalize_lesson_package(llm_result, rules, skill)
         except Exception as exc:
             logger.warning("LLM orchestration failed, using deterministic engine: %s", exc)
 
@@ -431,9 +453,9 @@ def adapt_lesson(
             rag_prior_adaptations=rag_prior_adaptations,
             rag_curriculum_references=rag_curriculum_references,
         )
-        return enforce_section_cap([single], rules)
+        return _finalize_lesson_package([single], rules, skill)
 
-    return enforce_section_cap(worksheets, rules)
+    return _finalize_lesson_package(worksheets, rules, skill)
 
 
 def _build_discovery_chunks(

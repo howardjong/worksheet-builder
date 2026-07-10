@@ -12,7 +12,10 @@ from __future__ import annotations
 from render.design_spec import SectionSpec, WorksheetDesignSpec
 
 # Bump when prompt structure changes — part of the page cache key.
-PROMPT_VERSION = "page_prompt_v1"
+# v2: match sections demand one picture per row in a single right-hand column
+# (owner UAT: two adjacent pictures confused the connect-the-dots task). Bump
+# invalidates the page cache so fixed prompts actually regenerate pages.
+PROMPT_VERSION = "page_prompt_v2"
 
 _FORMAT_AFFORDANCES: dict[str, str] = {
     "write": "a blank handwriting line wide enough for a child to print the answer",
@@ -20,8 +23,10 @@ _FORMAT_AFFORDANCES: dict[str, str] = {
     "trace": "the word in light dotted outline letters ready to trace",
     "circle": ("the option words spread out with space around each so a child can circle them"),
     "match": (
-        "two columns: words on the left, small simple pictures on the right, "
-        "with room to draw connecting lines"
+        "two columns with clear horizontal separation: words in a single column "
+        "on the left, small simple pictures in a single column on the right — "
+        "exactly one picture per row, never two pictures adjacent to each other, "
+        "with open white space between the columns to draw connecting lines"
     ),
     "read_aloud": "the text inside a soft reading box with a small read-aloud icon",
     "sound_box": "one empty square box per sound (Elkonin boxes) under the word",

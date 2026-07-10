@@ -14,7 +14,7 @@ from adapt.schema import (
     ScaffoldConfig,
     Step,
 )
-from adapt.section_cap import enforce_section_cap
+from adapt.section_cap import enforce_package_cap, enforce_section_cap
 from companion.schema import Accommodations, LearnerProfile
 
 
@@ -135,3 +135,60 @@ def test_over_target_worksheet_count_logs_warning(caplog: pytest.LogCaptureFixtu
     assert len(caplog.records) == 1
     assert "5 mini-worksheets" in caplog.records[0].message
     assert "not dropped" in caplog.records[0].message
+
+
+def _part(family: str, part: int, total: int, number: int) -> AdaptedActivityModel:
+    ws = _worksheet(2, number=number, count=total, title=f"{family} (Part {part})")
+    return ws
+
+
+class TestEnforcePackageCap:
+    def test_under_cap_is_untouched(self) -> None:
+        package = [_part("Word Discovery", 1, 2, 1), _part("Story Time", 1, 2, 2)]
+        assert enforce_package_cap(package, 3) is package
+
+    def test_round_robin_keeps_every_family(self) -> None:
+        """10-part package (4 Discovery, 4 Builder, 2 Story) → one of each family."""
+        package = (
+            [_part("Word Discovery", i, 10, i) for i in range(1, 5)]
+            + [_part("Word Builder", i, 10, 4 + i) for i in range(1, 5)]
+            + [_part("Story Time", i, 10, 8 + i) for i in range(1, 3)]
+        )
+        result = enforce_package_cap(package, 3)
+
+        titles = [ws.worksheet_title for ws in result]
+        assert titles == [
+            "Word Discovery (Part 1)",
+            "Word Builder (Part 1)",
+            "Story Time (Part 1)",
+        ]
+        assert [ws.worksheet_number for ws in result] == [1, 2, 3]
+        assert all(ws.worksheet_count == 3 for ws in result)
+        # Breaks between worksheets, none after the last.
+        assert result[0].break_prompt is not None
+        assert result[1].break_prompt is not None
+        assert result[2].break_prompt is None
+
+    def test_second_round_fills_remaining_slots(self) -> None:
+        package = [_part("Word Discovery", i, 4, i) for i in range(1, 5)]
+        result = enforce_package_cap(package, 2)
+        titles = [ws.worksheet_title for ws in result]
+        assert titles == ["Word Discovery (Part 1)", "Word Discovery (Part 2)"]
+
+    def test_last_worksheet_gets_fallback_self_assessment(self) -> None:
+        package = (
+            [_part("Word Discovery", i, 10, i) for i in range(1, 5)]
+            + [_part("Word Builder", i, 10, 4 + i) for i in range(1, 5)]
+            + [_part("Story Time", i, 10, 8 + i) for i in range(1, 3)]
+        )
+        result = enforce_package_cap(package, 3, fallback_self_assessment=["I did it"])
+        assert result[-1].self_assessment == ["I did it"]
+        assert all(ws.self_assessment is None for ws in result[:-1])
+
+    def test_cap_logs_dropped_titles(self, caplog: pytest.LogCaptureFixture) -> None:
+        package = [_part("Word Discovery", i, 4, i) for i in range(1, 5)]
+        with caplog.at_level(logging.WARNING, logger="adapt.section_cap"):
+            enforce_package_cap(package, 1)
+        joined = " ".join(r.message for r in caplog.records)
+        assert "keeping 1 of 4" in joined
+        assert "Word Discovery (Part 2)" in joined

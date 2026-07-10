@@ -9,11 +9,14 @@ adapt/engine.py:adapt_lesson()).
 from __future__ import annotations
 
 import logging
+import re
 
 from adapt.rules import BRAIN_BREAK_PROMPTS, TARGET_MAX_WORKSHEETS_PER_LESSON, AccommodationRules
 from adapt.schema import AdaptedActivityModel
 
 logger = logging.getLogger(__name__)
+
+_PART_SUFFIX = re.compile(r"\s*\(Part \d+\)$")
 
 
 def enforce_section_cap(
@@ -77,5 +80,76 @@ def enforce_section_cap(
             "if this recurs.",
             total,
             TARGET_MAX_WORKSHEETS_PER_LESSON,
+        )
+    return final
+
+
+def enforce_package_cap(
+    worksheets: list[AdaptedActivityModel],
+    max_worksheets: int,
+    fallback_self_assessment: list[str] | None = None,
+) -> list[AdaptedActivityModel]:
+    """Hard-cap the package size by keeping a family-balanced subset.
+
+    Owner decision 2026-07-07: a package the child can finish in one sitting
+    beats exhaustive coverage. Worksheets are grouped by title family ("Word
+    Discovery (Part 2)" → "Word Discovery") and selected round-robin — Part 1
+    of every family first, then Part 2s, and so on — so a capped package still
+    touches every activity family instead of, say, four flavors of Word
+    Discovery. Dropped titles are logged loudly.
+    """
+    if max_worksheets < 1 or len(worksheets) <= max_worksheets:
+        return worksheets
+
+    families: dict[str, list[AdaptedActivityModel]] = {}
+    order: list[str] = []
+    for ws in worksheets:
+        family = _PART_SUFFIX.sub("", ws.worksheet_title or "Untitled")
+        if family not in families:
+            families[family] = []
+            order.append(family)
+        families[family].append(ws)
+
+    selected: list[AdaptedActivityModel] = []
+    round_index = 0
+    while len(selected) < max_worksheets:
+        took_any = False
+        for family in order:
+            parts = families[family]
+            if round_index < len(parts) and len(selected) < max_worksheets:
+                selected.append(parts[round_index])
+                took_any = True
+        if not took_any:
+            break
+        round_index += 1
+
+    dropped = [ws.worksheet_title or "Untitled" for ws in worksheets if ws not in selected]
+    logger.warning(
+        "Package cap: keeping %s of %s mini-worksheets (WORKSHEET_MAX_WORKSHEETS=%s); "
+        "dropped: %s. Content was trimmed by owner policy — a finishable package "
+        "beats exhaustive coverage.",
+        len(selected),
+        len(worksheets),
+        max_worksheets,
+        ", ".join(dropped),
+    )
+
+    total = len(selected)
+    final: list[AdaptedActivityModel] = []
+    for idx, ws in enumerate(selected):
+        is_last = idx == total - 1
+        break_prompt = None if is_last else BRAIN_BREAK_PROMPTS[idx % len(BRAIN_BREAK_PROMPTS)]
+        self_assessment = ws.self_assessment
+        if is_last and not self_assessment:
+            self_assessment = fallback_self_assessment
+        final.append(
+            ws.model_copy(
+                update={
+                    "worksheet_number": idx + 1,
+                    "worksheet_count": total,
+                    "break_prompt": break_prompt,
+                    "self_assessment": self_assessment if is_last else None,
+                }
+            )
         )
     return final

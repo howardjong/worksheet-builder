@@ -187,6 +187,53 @@ text as student items) remains the worst failure mode when fallbacks engage; Goa
 (hybrid_shell) still owed for chrome/typography consistency; owner decision still pending on
 trim-vs-more-sheets if even objective-approved packages exceed the 20-minute budget.
 
+### Session 58d — 2026-07-07 (owner PDF review → package hard cap, home-practice cleaning, cover/match fixes)
+
+**Status:** Owner reviewed the 11-page PDF output and enumerated quality issues. All gates
+green (**735 passed**, 726 → 735). Owner RESOLVED the trim-vs-split question: "should be 2-3
+pages to keep within ADHD child attention window" — a finishable package now beats exhaustive
+coverage in lesson mode.
+
+**Fixes this session (each maps to an owner complaint):**
+1. **"11 pages, way too many" → hard package cap.** `WORKSHEET_MAX_WORKSHEETS=3` added to
+   lesson-mode defaults; `adapt/section_cap.py:enforce_package_cap` selects a
+   family-balanced subset (round-robin: Discovery Part 1, Builder Part 1, Story Part 1 —
+   never four flavors of Discovery), renumbers, fixes brain breaks, guarantees a
+   self-assessment on the final sheet, logs dropped titles loudly. Applied via
+   `adapt/engine._finalize_lesson_package` on EVERY adapt path (planner, orchestrator,
+   direct, deterministic), but ONLY when the env var is set — photo path unchanged
+   (split-never-trim preserved; its tests untouched). This deliberately supersedes the
+   "never trimmed" invariant FOR LESSON MODE by owner decision 2026-07-07.
+2. **"pg 10 section 2 makes no sense" (garbled Story Time) → home-practice cleaning at the
+   source.** `skill/lesson_loader._home_practice_items` extracts word CHAINS (as proper
+   `word_chain` source items — the deterministic engine renders them as build activities)
+   and clean student sentences from the real corpus's raw home-practice dump; headers
+   ("New Concept and Sample Words"), chain scripts ("Change the nn to dd. What word is
+   this?"), blanks, and loose word lists are dropped. Conservative by design: a dropped
+   sentence costs a little practice; a kept script fragment ships garbage.
+   `_strip_non_sentence_prefix` + `_HEADER_TOKENS` handle header text that runs into a real
+   sentence without punctuation. Tests reconstruct the exact garble the judge quoted live.
+3. **"pg 1 character points at blank canvas" → new judge criterion + cache bump.**
+   `render/asset_gen._scene_judge_criteria` gained a COMPLETENESS criterion (no empty
+   easels/canvases/frames; anything the character presents must show lesson-relevant art);
+   `_LOCAL_ASSET_VERSION` activity_v6 → v7 so the cached cover actually re-judges.
+4. **"pg 2 two images adjacent confuse match" → prompt fix + cache bump.**
+   `render/image_prompt_builder` match fragment now demands a single picture column, one
+   picture per row, never adjacent; `PROMPT_VERSION` page_prompt_v1 → v2 (page cache
+   invalidated — next run regenerates pages, at most cap+cover with the new cap).
+5. **"pg 2-5 / 6-9 repetitive" → addressed by (1):** at most one part per family survives,
+   so the repeated say-and-copy parts are exactly what gets trimmed.
+
+**Cost note:** the cache bumps (v7, page_prompt_v2) intentionally invalidate cover + page
+caches once; with the 3-sheet cap the regeneration is ≤4 images + gates, then re-cached.
+
+**IMPORTANT next-run caveat:** the owner's reviewed PDFs may have been the PREVIOUS run's
+files (same content hash b805276388ae both runs). Whether the objective-sufficiency path
+approved or fell back on their latest run is UNKNOWN — no trace was shared for it. The next
+run decides: `objective_approved` in the log = planner package ships; any
+`objective_rejected_*`/`objective_abstain` = deterministic fallback, now capped at 3 clean
+sheets. Either way the package is ≤3 worksheets.
+
 ### Session 57 — 2026-07-06 (Goal 1: intensity dial + lesson-number entry point)
 
 **Status:** Shipped **Phases 0 + A + B** of `plans/2026-07-07-intensity-dial-hybrid-renderer-plan.md`
