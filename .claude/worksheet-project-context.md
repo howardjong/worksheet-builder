@@ -8,6 +8,75 @@
 
 ## Current State
 
+### Session 60 — 2026-07-10 (worksheet layout redesign SHIPPED + G14 gate fix; planner blocked only by P3 coverage now)
+
+**Status:** Owner-approved redesign executed end-to-end via subagent-driven plan execution
+(spec + plan in `docs/superpowers/specs/2026-07-10-worksheet-layout-redesign-design.md` and
+`docs/superpowers/plans/2026-07-10-worksheet-layout-redesign.md`). **9 commits
+(`fb40807..c994ed3`) on `claude/review-recent-refactoring-rma786`**, each task
+implementer + task-reviewed, plus a final whole-branch review (verdict FIX FIRST → 3 findings
+fixed in `c994ed3` → re-review APPROVED). All gates green: `make test` **765 passed**
+(755 → 765), `make lint`, `make typecheck` (0 issues, 182 files — local 3.13; CI is 3.11).
+Live lesson-74 run (`output/lesson74_redesign/`) passed all 6 acceptance criteria.
+
+**What shipped (owner requests from PDF review + research-backed):**
+1. **Cover page REMOVED** (`transform.py::_merge_lesson_package` merge-only;
+   `render/merge.py` lost its cover param, stamps every page; `render_cover_page` +
+   `generate_cover_image` + helpers deleted). Learning goal moved to the point of work:
+   sheet-1 **goal ribbon** ("I can read words with the y pattern") + running goal line on
+   sheet 2+, both gate-enforced via `required_text`. Printed pages now == budgeted sheets
+   (workload budget never counted the cover; dosage unchanged). Saves one image-gen +
+   character-judge round per run.
+2. **Typography rules in the page prompt** (`render/image_prompt_builder.py`): exactly 3
+   text sizes, 60% minimum height floor, one plain font family — same prompt-rule mechanism
+   as the calm-focus rules. Visually confirmed on the live run (old size-soup gone).
+3. **Per-page buddy pose** (`render/pose_planner.py::PAGE_POSE_ROTATION` + `page_pose()`,
+   threaded through `image_gen.py` as `buddy_action`): deterministic 6-pose rotation keyed
+   on worksheet number; identity rules untouched. Live run: sheet 1 pointing, sheet 2
+   clipboard+pencil. `PROMPT_VERSION` bumped to `page_prompt_v3` (cache invalidated).
+4. **FeedbackPanel replaces the affect-only checklist** (`adapt/schema.py::FeedbackPanel`,
+   new `adapt/feedback.py` with `learning_goal_statement`/`build_feedback_panel`/
+   `DECISION_HINT`): child traffic-light strip ("How did it go? Circle one for each part.")
+   + "Grown-up quick log" rows (`___ of N correct · smooth/choppy · help: none/some/lots`)
+   on EVERY sheet; advance/repeat/step-back decision hint (Betts/UFLI thresholds) on the
+   LAST sheet only. Both renderers (image prompt + classic pdf) and both section_cap paths
+   agree. Field shape deliberately matches a future `--record-results` ingestion loop —
+   nothing digital ships yet.
+5. **G14 FIXED** (`validate/blocking_gates.py::_known_proper_nouns`): title-case heading
+   segments contribute no proper-noun evidence + tokens seen lowercase anywhere in source
+   are exonerated. June word-list regression tests intact; live artifacts confirm zero gate
+   violations for lesson 74.
+
+**Final whole-branch review catch (why per-task review isn't enough):** every task-scoped
+review approved, but the branch review found `adapt/llm_adapt.py::_translate_plan` still
+carried the OLD last-sheet-only feedback conditional — i.e. the default smart-planner path
+would have shipped sheets without the feedback panel. The live run masked it because the
+planner was rejected and the deterministic engine (correct on every sheet) rendered the
+pages. Fixed in `c994ed3` along with: raw skill slugs in the goal ribbon (`cvc_blending` →
+"cvc blending"; single-letter notation like `a_e` deliberately preserved verbatim) and a
+dead `feedback_goals` model_copy key in `validate/content_coverage.py`.
+
+**Live run results (`output/lesson74_redesign/`):** 2 pages, no cover; both pages accepted
+on generation attempt 1 (new required_text entries did not destabilize the page gate);
+planner outcome **`objective_rejected_coverage`** — NOT gate-rejected. The P2 diagnostics
+name the exact miss: `obj_manipulation` missing required form `word_chain` (the LLM plan
+lacked a word-chain activity). **P3 (coverage rubric / advisory-judge alignment, Q4) is now
+the sole blocker to `objective_approved`.** Remaining log noise unchanged/known: coverage
+ERRORs 11/36 (P3), advisory judge 0.54 (P3), grade-precedence warning (P4),
+overlap-at-(0,0) print warnings (suspected false positive on full-bleed pages).
+
+**Noted for future sessions (accepted Minors from final review):** decision-hint/parent-log
+text is prompt-demanded but not gate-verified (a garbled hint ships silently); the
+experimental `WORKSHEET_DIRECT_COMPILER=1` path emits no feedback panel; photo path never
+sets `show_decision_hint` for single-sheet packages; heuristic-2 of the gate fix lacks an
+isolating unit test.
+
+**Next (ordered):** (1) **P3** — align package coverage validator + advisory judge with
+objective-sufficiency in lesson mode (Q4; now demonstrably the only planner blocker, and
+`planner_attempts.json` makes each rejection observable); (2) P4 — grade precedence
+(profile grade 1 vs lesson grade 2 drives the workload budget); (3) future: `--record-results`
+ingestion loop consuming the FeedbackPanel signal shape; then Goal 2 (hybrid_shell).
+
 ### Session 59 — 2026-07-10 (local verification run + P0/P1/P2 fixes; capitalization gate exposed as the planner bottleneck)
 
 **Status:** Owner's local machine ran the Session 58f verification (`--lesson 74`, real
@@ -1550,6 +1619,10 @@ All 344 tests pass. PDF validation (skill parity, age band, ADHD compliance, pri
 | D31 | Judge gates everything that ships: approve → ship; reject → ONE regeneration with feedback; reject again → deterministic engine | Closes the unjudged-takeover hole. Judge reads full item text (no truncation) with ai_review's structural criteria folded in; the ai_review mutation loop is skipped on the LLM path (kept for deterministic output). Deterministic-path output gets an advisory verdict. LLM adaptation flips default-on (opt-out `WORKSHEET_LLM_ADAPT=0`) only after the owner-reviewed A/B battery gate. | 2026-06-12 |
 | D32 | Per-chunk scene/word-picture asset generation skipped when render mode is image_gen | The full-page renderer never consumes those assets; they only served pdf_classic layouts. If image_gen falls back to pdf_classic mid-run, that worksheet renders with deterministic local art (same as asset-gen failure today). Saves several image generations per lesson. | 2026-06-12 |
 | D33 | Per-run artifacts are cleared at run start (shared _run_from_skill_model — photo AND lesson paths); readback files are trustworthy by construction | judge_verdict.json is only written during the adapt stage, so its mere existence must imply "written THIS run" — a stale copy replayed a 3-day-old verdict against a different package (observed live). _clear_stale_run_artifacts() removes judge_verdict/planner_attempts/numbered debris before Stage 5; every cleared filename is written downstream of that point. No run-id or content-hash plumbing needed. llm_adaptation_log.jsonl is append-by-design telemetry and survives. | 2026-07-10 |
+| D34 | No cover page — the learning goal lives at the point of work | Owner decision after PDF review; research unanimous (no instructional-design source supports covers on 2-4 page practice sheets; Hattie learning-intentions + "I can..." statement practice support goals at point of work; ADHD guidance: minimize steps to task start). Sheet-1 goal ribbon + running goal line on later sheets, both in `required_text` so the page gate enforces rendering. Cover code deleted outright (rollback = git, not a flag); saves one image-gen + judge round per run. | 2026-07-10 |
+| D35 | FeedbackPanel: print-only capture of 4 adaptation signals; log rows per sheet; decision hint last sheet only | Replaces the affect-only "I can..." checklist. Child traffic-light strip + grown-up quick log (accuracy, fluency smooth/choppy, help level) on EVERY sheet — amended from the spec's last-sheet-only log during planning because design specs compile per worksheet (a last-sheet box can't enumerate other sheets' sections) and logging while fresh is better for the parent. Printed advance/repeat/step-back hint uses Betts/UFLI-practice thresholds (≥90% + automatic + independent → advance; <70% or frustrated → step back). Field shape designed for a future `--record-results` loop; nothing digital yet. | 2026-07-10 |
+| D36 | Page-level visual constraints are prompt rules, not code: typography (3 sizes, 60% floor, one family) and per-page buddy pose rotation | Pages are one-shot AI images — the prompt IS the layout engine (same mechanism that made calm-focus rules stick). Pose text enters the prompt → page cache key shifts automatically; PROMPT_VERSION v3 invalidates all pre-redesign cached pages. Live run: both pages gate-passed on attempt 1 with the new exact-text demands. | 2026-07-10 |
+| D37 | Proper-noun inference requires corroboration: title-case heading segments contribute no evidence, and any lowercase occurrence anywhere in source exonerates a token | Real proper nouns are never written lowercase in curriculum text; passage titles capitalize ordinary target words ("Lily's Puppy"). June-in-word-list still caught (capitalized mid-list, never lowercase). Closed G14, the #1 planner blocker. | 2026-07-10 |
 
 ---
 
@@ -1646,7 +1719,7 @@ Note: index step requires GOOGLE_CLOUD_PROJECT=ws-builder-rag env var.
 | Q1 | PaddleOCR vs Tesseract cross-platform install | PaddleOCR has heavier dependencies; may affect dev setup | Open |
 | Q2 | Nunito font licensing for embedded PDF | Listed as primary theme font | Open |
 | Q3 | How to create synthetic golden test images | Need to mimic UFLI layout without using UFLI content | Open — solve during Checkpoint 1.3 |
-| Q4 | Should the ADVISORY judge + package coverage validator use objective-sufficiency in lesson mode? | Session 58c fixed the PLANNER judge rubric, but the transform-level advisory judge (coverage=0.08) and validate/ content-coverage (11/36 ERROR) still measure exhaustive coverage against packages the workload budget deliberately capped — every capped lesson run ERRORs by design | Open — P3, next after the G14 gate fix |
+| Q4 | Should the ADVISORY judge + package coverage validator use objective-sufficiency in lesson mode? | Session 58c fixed the PLANNER judge rubric, but the transform-level advisory judge (coverage=0.08) and validate/ content-coverage (11/36 ERROR) still measure exhaustive coverage against packages the workload budget deliberately capped — every capped lesson run ERRORs by design | Open — P3, now the SOLE `objective_approved` blocker (Session 60: G14 fixed; live rerun rejects only on coverage — `obj_manipulation` missing `word_chain` form, named in planner_attempts.json) |
 
 ---
 
@@ -1670,6 +1743,7 @@ Note: index step requires GOOGLE_CLOUD_PROJECT=ws-builder-rag env var.
 | G12 | PDF-grid extraction fragments enter word pools | Lesson 74 Roll-and-Read extracted "la" (truncated word) → shipped in cover title + match/write items; engine parser blocklisted it but the loader's "mirroring" parser had drifted | Fixed Session 59: loader blocklist parity + concept-derived pattern filter with 25% safety valve; roll_and_read source item rebuilt from filtered pool |
 | G13 | judge_verdict.json readback trusted any existing file | A stale July 7 NOT-APPROVED verdict (10-sheet package) was replayed against a fresh 2-sheet run — judge never ran; stale planner_version also drove _skip_ai_review | Fixed Session 59: _clear_stale_run_artifacts() at lesson-run start; file can only exist if written this run |
 | G14 | Capitalization blocking gate treats title-case passage-title words as proper nouns | "Lily's Puppy" title → gate demands "Puppy" capitalized mid-sentence, blocks valid items like "Write puppy."; likely fires for ANY lesson whose passage title contains a target word — #1 suspected blocker for objective_approved | FIXED session 60, 2026-07-10 — `_known_proper_nouns` in validate/blocking_gates.py now excludes title-case heading segments and exonerates tokens seen lowercase anywhere in source |
+| G15 | Deterministic-fallback masking: a planner-path bug can pass every test AND a live run | `llm_adapt._translate_plan` kept the old last-sheet-only feedback conditional after the FeedbackPanel migration; suite stayed green (deterministic fixtures) and the live run looked perfect (planner was rejected → deterministic engine rendered). Only the final whole-branch review caught it | FIXED session 60 (`c994ed3`) — every translated worksheet gets a panel. Pattern lesson: when the smart path is routinely rejected, its output is untested by live runs; verify planner-path behavior with unit tests on `_translate_plan`, not renders |
 
 ---
 
@@ -2976,3 +3050,18 @@ Then evaluate honestly and record both scorecards. Do NOT touch parent-plan Task
 **⚠️ `gemini-3-pro-image` was NOT exercised / NOT verified against the live API.** Because OpenAI is now first and rescued every page + the cover on attempt 1, the chain never reached the Gemini fallback. The new default model id is unvalidated against the live Gemini image API. To verify, force it: `WORKSHEET_IMAGE_PROVIDERS=gemini WORKSHEET_LLM_ADAPT=1 .venv/bin/python transform.py ...` (with `SSL_CERT_FILE` set) and check the logged `Page gen: provider=gemini model=gemini-3-pro-image` plus whether the API 200s. If the id is rejected, find the correct current id via the Gemini model listing, report it, and update `GEMINI_IMAGE_MODEL`.
 
 **What's next:** verify `gemini-3-pro-image` live (above); then the deferred planner-simplification plan (adaptation is the quality bottleneck — gpt takeover ships unjudged, the smoke run hit pedagogical-judge REJECT score 0.36–0.39 on coverage before takeover); provider attempt-budget tuning (gemini→2) once the model id is confirmed; multi-theme rotation; Seedream adapter.
+
+### Session 60 — 2026-07-10 (worksheet layout redesign shipped via subagent-driven execution; G14 fixed)
+
+**Participants:** Claude (controller + 9 implementer/reviewer subagents), owner (design decisions)
+
+**What happened:**
+- Owner reviewed the Session 59 rerun PDF and requested: better use of cover-page space (open to removal), per-page avatar variety, and an assessment of whether the "How did I do?" checklist can gauge learning progress — plus the queued G14 gate fix.
+- Brainstormed with research (cover pages unsupported for short practice sheets; "I can..." goals at point of work; BDA/typography numbers; 4-signal feedback model with Betts/UFLI thresholds). Owner chose: remove cover entirely; better capture, print-only.
+- Spec + plan written, committed (`d8549fc`, `9155fe0`); 7 implementation tasks executed by fresh subagents with per-task reviews, then a final whole-branch review (Fable) that caught a cross-task seam every task review missed (G15: planner-path last-sheet-only feedback, masked by deterministic fallback). 3 findings fixed (`c994ed3`), re-review approved.
+- Shipped (9 commits `fb40807..c994ed3`): G14 gate fix (D37); FeedbackPanel end-to-end (D35); design spec v2 (learning_goal + feedback); page prompt v3 (goal ribbon, typography rules D36, 6-pose buddy rotation); classic renderer parity; cover removal (D34); repo-wide sweep. Gates: 765 tests / lint / mypy all green.
+- Live lesson-74 acceptance run passed all 6 criteria (2 pages no cover, goal ribbon + running goal, ≤3 text sizes, distinct buddy poses, feedback panel both sheets, hint last sheet only); both pages gate-passed on attempt 1.
+- Key finding: planner outcome moved from `objective_rejected_gate` to `objective_rejected_coverage` (`obj_manipulation` missing `word_chain` form) — G14 confirmed dead; P3/Q4 is now the sole `objective_approved` blocker.
+- Gotcha G15 recorded (deterministic-fallback masking); accepted minors noted in Current State (hint text not gate-verified; direct-compiler path emits no panel; photo path never shows hint; heuristic-2 isolation test missing).
+
+**What's next:** P3 — align package coverage validator + advisory judge with objective-sufficiency in lesson mode (Q4), rerun lesson 74 and see if the smart planner finally ships; then P4 grade precedence; later `--record-results` ingestion consuming the FeedbackPanel signal shape.
