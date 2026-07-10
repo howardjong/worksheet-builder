@@ -8,6 +8,62 @@
 
 ## Current State
 
+### Session 60b — 2026-07-10 (adaptive dosage SHIPPED: profile facts drive length/pages; P4 closed; Story Time restored)
+
+**Status:** Second subagent-driven plan of the session, executed same-day on owner approval
+(spec `docs/superpowers/specs/2026-07-10-adaptive-dosage-profile-design.md`, plan
+`docs/superpowers/plans/2026-07-10-adaptive-dosage.md`). **7 commits
+(`17be5bb..44a4cfc`)**; final whole-branch review **READY TO MERGE** (0 Critical/Important;
+3 Minors fixed same-session in `44a4cfc`). Gates green: `make test` **783 passed**
+(765 → 783), lint, mypy 0 issues/184 files (local 3.13; CI 3.11 unverified as usual).
+
+**What shipped:**
+1. **`companion/dosage.py` (new)** — run-time derivations from profile facts, never stored:
+   `age_years`, `derived_grade` (CA-ON: Dec-31 cutoff, **July-1 rollover** — summer targets
+   the incoming grade), `current_grade`/`grade_with_source` (derived beats stale
+   `grade_level`, warn-once), `segment_minutes` = age × 1.5 × severity (mild .85 / moderate
+   .70 / severe .55, default moderate — matches the old table's implicit calibration),
+   `session_minutes` = Ontario 10-min-per-grade norm clamped [12,30]. Fallbacks: no
+   birthdate/jurisdiction → exact legacy grade table. All rounding half-up, no banker's.
+2. **Profile schema** — optional `birthdate` / `jurisdiction` / `adhd_severity`.
+   **Privacy rule enforced + tested:** birthdate is derivation-only — never in prompts,
+   design specs, pages, or artifacts (artifacts carry derived `age_years`/grade only).
+   `profiles/ian.yaml` updated ON DISK (gitignored — correct home for PII): birthdate
+   2019-09-21, CA-ON, moderate, grade 2.
+3. **`adapt/workload.py`** — **P4 CLOSED**: the CHILD owns the attention budget
+   (`grade_with_source`), `skill.grade_level` no longer touches the dosage table (lesson
+   grade still drives content difficulty — deliberate separation). Attention ceiling now
+   half-up rounds (`round(session/segment)`; no drift at any legacy table value). **NEW
+   demand currency:** `OBJECTIVE_MINUTES` (decode/encode/manip 4, connected_text 8,
+   irregular 3) → `sheets_needed = max(section_demand, ceil(essential_minutes/segment))` —
+   pages escalate when unshipped essential work still fits the session. Applies to ALL
+   profiles (legacy grade-2 lesson-74 also goes 2 → 3 sheets — intended). PackageBudget
+   gains age_years/severity/essential_minutes/minute_sheets/grade_source.
+4. **8 consumers** switched from `profile.grade_level` to `current_grade(profile)`
+   (rules, 2× transform age-band, 3 prompt builders, design_spec, caregiver — the last two
+   were plan gaps caught by the implementer/controller, fixed in `79f6e3f`).
+
+**Live lesson-74 verification (`output/lesson74_dosage/`), spec worked example verbatim:**
+budget = `grade 2 (derived): segment 7 min, session 20 min -> ceiling 3; 5 sections + 20
+essential min -> 3 sheets -> cap 3; dosage: age 6.8y x moderate`. Package is **3 pages
+with Story Time restored** — sentence completion + full "Lily's Puppy" decodable passage
++ comprehension — and the trim dropped only redundant Word Practice parts. The passage
+ships "puppy" lowercase throughout with the G14-fixed gate silent. Feedback panel on all
+sheets, decision hint last-only. Zero "2019" in any prompt artifact. Planner still
+`objective_rejected_coverage` (P3 — unchanged, still the sole objective_approved blocker).
+
+**Review-process catches worth keeping:** (a) first version of the new derived-grade tests
+depended on the real wall clock and would have started failing 2027-07-01 — frozen via
+`_FrozenDate` monkeypatch with bite-proof (G16); (b) plan's original Sept-1 grade rollover
+would have called Ian grade 1 all summer — caught in spec self-review, changed to July 1.
+
+**Next (ordered):** (1) **P3** — align package coverage validator + advisory judge with
+objective-sufficiency (Q4; sole planner blocker); (2) objective-aware package trim
+(spawned chip task_46163d0f — safety net for rejected-plan fallbacks); (3)
+`--record-results` ingestion: FeedbackPanel signals → per-child observed dosage overriding
+these population norms (the `avg_session_duration` hook already models the pattern);
+then Goal 2 (hybrid_shell).
+
 ### Session 60 — 2026-07-10 (worksheet layout redesign SHIPPED + G14 gate fix; planner blocked only by P3 coverage now)
 
 **Status:** Owner-approved redesign executed end-to-end via subagent-driven plan execution
@@ -1623,6 +1679,8 @@ All 344 tests pass. PDF validation (skill parity, age band, ADHD compliance, pri
 | D35 | FeedbackPanel: print-only capture of 4 adaptation signals; log rows per sheet; decision hint last sheet only | Replaces the affect-only "I can..." checklist. Child traffic-light strip + grown-up quick log (accuracy, fluency smooth/choppy, help level) on EVERY sheet — amended from the spec's last-sheet-only log during planning because design specs compile per worksheet (a last-sheet box can't enumerate other sheets' sections) and logging while fresh is better for the parent. Printed advance/repeat/step-back hint uses Betts/UFLI-practice thresholds (≥90% + automatic + independent → advance; <70% or frustrated → step back). Field shape designed for a future `--record-results` loop; nothing digital yet. | 2026-07-10 |
 | D36 | Page-level visual constraints are prompt rules, not code: typography (3 sizes, 60% floor, one family) and per-page buddy pose rotation | Pages are one-shot AI images — the prompt IS the layout engine (same mechanism that made calm-focus rules stick). Pose text enters the prompt → page cache key shifts automatically; PROMPT_VERSION v3 invalidates all pre-redesign cached pages. Live run: both pages gate-passed on attempt 1 with the new exact-text demands. | 2026-07-10 |
 | D37 | Proper-noun inference requires corroboration: title-case heading segments contribute no evidence, and any lowercase occurrence anywhere in source exonerates a token | Real proper nouns are never written lowercase in curriculum text; passage titles capitalize ordinary target words ("Lily's Puppy"). June-in-word-list still caught (capitalized mid-list, never lowercase). Closed G14, the #1 planner blocker. | 2026-07-10 |
+| D38 | Dosage is derived from profile facts at run time, never stored: birthdate → attention (age × 1.5 min × severity mult), jurisdiction → session norm (Ontario 10 min/grade, [12,30]) + grade calendar (Dec-31 cutoff, July-1 rollover — summer targets the incoming grade), severity dial mild/.85 moderate/.70 severe/.55 default moderate | Stored grades/ages go stale (ian.yaml sat at grade 1 for months); computed values age with the child automatically. Grade splits into three jobs: lesson grade = content difficulty, child age = dosage, child grade = format expectations — this dissolves P4 rather than patching it. birthdate is derivation-only (never in prompts/artifacts/pages; PII lives in gitignored profiles/). | 2026-07-10 |
+| D39 | Pages escalate on MINUTES, not just section count: sheets_needed = max(section demand, ceil(essential_minutes / segment)); attention ceiling rounds half-up | Pages are not the scarce resource — minutes are; a 3rd page at constant minutes is LOWER per-page density (ADHD-friendlier), and the old section-only demand left 60% of the session budget unused while trimming the reading sheet. OBJECTIVE_MINUTES: decode/encode/manip 4, connected_text 8 (its sufficiency rule says "1 page chunk"), irregular 3. Applies to all profiles, legacy included. Live result: lesson 74 → 3 sheets, Story Time ships. | 2026-07-10 |
 
 ---
 
@@ -1744,6 +1802,7 @@ Note: index step requires GOOGLE_CLOUD_PROJECT=ws-builder-rag env var.
 | G13 | judge_verdict.json readback trusted any existing file | A stale July 7 NOT-APPROVED verdict (10-sheet package) was replayed against a fresh 2-sheet run — judge never ran; stale planner_version also drove _skip_ai_review | Fixed Session 59: _clear_stale_run_artifacts() at lesson-run start; file can only exist if written this run |
 | G14 | Capitalization blocking gate treats title-case passage-title words as proper nouns | "Lily's Puppy" title → gate demands "Puppy" capitalized mid-sentence, blocks valid items like "Write puppy."; likely fires for ANY lesson whose passage title contains a target word — #1 suspected blocker for objective_approved | FIXED session 60, 2026-07-10 — `_known_proper_nouns` in validate/blocking_gates.py now excludes title-case heading segments and exonerates tokens seen lowercase anywhere in source |
 | G15 | Deterministic-fallback masking: a planner-path bug can pass every test AND a live run | `llm_adapt._translate_plan` kept the old last-sheet-only feedback conditional after the FeedbackPanel migration; suite stayed green (deterministic fixtures) and the live run looked perfect (planner was rejected → deterministic engine rendered). Only the final whole-branch review caught it | FIXED session 60 (`c994ed3`) — every translated worksheet gets a panel. Pattern lesson: when the smart path is routinely rejected, its output is untested by live runs; verify planner-path behavior with unit tests on `_translate_plan`, not renders |
+| G16 | Wall-clock-dependent tests are a 12-month time bomb | Tests exercising birthdate→grade derivation without pinning `today` pass until the next July-1 rollover, then fail with zero code change (Ian's derived grade reads "2" only 2026-07-01..2027-06-30) | FIXED session 60b (`322dddb`) — `_FrozenDate(date)` subclass monkeypatched over `companion.dosage.date`, bite-proofed by temporarily freezing to 2027-08-01 and watching the tests fail. Rule: any test touching `current_grade`/dosage derivations must freeze the clock |
 
 ---
 
@@ -3065,3 +3124,17 @@ Then evaluate honestly and record both scorecards. Do NOT touch parent-plan Task
 - Gotcha G15 recorded (deterministic-fallback masking); accepted minors noted in Current State (hint text not gate-verified; direct-compiler path emits no panel; photo path never shows hint; heuristic-2 isolation test missing).
 
 **What's next:** P3 — align package coverage validator + advisory judge with objective-sufficiency in lesson mode (Q4), rerun lesson 74 and see if the smart planner finally ships; then P4 grade precedence; later `--record-results` ingestion consuming the FeedbackPanel signal shape.
+
+### Session 60b — 2026-07-10 (adaptive dosage shipped; P4 closed; Story Time restored)
+
+**Participants:** Claude (controller + 8 implementer/reviewer subagents), owner (spec approval)
+
+**What happened:**
+- Owner asked why the 2-sheet package dropped reading/sentence writing → traced to objective-blind package trim + section-count-only demand (analysis, chip task_46163d0f spawned for the trim), then asked how profile facts (birthdate 2019-09-21, entering grade 2, Markham ON) should drive length/pages → spec + plan written and approved same-session.
+- Shipped 7 commits (`17be5bb..44a4cfc`): `companion/dosage.py` derivations (D38), schema fields birthdate/jurisdiction/adhd_severity with derivation-only privacy, child-owned workload budget + minutes-based escalation (D39, P4 closed), 8 consumers on `current_grade`, clock-frozen tests (G16), polish from final review (None-sentinel fallbacks, warn-once stale-grade, Literal grade_source).
+- Final whole-branch review: READY TO MERGE, 0 Critical/Important; 3 of 4 Minors fixed in `44a4cfc`.
+- Live lesson 74: budget `grade 2 (derived): 7 min segments, 20 min session, cap 3; age 6.8y x moderate` — 3 pages, Story Time (Lily's Puppy passage + sentences + comprehension) restored, trim dropped only redundant Word Practice parts, zero birthdate leakage, gates all green (783 tests).
+- Spec self-review catch: Sept-1 grade rollover would have called Ian grade 1 all summer → changed to July 1 (summer targets incoming grade).
+- ian.yaml updated on disk only (profiles/ is gitignored — the right home for PII).
+
+**What's next:** P3 (coverage validator + advisory judge → objective-sufficiency; sole objective_approved blocker), objective-aware trim (chip task_46163d0f), then --record-results ingestion (FeedbackPanel signals → observed per-child dosage overriding population norms).
