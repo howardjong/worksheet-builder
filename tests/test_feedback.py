@@ -77,6 +77,19 @@ def test_goal_statement_per_domain() -> None:
     assert learning_goal_statement("sight_words", "the") == "I can practice sight words skills"
 
 
+def test_goal_statement_phonics_displays_slug_as_words() -> None:
+    # Multi-letter slug segments read as words, not a raw underscored slug.
+    assert (
+        learning_goal_statement("phonics", "cvc_blending")
+        == "I can read words with the cvc blending pattern"
+    )
+
+
+def test_goal_statement_phonics_keeps_split_vowel_notation_verbatim() -> None:
+    # Single-letter segments (a_e, o_e, ...) are real phonics notation, not a slug.
+    assert learning_goal_statement("phonics", "a_e") == "I can read words with the a_e pattern"
+
+
 def test_build_feedback_panel_defaults() -> None:
     panel = build_feedback_panel("phonics", "a_e")
     assert panel.goal_statement == "I can read words with the a_e pattern"

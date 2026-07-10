@@ -13,10 +13,20 @@ DECISION_HINT = (
 )
 
 
+def _display_skill(specific_skill: str) -> str:
+    """Slug → child-facing text: underscores become spaces only in multi-letter
+    slugs ("cvc_blending" → "cvc blending"); single-letter patterns like "a_e"
+    are real phonics notation and stay verbatim."""
+    segments = specific_skill.split("_")
+    if len(segments) > 1 and all(len(s) == 1 for s in segments):
+        return specific_skill  # "a_e", "o_e"-style split-vowel notation
+    return specific_skill.replace("_", " ")
+
+
 def learning_goal_statement(domain: str, specific_skill: str) -> str:
     """Child-friendly 'I can...' goal shown in page banners and feedback strips."""
     if domain == "phonics":
-        return f"I can read words with the {specific_skill} pattern"
+        return f"I can read words with the {_display_skill(specific_skill)} pattern"
     if domain == "fluency":
         return "I can read the story smoothly"
     return f"I can practice {domain.replace('_', ' ')} skills"

@@ -346,9 +346,7 @@ def _translate_plan(
                     (0.85, 0.0, 1.0, 0.12),
                     (0.0, 0.88, 0.15, 1.0),
                 ],
-                feedback=build_feedback_panel(skill.domain, skill.specific_skill)
-                if ws_idx == len(plan.worksheets) - 1
-                else None,
+                feedback=build_feedback_panel(skill.domain, skill.specific_skill),
                 worksheet_number=ws_idx + 1,
                 worksheet_count=len(plan.worksheets),
                 worksheet_title=ws_plan.title,

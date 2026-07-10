@@ -244,6 +244,33 @@ def test_translate_keeps_valid_worked_example() -> None:
     assert worked.content == "c__ke -> cake (the magic e!)"
 
 
+def test_translate_plan_gives_every_worksheet_a_feedback_panel() -> None:
+    """Every sheet in the package gets a feedback panel (child strip + parent
+    log), not just the last one — show_decision_hint is what's last-sheet-only,
+    and section_cap recomputes that flag separately."""
+    plan = LessonPlan(
+        worksheets=[
+            WorksheetPlan(
+                title=f"Sheet {n}",
+                activities=[
+                    ActivityPlan(
+                        activity_type="write",
+                        micro_goal="Write words",
+                        items=[PlannedItem(content="cake")],
+                        instructions=["Write the word."],
+                        response_format="write",
+                    )
+                ],
+            )
+            for n in range(1, 4)
+        ]
+    )
+    worksheets = _translate_plan(plan, _skill(), _profile(), "default", build_rules(_profile()))
+
+    assert len(worksheets) == 3
+    assert all(ws.feedback is not None for ws in worksheets)
+
+
 def test_planned_item_parses_covered_source_item_ids() -> None:
     item = PlannedItem.model_validate(
         {"content": "cake", "covered_source_item_ids": ["word_001", "chain_001_step_2"]}

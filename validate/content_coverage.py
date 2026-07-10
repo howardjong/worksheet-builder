@@ -120,11 +120,6 @@ def validate_content_coverage_for_package(
             "worksheet_title": " ".join(
                 adapted.worksheet_title or "" for adapted in adapted_worksheets
             ),
-            "feedback_goals": [
-                adapted.feedback.goal_statement
-                for adapted in adapted_worksheets
-                if adapted.feedback
-            ],
         }
     )
     return validate_content_coverage(source_skill, combined, min_target_coverage)
