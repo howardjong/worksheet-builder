@@ -273,6 +273,33 @@ not a generic constant. Implemented + researched. Gates green (**745 passed**, 7
 `workload_budget.json` artifact; grade-2 profile → ≤3 sheets, or ≤2 if ian.yaml still says
 grade 1 with small chunking... actually grade "1" → ceiling 3). Then Goal 2 (hybrid_shell).
 
+### Session 58f — 2026-07-07 (handoff: verification moved to owner's local machine)
+
+**Status:** No code changes this session. Owner asked to have the Session 58e fix
+(`f4bf0b1`) run and verified before doing UAT themselves. **This cloud sandbox cannot do
+that verification** — it has no `.env` (API keys), no real `data/ufli/normalized.jsonl`
+corpus, and no `profiles/*.yaml` (all three are gitignored, real-machine-only). A run here
+would silently fall back to the 4-lesson fixture corpus + a synthetic profile + no AI calls,
+which is NOT representative of what the owner will see. Rather than run a misleading smoke
+test and call it verified, handed the owner a copy-paste prompt for a **local** Claude Code
+session (real terminal, real `.env`/corpus/profile) to run:
+
+```
+.venv/bin/python transform.py --lesson 74 --profile profiles/ian.yaml --theme roblox_obby --output ./output/
+```
+
+and report back five things: (1) the exact "Workload budget:" log line, (2)
+`objective_approved` vs an `objective_rejected_*`/`objective_abstain` outcome, (3) mini-worksheet
+count vs. the budget's cap, (4) `output/artifacts/workload_budget.json` contents, (5) cover
+image / match-section visual spot-check (blank canvas? adjacent pictures? — the two visual
+bugs fixed in Session 58d).
+
+**If picking this up next:** check whether the owner (or a local session) has reported those
+five items back into the conversation. If yes, that IS the real UAT #2 data — diagnose from
+it directly rather than re-deriving. If no, the ask is still open; re-offer the same local-
+session prompt (reproduced above) rather than attempting to fake it in a sandbox without
+credentials/corpus/profile again.
+
 ### Session 57 — 2026-07-06 (Goal 1: intensity dial + lesson-number entry point)
 
 **Status:** Shipped **Phases 0 + A + B** of `plans/2026-07-07-intensity-dial-hybrid-renderer-plan.md`
