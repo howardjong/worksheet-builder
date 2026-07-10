@@ -31,6 +31,7 @@ from adapt.schema import (
     ScaffoldConfig,
     Step,
 )
+from companion.dosage import current_grade
 from companion.schema import LearnerProfile
 from skill.schema import LiteracySkillModel
 
@@ -127,7 +128,7 @@ Source sections:
 ## Learner Profile
 
 Name: {profile.name}
-Grade: {profile.grade_level}
+Grade: {current_grade(profile)}
 Response format preferences: {profile.accommodations.response_format_prefs}
 
 ## ADHD Design Constraints

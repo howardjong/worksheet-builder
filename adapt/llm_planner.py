@@ -45,6 +45,7 @@ from adapt.objective_ledger import (
 from adapt.rules import AccommodationRules, build_rules, llm_adapt_enabled
 from adapt.schema import AdaptedActivityModel
 from adapt.section_cap import enforce_section_cap
+from companion.dosage import current_grade
 from companion.schema import LearnerProfile
 from corpus.ufli.lookup import lookup_lesson
 from skill.schema import LiteracySkillModel
@@ -309,7 +310,7 @@ Source sections:
 ## Learner Profile
 
 Name: {profile.name}
-Grade: {profile.grade_level}
+Grade: {current_grade(profile)}
 Response format preferences: {profile.accommodations.response_format_prefs}
 
 ## ADHD Design Constraints (hard limits — deterministic validators reject violations)

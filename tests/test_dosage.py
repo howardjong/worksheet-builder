@@ -98,3 +98,40 @@ def test_profile_yaml_roundtrip_with_new_fields(tmp_path) -> None:
 def test_invalid_severity_rejected() -> None:
     with pytest.raises(ValueError):
         _profile(adhd_severity="extreme")
+
+
+def test_birthdate_never_enters_planner_prompt() -> None:
+    from adapt.llm_planner import _build_planner_prompt
+    from adapt.rules import build_rules
+    from skill.schema import LiteracySkillModel, SourceItem
+
+    profile = _profile(
+        birthdate=IAN_BD, jurisdiction="CA-ON", adhd_severity="moderate", grade_level="1"
+    )
+    skill = LiteracySkillModel(
+        grade_level="1",
+        domain="phonics",
+        specific_skill="cvce_pattern",
+        learning_objectives=["Read CVCe words"],
+        target_words=["cake"],
+        response_types=["write"],
+        source_items=[
+            SourceItem(item_type="sentence", content="The cat sat.", source_region_index=0)
+        ],
+        extraction_confidence=0.95,
+        template_type="ufli_word_work",
+    )
+    prompt = _build_planner_prompt(skill, profile, build_rules(profile), "default", None)
+
+    assert "2019" not in prompt
+    assert "birthdate" not in prompt.lower()
+    assert "Grade: 2" in prompt  # derived grade (July -> incoming grade 2), not stale '1'
+
+
+def test_rules_use_current_grade() -> None:
+    from adapt.rules import build_rules
+
+    stale = _profile(birthdate=IAN_BD, jurisdiction="CA-ON", grade_level="1")
+    plain_grade2 = _profile(grade_level="2")
+
+    assert build_rules(stale) == build_rules(plain_grade2)

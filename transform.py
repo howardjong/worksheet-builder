@@ -27,6 +27,7 @@ from adapt.rules import build_rules
 from adapt.schema import AdaptedActivityModel
 from capture.preprocess import preprocess_page
 from capture.store import store_master
+from companion.dosage import current_grade
 from companion.schema import load_profile
 from extract.heuristics import map_to_source_model
 from extract.ocr import extract_text_with_fallback
@@ -1082,7 +1083,7 @@ def _validate_and_report(
     assert isinstance(profile, LearnerProfile)
 
     parity_result = validate_skill_parity(skill_model, adapted)
-    age_result = validate_age_band(adapted, profile.grade_level)
+    age_result = validate_age_band(adapted, current_grade(profile))
     adhd_result = validate_adhd_compliance(adapted, rules=build_rules(profile))
     print_result = validate_print_quality(pdf_path)
 
@@ -1207,7 +1208,7 @@ def _validate_non_pdf_and_report(
 
     parity_result = validate_skill_parity(skill_model, adapted)
     content_result = validate_content_coverage(skill_model, adapted)
-    age_result = validate_age_band(adapted, profile.grade_level)
+    age_result = validate_age_band(adapted, current_grade(profile))
     adhd_result = validate_adhd_compliance(adapted, rules=build_rules(profile))
 
     validation = {

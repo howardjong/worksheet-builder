@@ -15,6 +15,7 @@ from pydantic import ValidationError
 
 from adapt.schema import AdaptedActivityModel
 from companion.character_identity import CharacterIdentity
+from companion.dosage import current_grade
 from companion.schema import LearnerProfile
 from skill.schema import LiteracySkillModel
 from validate.content_coverage import validate_content_coverage_for_package
@@ -66,7 +67,7 @@ Theme: {theme_id}
 
 ## Learner Profile
 Name: {profile.name}
-Grade: {profile.grade_level}
+Grade: {current_grade(profile)}
 Accommodations: {accommodations}
 Preferences: {preferences}
 

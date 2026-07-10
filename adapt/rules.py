@@ -6,6 +6,7 @@ import os
 
 from pydantic import BaseModel
 
+from companion.dosage import current_grade
 from companion.schema import LearnerProfile
 
 
@@ -18,6 +19,7 @@ def llm_adapt_enabled() -> bool:
     this helper instead of `os.environ.get("WORKSHEET_LLM_ADAPT")` directly.
     """
     return os.environ.get("WORKSHEET_LLM_ADAPT", "") not in {"", "0"}
+
 
 # Items per chunk by grade level and chunking preference
 CHUNKING_RULES: dict[str, dict[str, int]] = {
@@ -158,7 +160,7 @@ def build_rules(profile: LearnerProfile) -> AccommodationRules:
 
     Derives constraints from grade level + profile accommodations.
     """
-    grade = profile.grade_level
+    grade = current_grade(profile)
     accom = profile.accommodations
 
     # Chunking
