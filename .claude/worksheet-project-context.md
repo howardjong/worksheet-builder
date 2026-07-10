@@ -8,6 +8,77 @@
 
 ## Current State
 
+### Session 59 — 2026-07-10 (local verification run + P0/P1/P2 fixes; capitalization gate exposed as the planner bottleneck)
+
+**Status:** Owner's local machine ran the Session 58f verification (`--lesson 74`, real
+.env/corpus/profile). The run answered all five handoff questions, then root-caused and fixed
+three defects (strict TDD). All gates green: `make lint`, `make typecheck` (local 3.13 —
+CI is 3.11), `make test` **755 passed** (745 → 755). Changes committed on
+`claude/review-recent-refactoring-rma786`.
+
+**Verification answers (first run, pre-fix):** Workload budget line present and correct
+(`grade 2: segment 8 min, session 24 min -> ceiling 3; 4 essential objectives -> cap 2`);
+`workload_budget.json` written; planner outcome `objective_rejected_gate` (deterministic
+fallback); 2 sheets + cover = 3 pages, within cap. Cover art good (character presenting
+pictures — Session 58d fix confirmed); match section single-picture-column (58d fix
+confirmed). BUT: "la" (a PDF-extraction fragment, not a word) shipped in the cover title and
+match/write sections, and the judge verdict in the log was a **stale July 7 file replayed** —
+it critiqued "Worksheet 9" of a 10-sheet package that didn't exist in this 2-sheet run.
+
+**Fixed this session (TDD, tests first):**
+1. **P0 — word-pool hygiene** (`skill/lesson_loader.py`): the corpus's lesson-74
+   `additional_text` Roll-and-Read grid extracts with "la" (truncated word).
+   `adapt/engine._parse_roll_and_read` already blocklisted it, but the loader's
+   "mirroring" parser had drifted and didn't. Restored blocklist parity AND added a
+   pattern-conformance filter: `_concept_patterns()` derives grapheme regexes from the
+   concept label ('y /ē/' → y; 'a_e' → a[a-z]e; junk tokens self-exclude), keep-if-any-match,
+   >25% would-drop safety valve (protects review columns). The `roll_and_read` source item is
+   rebuilt from the FILTERED pool (its raw text was re-parsed by the engine at consumption —
+   the second entry path for fragments). Dropped tokens logged + recorded in word_list
+   metadata. Real lesson 74: 37 → 36 words, title now "fluffy, angry, jelly".
+2. **P1 — stale artifact replay** (`transform.py`): the Stage-5c readback trusted ANY
+   existing `judge_verdict.json` — but the planner only writes it on approval and nothing
+   cleaned prior runs' files, so a 3-day-old NOT-APPROVED verdict was replayed verbatim (no
+   judge HTTP call in the log) and drove `_skip_ai_review` via its stale `planner_version`.
+   `_clear_stale_run_artifacts()` now runs at the top of `_run_from_skill_model` — the
+   shared dispatch for BOTH photo and lesson paths (simplify review caught that the readback
+   lives in the shared multi-worksheet pipeline, so the photo path had the same hole) —
+   clearing judge_verdict, planner_attempts, and adapted_model_*/ai_review_*/validation*
+   debris; the append-by-design `llm_adaptation_log.jsonl` stays. The readback is correct by
+   construction now: the file can only exist if written this run. Test seeding moved into
+   `fake_adapt_lesson` (faithful to real planner timing).
+3. **P2 — gate rejections were a black box** (`adapt/llm_planner.py`):
+   `objective_rejected_gate` logged with `verdicts: []` and nothing else.
+   `run_blocking_gates()` already returned full per-violation detail; it's now persisted
+   into `planner_attempts.json` (`gate_violations` with gate/item/message/evidence;
+   coverage rejects get `coverage_failure` with failing cells) and summarized in the warning.
+
+**Payoff — the P2 diagnostic immediately found the real planner blocker on the live rerun:**
+both gate violations were the **capitalization gate falsely treating "puppy" as a proper
+noun** — it appears capitalized in the source passage TITLE "Lily's Puppy", so the gate
+blocked "a puppy" lowercase mid-sentence and even the valid item "Write puppy." The planner's
+output may otherwise have been shippable. **This false positive fires for any lesson whose
+passage title contains a target word — it is now the #1 suspected blocker for
+`objective_approved` ever shipping.** Fix in `validate/blocking_gates.py` (~314-353):
+exclude title-case heading words from proper-noun inference. Evidence preserved in
+`output/lesson74_rerun/artifacts/planner_attempts.json`.
+
+**Live rerun (post-fix, `output/lesson74_rerun/`):** no "la" anywhere (pages visually
+verified); judge genuinely ran (HTTP call visible, fresh 0.47 verdict about the actual
+2-sheet package); artifacts dir contains only this run's files; cover image cache hit
+(good cover reused). Remaining known noise, unchanged and expected: package coverage ERRORs
+(11/36 words) + judge coverage=0.08 — the ADVISORY judge and package coverage validator still
+use the exhaustive-coverage rubric on deliberately-capped lesson packages (P3, next after the
+gate fix); grade-precedence warning (P4); print-quality overlap-at-(0,0) warnings on full-page
+image_gen renders look like false positives (text layer over full-bleed image — verify before
+chasing).
+
+**Next (ordered):** (1) fix the capitalization-gate proper-noun inference + regression test,
+rerun lesson 74, see if the objective planner finally ships or what rejects next (now
+observable via planner_attempts.json); (2) P3 — align package coverage validator + advisory
+judge with objective-sufficiency in lesson mode; (3) P4 — grade precedence (profile grade 1
+vs lesson grade 2 drives the workload budget); then Goal 2 (hybrid_shell).
+
 ### Session 58 — 2026-07-07 (UAT #1 fixes: worksheet-count explosion, lesson-mode planner default)
 
 **Status:** Owner ran UAT #1 live (`python transform.py --lesson 74 --profile profiles/ian.yaml
@@ -1478,6 +1549,7 @@ All 344 tests pass. PDF validation (skill parity, age band, ADHD compliance, pri
 | D30 | Planner simplification: one strong planning call replaces the Gemini→judge→retry→GPT-takeover loop | Provider chain gpt-5.4 → gemini-3.5-flash (`WORKSHEET_PLANNER_PROVIDERS`, default `openai,gemini`). Prompt carries FULL source items + canonical corpus lesson content (`lookup_lesson`); the model authors item content/options/answers directly; deterministic clamps from adapt/rules.py run after the call, including a grade-scaled hard cap on sections per mini-worksheet (K:2, 1:3, 2:4, 3:4) enforced by splitting, never dropping. Evidence: every live run (Sessions 41–43) ended `gpt_takeover_unjudged` after two wasted Gemini calls; a live page shipped with 9 sections. | 2026-06-12 |
 | D31 | Judge gates everything that ships: approve → ship; reject → ONE regeneration with feedback; reject again → deterministic engine | Closes the unjudged-takeover hole. Judge reads full item text (no truncation) with ai_review's structural criteria folded in; the ai_review mutation loop is skipped on the LLM path (kept for deterministic output). Deterministic-path output gets an advisory verdict. LLM adaptation flips default-on (opt-out `WORKSHEET_LLM_ADAPT=0`) only after the owner-reviewed A/B battery gate. | 2026-06-12 |
 | D32 | Per-chunk scene/word-picture asset generation skipped when render mode is image_gen | The full-page renderer never consumes those assets; they only served pdf_classic layouts. If image_gen falls back to pdf_classic mid-run, that worksheet renders with deterministic local art (same as asset-gen failure today). Saves several image generations per lesson. | 2026-06-12 |
+| D33 | Per-run artifacts are cleared at run start (shared _run_from_skill_model — photo AND lesson paths); readback files are trustworthy by construction | judge_verdict.json is only written during the adapt stage, so its mere existence must imply "written THIS run" — a stale copy replayed a 3-day-old verdict against a different package (observed live). _clear_stale_run_artifacts() removes judge_verdict/planner_attempts/numbered debris before Stage 5; every cleared filename is written downstream of that point. No run-id or content-hash plumbing needed. llm_adaptation_log.jsonl is append-by-design telemetry and survives. | 2026-07-10 |
 
 ---
 
@@ -1574,6 +1646,7 @@ Note: index step requires GOOGLE_CLOUD_PROJECT=ws-builder-rag env var.
 | Q1 | PaddleOCR vs Tesseract cross-platform install | PaddleOCR has heavier dependencies; may affect dev setup | Open |
 | Q2 | Nunito font licensing for embedded PDF | Listed as primary theme font | Open |
 | Q3 | How to create synthetic golden test images | Need to mimic UFLI layout without using UFLI content | Open — solve during Checkpoint 1.3 |
+| Q4 | Should the ADVISORY judge + package coverage validator use objective-sufficiency in lesson mode? | Session 58c fixed the PLANNER judge rubric, but the transform-level advisory judge (coverage=0.08) and validate/ content-coverage (11/36 ERROR) still measure exhaustive coverage against packages the workload budget deliberately capped — every capped lesson run ERRORs by design | Open — P3, next after the G14 gate fix |
 
 ---
 
@@ -1594,6 +1667,9 @@ Note: index step requires GOOGLE_CLOUD_PROJECT=ws-builder-rag env var.
 | G11 | Vertex AI ADC permissions for embedding model | `gemini-embedding-exp-03-07` returns 403 `PERMISSION_DENIED` even with `GOOGLE_CLOUD_PROJECT` set and quota project configured. ADC user needs `aiplatform.endpoints.predict` permission | Re-authenticated ADC with quota project (`gcloud auth application-default login --project=ws-builder-rag`); still blocked. May need service account key or different auth approach |
 | G7 | GPT-5.4 uses max_completion_tokens not max_tokens | 400 error with max_tokens param | Changed to max_completion_tokens |
 | G8 | gpt-image-1.5 doesn't support response_format param | 400 error; returns b64_json by default | Removed response_format param |
+| G12 | PDF-grid extraction fragments enter word pools | Lesson 74 Roll-and-Read extracted "la" (truncated word) → shipped in cover title + match/write items; engine parser blocklisted it but the loader's "mirroring" parser had drifted | Fixed Session 59: loader blocklist parity + concept-derived pattern filter with 25% safety valve; roll_and_read source item rebuilt from filtered pool |
+| G13 | judge_verdict.json readback trusted any existing file | A stale July 7 NOT-APPROVED verdict (10-sheet package) was replayed against a fresh 2-sheet run — judge never ran; stale planner_version also drove _skip_ai_review | Fixed Session 59: _clear_stale_run_artifacts() at lesson-run start; file can only exist if written this run |
+| G14 | Capitalization blocking gate treats title-case passage-title words as proper nouns | "Lily's Puppy" title → gate demands "Puppy" capitalized mid-sentence, blocks valid items like "Write puppy."; likely fires for ANY lesson whose passage title contains a target word — #1 suspected blocker for objective_approved | OPEN — fix proper-noun inference in validate/blocking_gates.py (~314-353); evidence in output/lesson74_rerun/artifacts/planner_attempts.json |
 
 ---
 

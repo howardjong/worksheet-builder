@@ -488,6 +488,7 @@ from adapt.llm_judge import (  # noqa: E402
 from adapt.objective_ledger import ObjectiveCell, ObjectiveLedger  # noqa: E402
 from validate.blocking_gates import BlockingGateResult, BlockingViolation  # noqa: E402
 from validate.objective_coverage import (  # noqa: E402
+    ObjectiveCellResult,
     ObjectiveCoverageResult,
     PackageBoundResult,
 )
@@ -654,6 +655,67 @@ def test_objective_gate_block_rejects_and_skips_judge(
     attempts = json.loads((tmp_path / "planner_attempts.json").read_text())
     assert "gate" in attempts["outcome"]
     assert not (tmp_path / "judge_verdict.json").exists()
+    # The rejection is debuggable: which gate, which item, why (observed live:
+    # outcome=objective_rejected_gate with no detail — a black box).
+    assert attempts["gate_violations"] == [
+        {
+            "gate": "answer_key",
+            "severity": "blocker",
+            "activity_id": None,
+            "item_id": "ws0_chunk0_item0",
+            "message": "answer not in options",
+            "evidence": {},
+        }
+    ]
+
+
+def test_objective_coverage_fail_records_failing_cells(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    from adapt import llm_planner
+
+    _objective_env(monkeypatch)
+    monkeypatch.setattr(llm_planner, "build_objective_ledger", lambda s: _tiny_ledger())
+    monkeypatch.setattr(llm_planner, "_call_planner", lambda p: (_PLAN_JSON, "gpt-5.4"))
+    monkeypatch.setattr(llm_planner, "run_blocking_gates", lambda w, ld: _gates(True))
+
+    failing_coverage = _coverage("fail").model_copy(
+        update={
+            "objective_results": [
+                ObjectiveCellResult(
+                    objective_id="obj_decode",
+                    importance="essential",
+                    status="fail",
+                    distinct_high_confidence_count=1,
+                    min_practice_count=4,
+                    advisory_low_confidence_count=0,
+                    required_forms_present=False,
+                    missing_required_forms=["word_reading"],
+                    notes=["only 1/4 practice items"],
+                )
+            ]
+        }
+    )
+    monkeypatch.setattr(
+        llm_planner, "evaluate_objective_coverage", lambda ld, e, w: failing_coverage
+    )
+
+    result = llm_planner.plan_lesson_llm(_skill(), _profile(), artifacts_dir=str(tmp_path))
+
+    assert result is None
+    attempts = json.loads((tmp_path / "planner_attempts.json").read_text())
+    assert attempts["outcome"] == "objective_rejected_coverage"
+    failure = attempts["coverage_failure"]
+    assert failure["status"] == "fail"
+    assert failure["failing_objectives"] == [
+        {
+            "objective_id": "obj_decode",
+            "status": "fail",
+            "missing_required_forms": ["word_reading"],
+            "notes": ["only 1/4 practice items"],
+        }
+    ]
+    assert failure["package_bounds"]["passed"] is True
 
 
 def test_objective_clean_plan_approved(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -153,9 +153,7 @@ def test_lesson_mode_respects_explicit_planner_v2_override(
     seen: list[tuple[str | None, str | None]] = []
 
     def fake_run_from_skill_model(skill_model: Any, **kwargs: Any) -> RunArtifacts:
-        seen.append(
-            (os.environ.get("WORKSHEET_PLANNER_V2"), os.environ.get("WORKSHEET_LLM_ADAPT"))
-        )
+        seen.append((os.environ.get("WORKSHEET_PLANNER_V2"), os.environ.get("WORKSHEET_LLM_ADAPT")))
         return RunArtifacts(
             source_image_path=str(kwargs["source_image_path"]),
             source_image_hash=str(kwargs["source_image_hash"]),
@@ -270,25 +268,22 @@ def _worksheet(number: int, contents: list[str]) -> AdaptedActivityModel:
     )
 
 
-def test_lesson_mode_produces_stable_lesson_pdf(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    """The merged output is a stable, hash-derived lesson_<hash>.pdf across runs."""
+def _stub_lesson_pipeline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_adapt_lesson: Callable[..., list[AdaptedActivityModel]],
+) -> Path:
+    """Stub every expensive lesson-pipeline stage; returns the profile path.
+
+    The adapt stage is the only stage tests vary (verdict-writing planner vs
+    silent deterministic fallback), so it's the one injectable piece.
+    """
     monkeypatch.setenv("WORKSHEET_SKIP_ASSET_GEN", "1")
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
     profile_path = tmp_path / "profile.yaml"
     profile_path.write_text("name: Ian\ngrade_level: '2'\n", encoding="utf-8")
-
-    worksheets = [
-        _worksheet(1, ["day", "play", "stay"]),
-        _worksheet(2, ["say", "way", "tray"]),
-        _worksheet(3, ["clay", "gray"]),
-    ]
-
-    def fake_adapt_lesson(*a: Any, **k: Any) -> list[AdaptedActivityModel]:
-        return worksheets
 
     def fake_review(
         adapted: AdaptedActivityModel,
@@ -309,13 +304,34 @@ def test_lesson_mode_produces_stable_lesson_pdf(
     monkeypatch.setattr(transform_module, "_merge_lesson_package", fake_merge)
     monkeypatch.setattr(transform_module, "_should_generate_chunk_assets", lambda _mode: False)
     monkeypatch.setattr("render.strategies.render_worksheet", lambda *a, **k: None)
+    return profile_path
+
+
+def test_lesson_mode_produces_stable_lesson_pdf(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The merged output is a stable, hash-derived lesson_<hash>.pdf across runs."""
+    worksheets = [
+        _worksheet(1, ["day", "play", "stay"]),
+        _worksheet(2, ["say", "way", "tray"]),
+        _worksheet(3, ["clay", "gray"]),
+    ]
+
+    def fake_adapt_lesson(*a: Any, **k: Any) -> list[AdaptedActivityModel]:
+        # Write the approving verdict the way the real planner does — DURING
+        # the adapt stage. Seeding it before the run would be cleared as a
+        # stale prior-run artifact.
+        artifacts_dir = k.get("artifacts_dir")
+        if artifacts_dir:
+            verdict = json.dumps({"approved": True, "overall_score": 1.0})
+            (Path(str(artifacts_dir)) / "judge_verdict.json").write_text(verdict)
+        return worksheets
+
+    profile_path = _stub_lesson_pipeline(tmp_path, monkeypatch, fake_adapt_lesson)
 
     def run() -> RunArtifacts:
         art = tmp_path / "art"
         art.mkdir(exist_ok=True)
-        # Pre-seed an approving judge verdict so no LLM judge is attempted.
-        verdict = json.dumps({"approved": True, "overall_score": 1.0})
-        (art / "judge_verdict.json").write_text(verdict)
         return run_lesson_pipeline_collect_artifacts(
             74,
             str(profile_path),
@@ -333,6 +349,61 @@ def test_lesson_mode_produces_stable_lesson_pdf(
     content_hash = hashlib.sha256(f"{source_hash}:Ian:roblox_obby".encode()).hexdigest()[:12]
     assert first.pdf_paths == second.pdf_paths  # stable across runs
     assert first.pdf_paths[0].endswith(f"lesson_{content_hash}.pdf")
+
+
+def test_stale_run_artifacts_cleared_before_adapt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A previous run's artifacts must not leak into this run.
+
+    Observed live: a 3-day-old NOT-APPROVED judge_verdict.json (about a
+    10-worksheet package) was read back and replayed against a fresh
+    2-worksheet package — the judge never ran. Numbered debris
+    (adapted_model_9.json etc.) from larger prior runs also lingered.
+    """
+    worksheets = [_worksheet(1, ["day", "play"]), _worksheet(2, ["say", "way"])]
+
+    def fake_adapt_lesson(*a: Any, **k: Any) -> list[AdaptedActivityModel]:
+        # Deterministic fallback path: the planner writes NO verdict this run.
+        return worksheets
+
+    profile_path = _stub_lesson_pipeline(tmp_path, monkeypatch, fake_adapt_lesson)
+
+    art = tmp_path / "art"
+    art.mkdir()
+    stale_verdict = {
+        "approved": False,
+        "overall_score": 0.46,
+        "rationale": "stale — references Worksheet 9",
+        "planner_version": 2,
+    }
+    (art / "judge_verdict.json").write_text(json.dumps(stale_verdict))
+    (art / "planner_attempts.json").write_text(json.dumps({"outcome": "objective_rejected_gate"}))
+    (art / "adapted_model_9.json").write_text("{}")
+    (art / "ai_review_9.json").write_text("{}")
+    (art / "validation_9.json").write_text("{}")
+
+    run_lesson_pipeline_collect_artifacts(
+        74,
+        str(profile_path),
+        "roblox_obby",
+        str(tmp_path / "out"),
+        str(art),
+        index_results=False,
+        render_mode="pdf_classic",
+    )
+
+    # The stale verdict was NOT replayed: whatever exists now was written
+    # by THIS run (advisory judge path — skipped without API keys).
+    fresh = json.loads((art / "judge_verdict.json").read_text())
+    assert fresh != stale_verdict
+    assert fresh.get("overall_score") != 0.46
+    # Prior-run debris is gone; this run's own numbered artifacts remain.
+    assert not (art / "adapted_model_9.json").exists()
+    assert not (art / "ai_review_9.json").exists()
+    assert not (art / "validation_9.json").exists()
+    assert not (art / "planner_attempts.json").exists()
+    assert (art / "adapted_model_1.json").exists()
 
 
 def test_cli_requires_exactly_one_entry_point(tmp_path: Path) -> None:

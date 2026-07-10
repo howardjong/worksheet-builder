@@ -10,6 +10,7 @@ otherwise).
 
 from __future__ import annotations
 
+import logging
 import re
 
 from corpus.ufli.lookup import lookup_lesson
@@ -23,7 +24,24 @@ from skill.extractor import (
 from skill.schema import LiteracySkillModel, SourceItem
 from skill.taxonomy import match_phonics_pattern
 
+logger = logging.getLogger(__name__)
+
 _CORPUS_SOURCE: dict[str, str | int | float | bool] = {"source": "corpus"}
+
+# Known PDF-grid extraction fragments (observed live: lesson 74's Roll and Read
+# grid extracted "la", a truncated word, which shipped into the cover title and
+# match/write sections). Single source of truth — adapt.engine._parse_roll_and_read
+# imports this so the two parsers cannot drift apart again.
+EXTRACTION_ARTIFACTS = ("la", "le", "re", "de", "el", "al")
+
+# Graphemes are short ("y", "sh", "eigh"); longer concept tokens are English
+# words ("digraphs") that would produce junk patterns.
+_MAX_GRAPHEME_LEN = 4
+
+# If pattern filtering would drop more than this share of the pool, the
+# derived pattern is untrustworthy (e.g. a grid with a review column) — keep
+# every word instead.
+_MAX_PATTERN_DROP_RATIO = 0.25
 
 
 class LessonNotFoundError(ValueError):
@@ -53,24 +71,38 @@ def skill_model_from_lesson(lesson_number: int) -> LiteracySkillModel:
         specific_skill = match_phonics_pattern(concept_label) or normalize_concept(concept_label)
 
     words = _roll_and_read_words(result.additional_text)
+    words, dropped = _filter_pattern_words(words, _concept_patterns(concept_label))
+    if dropped:
+        logger.warning(
+            "Lesson %d: dropped %d non-conforming Roll and Read token(s) "
+            "(extraction artifacts): %s",
+            lesson_number,
+            len(dropped),
+            ", ".join(dropped),
+        )
 
     source_items: list[SourceItem] = []
     # Practice word list — drives the word-discovery + word-practice worksheets.
     if words:
+        word_list_metadata = dict(_CORPUS_SOURCE)
+        if dropped:
+            word_list_metadata["dropped_tokens"] = ", ".join(dropped)
         source_items.append(
             SourceItem(
                 item_type="word_list",
                 content=", ".join(words),
                 source_region_index=-1,
-                metadata=dict(_CORPUS_SOURCE),
+                metadata=word_list_metadata,
             )
         )
-        # Roll and Read block (mirrors _enrich_from_corpus); the adapt engine
-        # re-parses the raw text at consumption time.
+        # Roll and Read block (mirrors _enrich_from_corpus). The adapt engine
+        # re-parses this content at consumption time, so it is rebuilt from the
+        # FILTERED pool — shipping the raw block would resurrect dropped
+        # fragments through that second parse.
         source_items.append(
             SourceItem(
                 item_type="roll_and_read",
-                content=result.additional_text.strip(),
+                content="\n".join(words),
                 source_region_index=-1,
                 metadata=dict(_CORPUS_SOURCE),
             )
@@ -157,8 +189,7 @@ def _home_practice_items(text: str) -> tuple[list[str], list[str]]:
         return [], []
 
     chains = [
-        " → ".join(re.split(r"\s*(?:→|->)\s*", m.group(0)))
-        for m in _CHAIN_PATTERN.finditer(text)
+        " → ".join(re.split(r"\s*(?:→|->)\s*", m.group(0))) for m in _CHAIN_PATTERN.finditer(text)
     ]
 
     # Sentences: split on terminal punctuation, keep the punctuation.
@@ -242,7 +273,58 @@ def _roll_and_read_words(text: str) -> list[str]:
             token = raw_token.strip().lower()
             if len(token) < 2 or not token.isalpha():
                 continue
+            if token in EXTRACTION_ARTIFACTS:
+                continue
             if token not in seen:
                 seen.add(token)
                 words.append(token)
     return words
+
+
+def _concept_patterns(concept_label: str) -> list[re.Pattern[str]]:
+    """Derive grapheme search patterns from a concept label.
+
+    'y /ē/' → [y]; 'oa, ow' → [oa, ow]; 'a_e' → [a[a-z]e] (split vowel).
+    Phoneme notation like /ē/ self-excludes (non-ASCII); English-word tokens
+    self-exclude via the length cap. An empty result disables filtering —
+    junk tokens can only make the filter MORE permissive (a word is kept if
+    ANY pattern matches), never more aggressive.
+    """
+    patterns: list[re.Pattern[str]] = []
+    for token in re.findall(r"[a-z_]+", concept_label.lower()):
+        if len(token) > _MAX_GRAPHEME_LEN:
+            continue
+        if "_" in token:
+            parts = [re.escape(p) for p in token.split("_") if p]
+            if len(parts) < 2:
+                continue
+            patterns.append(re.compile("[a-z]".join(parts)))
+        else:
+            patterns.append(re.compile(re.escape(token)))
+    return patterns
+
+
+def _filter_pattern_words(
+    words: list[str], patterns: list[re.Pattern[str]]
+) -> tuple[list[str], list[str]]:
+    """Split words into (pattern-conformant, dropped extraction suspects).
+
+    Safety valve: if more than _MAX_PATTERN_DROP_RATIO of the pool would be
+    dropped, the pattern read is untrustworthy — return every word unchanged.
+    """
+    if not words or not patterns:
+        return words, []
+    kept: list[str] = []
+    dropped: list[str] = []
+    for word in words:
+        (kept if any(p.search(word) for p in patterns) else dropped).append(word)
+    if len(dropped) / len(words) > _MAX_PATTERN_DROP_RATIO:
+        logger.warning(
+            "Pattern filter would drop %d/%d Roll and Read words — pattern "
+            "read untrustworthy, keeping all: %s",
+            len(dropped),
+            len(words),
+            ", ".join(dropped),
+        )
+        return words, []
+    return kept, dropped

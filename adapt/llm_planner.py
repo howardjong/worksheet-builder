@@ -582,9 +582,24 @@ def _plan_lesson_objective(
     # 1. Deterministic blocking gates — block → reject, skip the judge entirely.
     gates = run_blocking_gates(worksheets, ledger)
     if not gates.passed:
-        logger.warning("  LLM planner (objective): blocking gate failed → reject")
+        summary = "; ".join(
+            f"{v.gate} {v.item_id or v.activity_id or '?'}: {v.message}"
+            for v in gates.violations[:5]
+        )
+        logger.warning(
+            "  LLM planner (objective): blocking gate failed → reject "
+            "(%d violation(s), gates=%s): %s",
+            len(gates.violations),
+            sorted({v.gate for v in gates.violations}),
+            summary,
+        )
         return _objective_fallback(
-            skill, "objective_rejected_gate", model_label, None, artifacts_dir
+            skill,
+            "objective_rejected_gate",
+            model_label,
+            None,
+            artifacts_dir,
+            details={"gate_violations": [v.model_dump(mode="json") for v in gates.violations]},
         )
 
     # 2. Deterministic objective coverage — pass the SAME worksheets to both the
@@ -593,9 +608,33 @@ def _plan_lesson_objective(
     evidence = build_evidence_index(worksheets, ledger)
     coverage = evaluate_objective_coverage(ledger, evidence, worksheets)
     if coverage.status == "fail":
-        logger.warning("  LLM planner (objective): deterministic coverage failed → reject")
+        failing = [
+            cell.model_dump(
+                mode="json",
+                include={"objective_id", "status", "missing_required_forms", "notes"},
+            )
+            for cell in coverage.objective_results
+            if cell.status != "pass"
+        ]
+        logger.warning(
+            "  LLM planner (objective): deterministic coverage failed → reject "
+            "(%d failing objective(s): %s)",
+            len(failing),
+            [f["objective_id"] for f in failing],
+        )
         return _objective_fallback(
-            skill, "objective_rejected_coverage", model_label, None, artifacts_dir
+            skill,
+            "objective_rejected_coverage",
+            model_label,
+            None,
+            artifacts_dir,
+            details={
+                "coverage_failure": {
+                    "status": coverage.status,
+                    "failing_objectives": failing,
+                    "package_bounds": coverage.package_bounds.model_dump(mode="json"),
+                }
+            },
         )
 
     # 3. Objective judge (raw per-sample list; [] when unavailable).
@@ -651,15 +690,18 @@ def _objective_fallback(
     model_label: str,
     aggregated: ObjectiveJudgeVerdict | None,
     artifacts_dir: str | None,
+    details: dict[str, object] | None = None,
 ) -> list[AdaptedActivityModel] | None:
     """Route the objective path to the deterministic fallback (return None).
 
     Mirrors the old fallback artifact policy: write planner_attempts.json, NOT
     judge_verdict.json — the deterministic engine takes over and transform.py
     judges what actually ships. The DISTINCT ``outcome`` keeps abstain, reject,
-    gate, and coverage failures separable in the log/attempts.
+    gate, and coverage failures separable in the log/attempts; ``details``
+    carries the rejection evidence (gate violations, failing coverage cells)
+    so a rejection is debuggable from the artifact alone.
     """
-    _write_objective_attempts(outcome, aggregated, artifacts_dir)
+    _write_objective_attempts(outcome, aggregated, artifacts_dir, details)
     _log_performance(
         _objective_entry(skill, outcome, aggregated, None, model_label, judged=False),
         artifacts_dir,
@@ -679,6 +721,7 @@ def _write_objective_attempts(
     outcome: str,
     aggregated: ObjectiveJudgeVerdict | None,
     artifacts_dir: str | None,
+    details: dict[str, object] | None = None,
 ) -> None:
     """Record a non-approved objective attempt WITHOUT claiming a shipped verdict.
 
@@ -690,17 +733,15 @@ def _write_objective_attempts(
         return
     path = Path(artifacts_dir)
     path.mkdir(parents=True, exist_ok=True)
-    (path / "planner_attempts.json").write_text(
-        json.dumps(
-            {
-                "outcome": outcome,
-                "planner_version": 2,
-                "objective_coverage": True,
-                "verdicts": [aggregated.model_dump()] if aggregated is not None else [],
-            },
-            indent=2,
-        )
-    )
+    payload: dict[str, object] = {
+        "outcome": outcome,
+        "planner_version": 2,
+        "objective_coverage": True,
+        "verdicts": [aggregated.model_dump()] if aggregated is not None else [],
+    }
+    if details:
+        payload.update(details)
+    (path / "planner_attempts.json").write_text(json.dumps(payload, indent=2))
 
 
 def _objective_entry(

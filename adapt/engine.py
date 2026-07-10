@@ -25,6 +25,7 @@ from adapt.schema import (
 )
 from adapt.section_cap import enforce_package_cap, enforce_section_cap
 from companion.schema import LearnerProfile
+from skill.lesson_loader import EXTRACTION_ARTIFACTS
 from skill.schema import LiteracySkillModel
 
 if TYPE_CHECKING:
@@ -714,7 +715,7 @@ def _build_builder_chunks(
             example = Example(
                 instruction="Watch how the letters change:",
                 content=(
-                    f'{ex_step["from_word"]} → {ex_step["to_word"]}  '
+                    f"{ex_step['from_word']} → {ex_step['to_word']}  "
                     f'(change the "{ex_step["old_letter"]}" '
                     f'to "{ex_step["new_letter"]}")'
                 ),
@@ -741,7 +742,7 @@ def _build_builder_chunks(
                                 f'Start with "{step["from_word"]}". '
                                 f'Change the "{step["old_letter"]}" '
                                 f'to "{step["new_letter"]}". '
-                                f'Write the new word.'
+                                f"Write the new word."
                             ),
                             response_format="write",
                             metadata={"display": "chain_step"},
@@ -1027,8 +1028,9 @@ def _parse_roll_and_read(text: str) -> list[str]:
             # Filter: must be real English word (>=2 chars, not an artifact)
             if not token or not token.isalpha() or len(token) < 2:
                 continue
-            # Skip common OCR/extraction artifacts
-            if token in ("la", "le", "re", "de", "el", "al"):
+            # Skip common OCR/extraction artifacts (shared constant — see
+            # skill.lesson_loader.EXTRACTION_ARTIFACTS for provenance)
+            if token in EXTRACTION_ARTIFACTS:
                 continue
             words.append(token)
     # Deduplicate preserving order

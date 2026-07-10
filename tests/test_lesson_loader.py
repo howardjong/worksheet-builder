@@ -10,6 +10,7 @@ import pytest
 import corpus.ufli.lookup as lookup_module
 from corpus.ufli.lookup import reset_lookup_cache
 from skill.lesson_loader import LessonNotFoundError, skill_model_from_lesson
+from skill.schema import LiteracySkillModel
 
 
 @pytest.fixture(autouse=True)
@@ -131,3 +132,121 @@ class TestHomePracticeCleaning:
         sentence_items = [si for si in model.source_items if si.item_type == "sentence"]
         assert len(sentence_items) == 1
         assert "We play all day." in sentence_items[0].content
+
+
+class TestWordPoolHygiene:
+    """The real corpus's Roll and Read blocks are raw PDF-grid extractions and
+    can contain truncated fragments (observed live: lesson 74 shipped "la" —
+    a fragment, not a word — into the cover title and match/write sections).
+    The engine parser (adapt.engine._parse_roll_and_read) blocklists known
+    fragments; the loader must mirror it AND drop tokens that don't conform
+    to the lesson's target pattern."""
+
+    # Mirrors the live lesson-74 defect: "la" (blocklisted fragment) leads the
+    # Roll and Read block; "twen" (truncated "twenty") exercises the pattern
+    # filter for fragments the static blocklist can't anticipate.
+    RAW_Y_BLOCK = (
+        "Roll and Read\nLesson 74: y /ē/\nla\nfluffy\nangry\njelly\nbumpy\n"
+        "lady\nhappy\nmy\nsunny\ntwen"
+    )
+
+    def _model_for(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        concept: str,
+        additional_text: str,
+    ) -> LiteracySkillModel:
+        import skill.lesson_loader as loader_module
+        from corpus.ufli.lookup import CorpusLookupResult
+
+        record = CorpusLookupResult(
+            lesson_id="74",
+            concept=concept,
+            decodable_text="",
+            additional_text=additional_text,
+            home_practice_text="",
+        )
+        monkeypatch.setattr(loader_module, "lookup_lesson", lambda _n: record)
+        return skill_model_from_lesson(74)
+
+    def test_blocklisted_fragments_dropped_by_parser(self) -> None:
+        # Parser parity with adapt.engine._parse_roll_and_read.
+        from skill.lesson_loader import _roll_and_read_words
+
+        words = _roll_and_read_words("Roll and Read\nla\nle\nre\nde\nel\nal\nfluffy")
+        assert words == ["fluffy"]
+
+    def test_concept_patterns_plain_grapheme(self) -> None:
+        from skill.lesson_loader import _concept_patterns, _filter_pattern_words
+
+        patterns = _concept_patterns("y /ē/")
+        kept, dropped = _filter_pattern_words(["fluffy", "angry", "my", "lady", "twenty"], patterns)
+        # 2-letter legit word "my" survives; nothing conforming is dropped.
+        assert kept == ["fluffy", "angry", "my", "lady", "twenty"]
+        assert dropped == []
+
+    def test_concept_patterns_split_vowel(self) -> None:
+        from skill.lesson_loader import _concept_patterns, _filter_pattern_words
+
+        patterns = _concept_patterns("a_e")
+        kept, dropped = _filter_pattern_words(["cake", "gate", "cat", "name"], patterns)
+        assert kept == ["cake", "gate", "name"]
+        assert dropped == ["cat"]
+
+    def test_concept_patterns_multi_grapheme(self) -> None:
+        from skill.lesson_loader import _concept_patterns, _filter_pattern_words
+
+        patterns = _concept_patterns("oa, ow")
+        kept, dropped = _filter_pattern_words(["boat", "coat", "snow", "grow", "cat"], patterns)
+        assert kept == ["boat", "coat", "snow", "grow"]
+        assert dropped == ["cat"]
+
+    def test_underivable_concept_disables_filter(self) -> None:
+        from skill.lesson_loader import _concept_patterns, _filter_pattern_words
+
+        # Pure phoneme notation (non-ASCII) yields no graphemes — no filtering.
+        assert _concept_patterns("/ē/") == []
+        kept, dropped = _filter_pattern_words(["la", "fluffy"], [])
+        assert kept == ["la", "fluffy"]
+        assert dropped == []
+
+    def test_safety_valve_keeps_all_when_drop_ratio_high(self) -> None:
+        from skill.lesson_loader import _concept_patterns, _filter_pattern_words
+
+        # A grid with a legit review column: half the words don't match the
+        # target pattern. Dropping >25% means the pattern read is untrustworthy.
+        patterns = _concept_patterns("ay")
+        words = ["play", "day", "ship", "fish"]
+        kept, dropped = _filter_pattern_words(words, patterns)
+        assert kept == words
+        assert dropped == []
+
+    def test_fragment_dropped_from_model(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        model = self._model_for(monkeypatch, "y /ē/", self.RAW_Y_BLOCK)
+
+        # "la" dies at the parser blocklist; "twen" dies at the pattern filter.
+        assert "la" not in model.target_words
+        assert "twen" not in model.target_words
+        assert "fluffy" in model.target_words
+        assert "my" in model.target_words
+
+        # The word_list source_item mirrors the filtered pool and records
+        # pattern-filter drops for debuggability.
+        word_lists = [si for si in model.source_items if si.item_type == "word_list"]
+        assert len(word_lists) == 1
+        assert "la" not in word_lists[0].content.split(", ")
+        assert word_lists[0].metadata.get("dropped_tokens") == "twen"
+
+    def test_roll_and_read_item_rebuilt_from_filtered_words(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The adapt engine re-parses this item's raw text at consumption time —
+        # if the raw block ships, the fragment re-enters through that path.
+        model = self._model_for(monkeypatch, "y /ē/", self.RAW_Y_BLOCK)
+
+        rolls = [si for si in model.source_items if si.item_type == "roll_and_read"]
+        assert len(rolls) == 1
+        tokens = rolls[0].content.split("\n")
+        assert "la" not in tokens
+        assert "twen" not in tokens
+        assert "fluffy" in tokens

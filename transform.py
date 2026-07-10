@@ -298,6 +298,10 @@ def _run_from_skill_model(
     selected_strategy = resolve_render_strategy(render_mode)
     selected_render_mode = cast(RenderMode, selected_strategy.renderer_id)
 
+    # Every artifact cleared here is written downstream of this point, so a
+    # readback (Stage 5c judge_verdict.json) can only ever see this run's files.
+    _clear_stale_run_artifacts(artifacts)
+
     # Stage 5: ADHD adaptation
     logger.info("Stage 5: Adapting for ADHD...")
     profile = load_profile(profile_path)
@@ -435,6 +439,30 @@ def run_lesson_pipeline(
         render_mode=render_mode,
     )
     return run_artifacts.pdf_paths[0] if run_artifacts.pdf_paths else ""
+
+
+# Artifacts a previous run into the same --output dir may have left behind.
+# judge_verdict.json is read back after the adapt stage (photo AND lesson paths
+# both dispatch through _run_from_skill_model) — a stale copy replays a verdict
+# about a package that no longer exists (observed live: a 3-day-old NOT-APPROVED
+# verdict about a 10-worksheet package was replayed against a fresh 2-worksheet
+# package, and the judge never ran — it also drives _skip_ai_review via
+# planner_version). The numbered files mislead debugging.
+# llm_adaptation_log.jsonl is append-by-design telemetry and stays.
+_STALE_RUN_ARTIFACT_PATTERNS = (
+    "judge_verdict.json",
+    "planner_attempts.json",
+    "adapted_model_*.json",
+    "ai_review_*.json",
+    "validation*.json",
+)
+
+
+def _clear_stale_run_artifacts(artifacts: Path) -> None:
+    """Remove prior-run artifacts so readbacks only ever see this run's files."""
+    for pattern in _STALE_RUN_ARTIFACT_PATTERNS:
+        for path in artifacts.glob(pattern):
+            path.unlink(missing_ok=True)
 
 
 def run_lesson_pipeline_collect_artifacts(
