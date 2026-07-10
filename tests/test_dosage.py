@@ -135,3 +135,41 @@ def test_rules_use_current_grade() -> None:
     plain_grade2 = _profile(grade_level="2")
 
     assert build_rules(stale) == build_rules(plain_grade2)
+
+
+def test_design_spec_uses_current_grade() -> None:
+    from adapt.schema import ActivityChunk, AdaptedActivityModel, Example, ScaffoldConfig, Step
+    from render.design_spec import compile_worksheet_design_spec
+    from theme.schema import ThemeConfig
+
+    stale = _profile(birthdate=IAN_BD, jurisdiction="CA-ON", grade_level="1")
+    adapted = AdaptedActivityModel(
+        source_hash="source_hash",
+        skill_model_hash="skill_hash",
+        learner_profile_hash="profile_hash",
+        grade_level="1",
+        domain="phonics",
+        specific_skill="vowel teams ai ay",
+        chunks=[
+            ActivityChunk(
+                chunk_id=1,
+                micro_goal="Read vowel team words",
+                instructions=[Step(number=1, text="Read each word.")],
+                worked_example=Example(instruction="Try this first:", content="rain has ai"),
+                items=[],
+                response_format="write",
+                time_estimate="About 3 minutes",
+            )
+        ],
+        scaffolding=ScaffoldConfig(),
+        theme_id="geometry_dash",
+        decoration_zones=[(0.85, 0.0, 1.0, 0.12)],
+        worksheet_title="Vowel Team Adventure",
+        worksheet_number=1,
+        worksheet_count=2,
+    )
+    theme = ThemeConfig(name="Geometry Dash Calm")
+
+    spec = compile_worksheet_design_spec(adapted, theme, stale, render_mode="image_gen")
+
+    assert spec.learner_grade_level == "2"

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from companion.dosage import current_grade
 from companion.profile import update_accommodations
 from companion.schema import LearnerProfile, Progress
 
@@ -27,9 +28,7 @@ def view_progress(profile: LearnerProfile) -> ProgressReport:
     progress = profile.progress or Progress()
 
     # Extract unique skill domains from completion history
-    skills = list({
-        r.skill_domain for r in progress.completion_history if r.skill_domain
-    })
+    skills = list({r.skill_domain for r in progress.completion_history if r.skill_domain})
 
     # Summarize accommodations
     accom = profile.accommodations
@@ -44,7 +43,7 @@ def view_progress(profile: LearnerProfile) -> ProgressReport:
 
     return ProgressReport(
         name=profile.name,
-        grade_level=profile.grade_level,
+        grade_level=current_grade(profile),
         worksheets_completed=progress.worksheets_completed,
         current_lesson=progress.current_lesson,
         tokens_available=progress.tokens_available,

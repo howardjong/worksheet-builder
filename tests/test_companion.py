@@ -507,3 +507,15 @@ class TestCaregiver:
         report = view_progress(profile)
         assert "chunking_level" in report.accommodation_summary
         assert report.accommodation_summary["chunking_level"] == "medium"
+
+    def test_view_progress_uses_current_grade(self) -> None:
+        from datetime import date
+
+        stale = LearnerProfile(
+            name="Ian",
+            grade_level="1",
+            birthdate=date(2019, 9, 21),
+            jurisdiction="CA-ON",
+        )
+        report = view_progress(stale)
+        assert report.grade_level == "2"

@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from adapt.feedback import learning_goal_statement
 from adapt.rules import INTENSITY_VISUALS
 from adapt.schema import ActivityItem, AdaptedActivityModel, FeedbackPanel
+from companion.dosage import current_grade
 from companion.schema import LearnerProfile
 from theme.schema import ThemeConfig
 
@@ -193,7 +194,7 @@ def compile_worksheet_design_spec(
         theme_id=adapted.theme_id,
         theme_name=theme.name,
         learner_name=profile.name,
-        learner_grade_level=profile.grade_level,
+        learner_grade_level=current_grade(profile),
         learner_theme_preferences=_theme_preferences(profile),
         worksheet_title=_worksheet_title(adapted),
         worksheet_number=adapted.worksheet_number,
