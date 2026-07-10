@@ -24,6 +24,7 @@ from render.design_spec import WorksheetDesignSpec
 from render.image_prompt_builder import PROMPT_VERSION, build_page_prompt
 from render.image_providers import ImageProvider, resolve_provider_chain
 from render.page_gates import PageGateReport, evaluate_page
+from render.pose_planner import page_pose
 from render.strategies import PdfClassicRenderer, RenderContext, RenderResult
 
 logger = logging.getLogger(__name__)
@@ -92,6 +93,7 @@ class ImageGenRenderer:
             theme_environment=(character_spec.scene_environment if character_spec else ""),
             theme_palette=character_spec.color_palette if character_spec else "",
             art_style=character_spec.art_style if character_spec else "",
+            buddy_action=page_pose(spec.worksheet_number),
         )
         criteria = _page_judge_criteria(identity, character_spec)
 

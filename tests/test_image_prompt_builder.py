@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from adapt.schema import FeedbackPanel
 from render.design_spec import (
     PageSpec,
     SectionItemSpec,
@@ -55,7 +56,10 @@ def _spec(**overrides: object) -> WorksheetDesignSpec:
                 ],
             )
         ],
-        "self_assessment": ["I can read ai words"],
+        "learning_goal": "I can read words with the y pattern",
+        "feedback": FeedbackPanel(
+            goal_statement="I can read words with the y pattern", show_decision_hint=True
+        ),
         "break_prompt": "Stand up and stretch!",
     }
     base.update(overrides)
@@ -74,7 +78,7 @@ def test_prompt_includes_sections_items_and_exact_text_rules() -> None:
     assert 'Item 1: "rain"' in prompt
     assert "play, tray, plop" in prompt
     assert "EXACTLY as written" in prompt
-    assert "I can read ai words" in prompt
+    assert "I can read words with the y pattern" in prompt
     assert "Stand up and stretch!" in prompt
 
 
@@ -140,3 +144,48 @@ def test_prompt_high_intensity_branch() -> None:
     prompt = build_page_prompt(spec)
 
     assert "bold and energetic chrome" in prompt
+
+
+def test_goal_ribbon_on_sheet_one_running_line_after() -> None:
+    from render.image_prompt_builder import build_page_prompt
+
+    p1 = build_page_prompt(_spec(worksheet_number=1))
+    p2 = build_page_prompt(_spec(worksheet_number=2))
+    assert 'goal ribbon with exact text: "I can read words with the y pattern"' in p1
+    assert "running goal line" in p2
+    assert "Skill focus" not in p1  # replaced by the goal ribbon
+
+
+def test_typography_rules_present() -> None:
+    from render.image_prompt_builder import build_page_prompt
+
+    prompt = build_page_prompt(_spec())
+    assert "## Typography rules (required)" in prompt
+    assert "exactly THREE text sizes" in prompt
+    assert "60%" in prompt
+
+
+def test_buddy_action_threaded_and_rotation_distinct() -> None:
+    from render.image_prompt_builder import build_page_prompt
+    from render.pose_planner import PAGE_POSE_ROTATION, page_pose
+
+    prompt = build_page_prompt(_spec(), character_block="blocky boy", buddy_action=page_pose(2))
+    assert page_pose(2) in prompt
+    assert page_pose(1) != page_pose(2) != page_pose(3)
+    assert page_pose(1 + len(PAGE_POSE_ROTATION)) == page_pose(1)
+
+
+def test_feedback_strip_and_parent_log() -> None:
+    from render.image_prompt_builder import build_page_prompt
+
+    prompt = build_page_prompt(_spec())
+    assert 'exact text: "How did it go? Circle one for each part."' in prompt
+    assert 'titled with exact text: "Grown-up quick log"' in prompt
+    assert "smooth / choppy" in prompt
+    assert "step back one lesson" in prompt  # hint present when show_decision_hint=True
+
+
+def test_prompt_version_bumped() -> None:
+    from render.image_prompt_builder import PROMPT_VERSION
+
+    assert PROMPT_VERSION == "page_prompt_v3"

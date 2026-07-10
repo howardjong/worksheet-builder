@@ -9,13 +9,16 @@ as code-enforced prohibitions.
 
 from __future__ import annotations
 
+from adapt.feedback import DECISION_HINT
 from render.design_spec import SectionSpec, WorksheetDesignSpec
 
 # Bump when prompt structure changes — part of the page cache key.
 # v2: match sections demand one picture per row in a single right-hand column
 # (owner UAT: two adjacent pictures confused the connect-the-dots task). Bump
 # invalidates the page cache so fixed prompts actually regenerate pages.
-PROMPT_VERSION = "page_prompt_v2"
+# v3: goal ribbon replaces the skill-focus badge, typography rules constrain
+# text sizes, per-page buddy action, structured feedback strip + grown-up log.
+PROMPT_VERSION = "page_prompt_v3"
 
 _FORMAT_AFFORDANCES: dict[str, str] = {
     "write": "a blank handwriting line wide enough for a child to print the answer",
@@ -42,20 +45,27 @@ def build_page_prompt(
     theme_environment: str = "",
     theme_palette: str = "",
     art_style: str = "",
+    buddy_action: str = "",
 ) -> str:
     """Build the full-page generation prompt from the design spec."""
 
     parts: list[str] = [
-        (
-            "Create ONE complete, print-ready children's literacy worksheet page "
-            "as a single image."
-        ),
-        ("Portrait orientation, US Letter proportions (8.5 x 11), " "plain white page background."),
+        ("Create ONE complete, print-ready children's literacy worksheet page as a single image."),
+        ("Portrait orientation, US Letter proportions (8.5 x 11), plain white page background."),
         f'Worksheet title banner text: "{spec.worksheet_title}"',
-        f"Theme: {spec.theme_name}. Skill focus: {spec.specific_skill} ({spec.domain}).",
-        (f"This is worksheet {spec.worksheet_number} of {spec.worksheet_count}" " for the lesson."),
-        "## Visual style",
+        f"Theme: {spec.theme_name}.",
+        (f"This is worksheet {spec.worksheet_number} of {spec.worksheet_count} for the lesson."),
     ]
+    if spec.worksheet_number == 1:
+        parts.append(
+            "Directly under the title banner, a goal ribbon with exact text: "
+            f'"{spec.learning_goal}"'
+        )
+    else:
+        parts.append(
+            f'A small running goal line in the header area, exact text: "{spec.learning_goal}"'
+        )
+    parts.append("## Visual style")
     if art_style:
         parts.append(f"Art style: {art_style}.")
     if theme_environment:
@@ -77,16 +87,39 @@ def build_page_prompt(
         )
         if scene_guidelines:
             parts.append(scene_guidelines)
+        if buddy_action:
+            parts.append(
+                f"In this page's scene the Learning Buddy is {buddy_action}. Keep "
+                "the identity exactly as described; only the pose and action "
+                "change from other pages."
+            )
 
     parts.append("## Activity sections (render in this order)")
     for section in spec.sections:
         parts.append(_section_text(section))
 
-    if spec.self_assessment:
-        checks = "; ".join(spec.self_assessment)
+    if spec.feedback:
+        fb = spec.feedback
+        section_rows = ", ".join(f"Part {s.chunk_id}" for s in spec.sections)
         parts.append(
-            "Final section: a short 'How did I do?' checklist with one empty "
-            f"checkbox per line, exact text: {checks}"
+            f'Final section: a compact feedback strip titled with exact text: "{fb.child_prompt}" '
+            f"with one row per activity section ({section_rows}); each row shows the part "
+            "number and three small circles colored green, yellow, and red for the child "
+            "to circle one."
+        )
+        log_lines = "\n".join(
+            f'Log row exact text: "Part {s.chunk_id}: ___ of {len(s.items)} correct   '
+            'smooth / choppy   help: none / some / lots"'
+            for s in spec.sections
+        )
+        hint = (
+            f'\nLast line in smaller text, exact text: "{DECISION_HINT}"'
+            if fb.show_decision_hint
+            else ""
+        )
+        parts.append(
+            "Below the feedback strip, a thin outlined box titled with exact text: "
+            f'"{fb.parent_log_title}" containing one log row per section:\n{log_lines}{hint}'
         )
     if spec.break_prompt:
         parts.append(
@@ -100,6 +133,19 @@ def build_page_prompt(
         "same words, same punctuation. Do not add, remove, rewrite, or decorate "
         "any instructional text. All text must be dark, legible, high contrast, "
         "and inside safe page margins."
+    )
+
+    parts.append("## Typography rules (required)")
+    parts.append(
+        "- Use exactly THREE text sizes on the page: (1) title and section "
+        "banners, (2) practice words and answer items — the largest body text, "
+        "and (3) ONE consistent smaller size shared by all instructions, time "
+        "cues, and labels.\n"
+        "- No text on the page may be smaller than 60% of the practice-word "
+        "height.\n"
+        "- Use one plain, evenly spaced font family throughout, like a "
+        "children's school workbook; no decorative or stylized lettering "
+        "outside the title banner."
     )
 
     parts.append("## Calm-focus rules (required)")
@@ -171,11 +217,11 @@ def _damping_block(spec: WorksheetDesignSpec, *, has_character: bool = False) ->
     ]
     if budget.intensity == "low":
         rules.append(
-            "Overall mood: calm and tidy. Saturate the banners gently; keep large " "areas white."
+            "Overall mood: calm and tidy. Saturate the banners gently; keep large areas white."
         )
     elif budget.intensity == "medium":
         rules.append(
-            "Overall mood: lively but tidy; banners may be bolder, backgrounds " "stay quiet."
+            "Overall mood: lively but tidy; banners may be bolder, backgrounds stay quiet."
         )
     elif budget.intensity == "high":
         rules.append(

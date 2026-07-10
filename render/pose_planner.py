@@ -113,6 +113,23 @@ def _plan_chunk_scene(
     )
 
 
+# Per-page Learning Buddy actions — deterministic rotation by worksheet number
+# so every sheet shows the buddy doing something different (owner, session 60).
+PAGE_POSE_ROTATION: tuple[str, ...] = (
+    "pointing at the first activity banner with an encouraging smile",
+    "writing on a small clipboard with a pencil beside soft obby blocks",
+    "mid-jump between two obby platforms, cheering",
+    "sitting cross-legged reading a small storybook",
+    "stacking letter blocks into a short tower",
+    "giving a thumbs-up beside a checkpoint flag",
+)
+
+
+def page_pose(worksheet_number: int) -> str:
+    """Deterministic per-sheet buddy action (worksheet_number is 1-indexed)."""
+    return PAGE_POSE_ROTATION[(max(1, worksheet_number) - 1) % len(PAGE_POSE_ROTATION)]
+
+
 def plan_word_pictures(adapted: AdaptedActivityModel) -> dict[str, str]:
     """Generate picture prompts for word-picture matching items.
 
