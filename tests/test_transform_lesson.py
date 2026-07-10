@@ -137,7 +137,7 @@ def test_lesson_mode_defaults_planner_v2_and_restores_env(
         index_results=False,
     )
 
-    assert seen == [("1", "1", "1", "3")]  # all defaulted on for the duration of the call
+    assert seen == [("1", "1", "1", "auto")]  # all defaulted on for the duration of the call
     assert "WORKSHEET_PLANNER_V2" not in os.environ  # restored afterward
     assert "WORKSHEET_LLM_ADAPT" not in os.environ  # restored afterward
     assert "WORKSHEET_OBJECTIVE_COVERAGE" not in os.environ  # restored afterward

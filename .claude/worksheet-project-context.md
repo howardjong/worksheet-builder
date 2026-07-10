@@ -234,6 +234,45 @@ run decides: `objective_approved` in the log = planner package ships; any
 `objective_rejected_*`/`objective_abstain` = deterministic fallback, now capped at 3 clean
 sheets. Either way the package is ≤3 worksheets.
 
+### Session 58e — 2026-07-07 (generic 3-sheet cap → evidence-based per-lesson workload budget)
+
+**Status:** Owner refined the cap policy: objectives must be met first (more pages allowed if
+needed) but bounded by RESEARCH on ADHD attention capacity, assessed at the START of the run —
+not a generic constant. Implemented + researched. Gates green (**745 passed**, 735 → 745).
+
+**What shipped:**
+- **`adapt/workload.py`** — `derive_package_budget(skill, profile, rules)`: per-grade
+  segment/session minute table (`GRADE_WORKLOAD`: K 5/12, G1 6/18, G2 8/24, G3 10/30 →
+  attention ceiling K=2 sheets, G1-3=3), objective demand from the objective ledger
+  (essential cells × ceil(min_practice_count / max_items_per_chunk) → sections → sheets),
+  cap = min(demand, ceiling). Light lessons earn FEWER sheets than the ceiling (no padding);
+  dense lessons cap at the ceiling with `objectives_overflow=True` flagged loudly (the
+  remainder belongs to a second sitting — future feature). Per-child overrides: observed
+  `operational_signals.avg_session_duration` lowers the session budget (real data beats the
+  population table); `chunking_level=small` drops one segment.
+- **Wiring:** `WORKSHEET_MAX_WORKSHEETS` now accepts `auto` (lesson-mode default, replacing
+  `3`) | int (fixed) | unset (no cap, photo path). Resolved ONCE at the top of
+  `adapt_lesson` (`_resolve_lesson_package_cap`), logged ("Workload budget: grade 2: segment
+  8 min, session 24 min -> attention ceiling 3 sheet(s); 9 essential objective(s) -> ..."),
+  persisted to `artifacts/workload_budget.json`, then applied by `enforce_package_cap` after
+  section splitting on every adapt path. `adapt/rules.max_worksheets_per_lesson()` removed
+  (superseded by `workload.resolve_package_cap`).
+- **Evidence doc:** `docs/research/adhd-workload-budget.md` — citations: Imeraj et al. 2013
+  J Sch Psychol (doi:10.1016/j.jsp.2013.05.004; ADHD kids' shorter on-task spans during
+  academic seatwork, ~75% vs 88% on-task), active-breaks trials (PMIDs 41246058, 38259740,
+  35784522, 33719112), CDC ADHD classroom guidance + CHADD (shortened assignments are
+  first-line accommodations), developmental assigned-task attention norms (~minutes ≈ age;
+  K ~5-10 min assigned). Numbers are an explicitly-labeled conservative policy encoding, not
+  single-study measurements; ERIC/PsycINFO citation pass still owed; per-child
+  `operational_signals` should progressively replace the table.
+- **Gotcha found while testing:** the deterministic engine's word parser silently drops
+  tokens containing digits (`.isalpha()`), so synthetic test words like "w0ay" vanish —
+  test fixtures must use purely alphabetic words.
+
+**Next:** owner re-runs `--lesson 74` (expect the "Workload budget:" line early in the log +
+`workload_budget.json` artifact; grade-2 profile → ≤3 sheets, or ≤2 if ian.yaml still says
+grade 1 with small chunking... actually grade "1" → ceiling 3). Then Goal 2 (hybrid_shell).
+
 ### Session 57 — 2026-07-06 (Goal 1: intensity dial + lesson-number entry point)
 
 **Status:** Shipped **Phases 0 + A + B** of `plans/2026-07-07-intensity-dial-hybrid-renderer-plan.md`

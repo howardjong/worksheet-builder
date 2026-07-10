@@ -96,16 +96,6 @@ MAX_SECTIONS_PER_WORKSHEET: dict[str, int] = {"K": 2, "1": 3, "2": 4, "3": 4}
 # split-never-trim behavior.
 TARGET_MAX_WORKSHEETS_PER_LESSON = 3
 
-
-def max_worksheets_per_lesson() -> int | None:
-    """Hard package cap from WORKSHEET_MAX_WORKSHEETS (None = no cap)."""
-    raw = os.environ.get("WORKSHEET_MAX_WORKSHEETS", "")
-    try:
-        value = int(raw)
-    except ValueError:
-        return None
-    return value if value >= 1 else None
-
 # Color system — consistent across all worksheets
 COLOR_SYSTEM: dict[str, str] = {
     "directions": "#2563EB",  # Blue

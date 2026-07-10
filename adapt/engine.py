@@ -14,7 +14,6 @@ from adapt.rules import (
     AccommodationRules,
     build_rules,
     get_substitute_format,
-    max_worksheets_per_lesson,
 )
 from adapt.schema import (
     ActivityChunk,
@@ -111,14 +110,15 @@ def _finalize_lesson_package(
     worksheets: list[AdaptedActivityModel],
     rules: AccommodationRules,
     skill: LiteracySkillModel,
+    package_cap: int | None,
 ) -> list[AdaptedActivityModel]:
     """Apply the section cap (split) then the optional package cap (trim).
 
-    The package cap only engages when WORKSHEET_MAX_WORKSHEETS is set — lesson
-    mode defaults it; the photo path doesn't, keeping split-never-trim there.
+    The package cap only engages when WORKSHEET_MAX_WORKSHEETS resolves to one
+    (lesson mode defaults it to "auto" — the evidence-based workload budget);
+    the photo path doesn't set it, keeping split-never-trim there.
     """
     capped = enforce_section_cap(worksheets, rules)
-    package_cap = max_worksheets_per_lesson()
     if package_cap is not None:
         capped = enforce_package_cap(
             capped,
@@ -126,6 +126,38 @@ def _finalize_lesson_package(
             fallback_self_assessment=_build_self_assessment(skill),
         )
     return capped
+
+
+def _resolve_lesson_package_cap(
+    skill: LiteracySkillModel,
+    profile: LearnerProfile,
+    rules: AccommodationRules,
+    artifacts_dir: str | None,
+) -> int | None:
+    """Resolve the package cap ONCE, up front, so it can guide the whole run.
+
+    WORKSHEET_MAX_WORKSHEETS: "auto" derives an evidence-based budget from the
+    lesson's objective demand vs. the learner's attention capacity
+    (adapt/workload.py); a positive int is a fixed cap; unset/invalid means no
+    cap. The budget decision is logged and persisted to artifacts for review.
+    """
+    from adapt.workload import resolve_package_cap
+
+    cap, budget = resolve_package_cap(
+        os.environ.get("WORKSHEET_MAX_WORKSHEETS", ""), skill, profile, rules
+    )
+    if budget is not None:
+        log = logger.warning if budget.objectives_overflow else logger.info
+        log("Workload budget: %s", budget.rationale)
+        if artifacts_dir:
+            from pathlib import Path
+
+            path = Path(artifacts_dir)
+            path.mkdir(parents=True, exist_ok=True)
+            (path / "workload_budget.json").write_text(budget.model_dump_json(indent=2))
+    elif cap is not None:
+        logger.info("Workload budget: fixed package cap %s (WORKSHEET_MAX_WORKSHEETS)", cap)
+    return cap
 
 
 def adapt_lesson(
@@ -149,6 +181,8 @@ def adapt_lesson(
     if rules is None:
         rules = build_rules(profile)
 
+    package_cap = _resolve_lesson_package_cap(skill, profile, rules, artifacts_dir)
+
     if os.environ.get("WORKSHEET_DIRECT_COMPILER") == "1":
         try:
             from adapt.direct_compiler import compile_lesson_direct
@@ -160,7 +194,7 @@ def adapt_lesson(
                 character_identity=character_identity,
             )
             if direct_result:
-                return _finalize_lesson_package(direct_result, rules, skill)
+                return _finalize_lesson_package(direct_result, rules, skill, package_cap)
         except Exception as exc:
             logger.warning("Direct compiler failed, using fallback adaptation: %s", exc)
 
@@ -179,7 +213,7 @@ def adapt_lesson(
                 artifacts_dir=artifacts_dir,
             )
             if planned:
-                return _finalize_lesson_package(planned, rules, skill)
+                return _finalize_lesson_package(planned, rules, skill, package_cap)
         except Exception as exc:
             logger.warning("LLM planner failed, using deterministic engine: %s", exc)
     else:
@@ -196,7 +230,7 @@ def adapt_lesson(
                 artifacts_dir=artifacts_dir,
             )
             if llm_result:
-                return _finalize_lesson_package(llm_result, rules, skill)
+                return _finalize_lesson_package(llm_result, rules, skill, package_cap)
         except Exception as exc:
             logger.warning("LLM orchestration failed, using deterministic engine: %s", exc)
 
@@ -453,9 +487,9 @@ def adapt_lesson(
             rag_prior_adaptations=rag_prior_adaptations,
             rag_curriculum_references=rag_curriculum_references,
         )
-        return _finalize_lesson_package([single], rules, skill)
+        return _finalize_lesson_package([single], rules, skill, package_cap)
 
-    return _finalize_lesson_package(worksheets, rules, skill)
+    return _finalize_lesson_package(worksheets, rules, skill, package_cap)
 
 
 def _build_discovery_chunks(

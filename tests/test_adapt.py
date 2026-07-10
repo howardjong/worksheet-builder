@@ -893,3 +893,75 @@ def test_rules_include_grade_scaled_section_cap() -> None:
     for grade, cap in MAX_SECTIONS_PER_WORKSHEET.items():
         profile = LearnerProfile(name="t", grade_level=grade, accommodations=Accommodations())
         assert build_rules(profile).max_sections_per_worksheet == cap
+
+
+class TestLessonPackageCapWiring:
+    """adapt_lesson resolves WORKSHEET_MAX_WORKSHEETS once, up front."""
+
+    def test_auto_mode_caps_dense_lesson_and_writes_budget_artifact(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("WORKSHEET_MAX_WORKSHEETS", "auto")
+        monkeypatch.delenv("WORKSHEET_LLM_ADAPT", raising=False)  # deterministic path
+        monkeypatch.delenv("WORKSHEET_PLANNER_V2", raising=False)
+
+        alpha_words = [f"{c1}{c2}ay" for c1 in "bcdfghjk" for c2 in "bcdfg"]
+        many_words = ", ".join(alpha_words)
+        skill = LiteracySkillModel(
+            grade_level="2",
+            domain="phonics",
+            specific_skill="vowel_teams",
+            learning_objectives=["Read ay words"],
+            target_words=alpha_words,
+            response_types=["write"],
+            source_items=[
+                SourceItem(item_type="word_list", content=many_words, source_region_index=0),
+                SourceItem(
+                    item_type="sentence",
+                    content="We play all day. May will stay in the hay. Ray has gray clay.",
+                    source_region_index=1,
+                ),
+            ],
+            extraction_confidence=1.0,
+            template_type="ufli_word_work",
+        )
+        profile = LearnerProfile(name="Test", grade_level="2")
+
+        worksheets = adapt_lesson(skill, profile, artifacts_dir=str(tmp_path))
+
+        assert 1 <= len(worksheets) <= 3  # grade-2 attention ceiling
+        assert worksheets[-1].worksheet_count == len(worksheets)
+        assert (tmp_path / "workload_budget.json").exists()
+
+    def test_unset_env_means_no_package_cap(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("WORKSHEET_MAX_WORKSHEETS", raising=False)
+        monkeypatch.delenv("WORKSHEET_LLM_ADAPT", raising=False)
+        monkeypatch.delenv("WORKSHEET_PLANNER_V2", raising=False)
+
+        alpha_words = [f"{c1}{c2}ay" for c1 in "bcdfghjklm" for c2 in "bcdfghjk"]
+        many_words = ", ".join(alpha_words)
+        skill = LiteracySkillModel(
+            grade_level="2",
+            domain="phonics",
+            specific_skill="vowel_teams",
+            learning_objectives=["Read ay words"],
+            target_words=alpha_words,
+            response_types=["write"],
+            source_items=[
+                SourceItem(item_type="word_list", content=many_words, source_region_index=0),
+                SourceItem(
+                    item_type="sentence",
+                    content="We play all day. May will stay in the hay. Ray has gray clay.",
+                    source_region_index=1,
+                ),
+            ],
+            extraction_confidence=1.0,
+            template_type="ufli_word_work",
+        )
+        profile = LearnerProfile(name="Test", grade_level="2")
+
+        worksheets = adapt_lesson(skill, profile)
+        # Photo-path behavior preserved: dense content splits freely past 3.
+        assert len(worksheets) > 3
