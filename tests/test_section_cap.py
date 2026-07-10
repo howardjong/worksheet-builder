@@ -69,6 +69,11 @@ def _worksheet(
     )
 
 
+def _feedback(ws: AdaptedActivityModel) -> FeedbackPanel:
+    assert ws.feedback is not None
+    return ws.feedback
+
+
 def test_compliant_package_unchanged() -> None:
     package = [
         _worksheet(2, number=1, count=2, break_prompt="Stretch!"),
@@ -104,7 +109,7 @@ def test_nine_section_worksheet_splits_without_dropping_content() -> None:
     assert result[2].worksheet_title == "Word Work (Part 3)"
     # Feedback panel carries to every part; decision hint only on the final part
     assert all(ws.feedback is not None for ws in result)
-    assert [ws.feedback.show_decision_hint for ws in result] == [False, False, True]
+    assert [_feedback(ws).show_decision_hint for ws in result] == [False, False, True]
     assert result[0].break_prompt is not None
     assert result[1].break_prompt is not None
     assert result[2].break_prompt is None
@@ -187,8 +192,8 @@ class TestEnforcePackageCap:
         )
         fallback = FeedbackPanel(goal_statement="I did it")
         result = enforce_package_cap(package, 3, fallback_feedback=fallback)
-        assert [ws.feedback.goal_statement for ws in result] == ["I did it"] * 3
-        assert [ws.feedback.show_decision_hint for ws in result] == [False, False, True]
+        assert [_feedback(ws).goal_statement for ws in result] == ["I did it"] * 3
+        assert [_feedback(ws).show_decision_hint for ws in result] == [False, False, True]
 
     def test_cap_logs_dropped_titles(self, caplog: pytest.LogCaptureFixture) -> None:
         package = [_part("Word Discovery", i, 4, i) for i in range(1, 5)]

@@ -261,6 +261,24 @@ def test_title_only_word_without_lowercase_evidence_still_safe() -> None:
     assert "capitalization" not in _gate_names(result)
 
 
+def _garden_ledger() -> ObjectiveLedger:
+    # Title-case heading contains "Garden"; the body never mentions garden at
+    # all (lowercase or otherwise), so the lowercase-seen guard (heuristic 2)
+    # never fires for this word — only the title-case-segment exclusion
+    # (heuristic 1) keeps "Garden" out of the proper-noun set.
+    src = _classified(
+        content="The Lily Garden\nWe like to play. We ran fast.",
+        item_type="word_list",
+    )
+    return _ledger(source_items=[src])
+
+
+def test_title_only_word_exonerated_by_heading_exclusion_alone() -> None:
+    ws = _worksheet([_chunk([_item(content="Water the garden now.", response_format="write")])])
+    result = run_blocking_gates([ws], _garden_ledger())
+    assert "capitalization" not in _gate_names(result)
+
+
 # --------------------------------------------------------------------------- #
 # heading_as_item gate
 # --------------------------------------------------------------------------- #

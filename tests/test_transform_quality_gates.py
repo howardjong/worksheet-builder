@@ -8,7 +8,14 @@ from pathlib import Path
 from pytest import MonkeyPatch
 
 import transform as transform_module
-from adapt.schema import ActivityChunk, ActivityItem, AdaptedActivityModel, ScaffoldConfig, Step
+from adapt.schema import (
+    ActivityChunk,
+    ActivityItem,
+    AdaptedActivityModel,
+    FeedbackPanel,
+    ScaffoldConfig,
+    Step,
+)
 from companion.schema import LearnerProfile
 from skill.schema import LiteracySkillModel, SourceItem
 from theme.schema import ThemeConfig
@@ -423,7 +430,7 @@ def _adapted_worksheet_with_items(
         decoration_zones=[],
         worksheet_number=worksheet_number,
         worksheet_count=2,
-        self_assessment=["I practiced the source words."],
+        feedback=FeedbackPanel(goal_statement="I practiced the source words."),
     )
 
 

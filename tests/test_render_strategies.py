@@ -38,6 +38,7 @@ def _design_spec(render_mode: str = "pdf_classic") -> WorksheetDesignSpec:
             "rain",
             "play",
         ],
+        learning_goal="I can read words with the ai ay pattern",
     )
 
 

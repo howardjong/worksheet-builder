@@ -27,7 +27,7 @@ _CACHE_DIR = Path(__file__).parent.parent / "assets" / "cache"
 _ASSETS_DIR = Path(__file__).parent.parent / "assets"
 _IMAGE_MODEL = "gemini-3.1-flash-image-preview"
 # v7: judge rejects blank canvases/frames/easels (owner UAT: cover character
-# pointed at an empty canvas). Bump invalidates cached covers/scenes so the
+# pointed at an empty canvas). Bump invalidates cached scenes so the
 # new criterion actually re-judges them.
 _LOCAL_ASSET_VERSION = "activity_v7"
 

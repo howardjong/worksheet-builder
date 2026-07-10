@@ -51,6 +51,7 @@ def _spec() -> WorksheetDesignSpec:
             style="calm", intensity="low", max_decorative_elements=2, max_colors=4
         ),
         required_text=["Word Work", "rain"],
+        learning_goal="I can read vowel team words",
         sections=[
             SectionSpec(
                 chunk_id=1,

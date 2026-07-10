@@ -37,6 +37,7 @@ def _spec() -> WorksheetDesignSpec:
         ),
         required_text=["Vowel Team Adventure", "rain", "play"],
         answer_zones=[],
+        learning_goal="I can read words with the ai ay pattern",
     )
 
 

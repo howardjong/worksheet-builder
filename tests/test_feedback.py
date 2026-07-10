@@ -66,6 +66,11 @@ def _worksheet(
     )
 
 
+def _feedback(ws: AdaptedActivityModel) -> FeedbackPanel:
+    assert ws.feedback is not None
+    return ws.feedback
+
+
 def test_goal_statement_per_domain() -> None:
     assert learning_goal_statement("phonics", "y") == "I can read words with the y pattern"
     assert learning_goal_statement("fluency", "y") == "I can read the story smoothly"
@@ -89,7 +94,7 @@ def test_section_cap_keeps_feedback_on_every_part_hint_on_last() -> None:
     ws = _worksheet(9, feedback=panel)
     parts = enforce_section_cap([ws], rules)
     assert all(p.feedback is not None for p in parts)
-    assert [p.feedback.show_decision_hint for p in parts] == [False] * (len(parts) - 1) + [True]
+    assert [_feedback(p).show_decision_hint for p in parts] == [False] * (len(parts) - 1) + [True]
 
 
 def test_package_cap_backfills_feedback_and_hint() -> None:
@@ -102,4 +107,4 @@ def test_package_cap_backfills_feedback_and_hint() -> None:
     capped = enforce_package_cap(sheets, 2, fallback_feedback=build_feedback_panel("phonics", "y"))
     assert len(capped) == 2
     assert all(w.feedback is not None for w in capped)
-    assert [w.feedback.show_decision_hint for w in capped] == [False, True]
+    assert [_feedback(w).show_decision_hint for w in capped] == [False, True]

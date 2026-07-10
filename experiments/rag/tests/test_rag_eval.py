@@ -181,7 +181,12 @@ def _variant_result(variant: str, case_dir: Path) -> dict[str, object]:
         "theme_id": "roblox_obby",
         "decoration_zones": [],
         "avatar_prompts": None,
-        "self_assessment": ["I can read CVCe words."],
+        "feedback": {
+            "goal_statement": "I can read CVCe words.",
+            "child_prompt": "How did it go? Circle one for each part.",
+            "parent_log_title": "Grown-up quick log",
+            "show_decision_hint": False,
+        },
         "worksheet_number": 1,
         "worksheet_count": 1,
         "worksheet_title": "Word Discovery",

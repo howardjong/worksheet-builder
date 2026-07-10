@@ -13,6 +13,7 @@ from adapt.schema import (
     ActivityItem,
     AdaptedActivityModel,
     Example,
+    FeedbackPanel,
     ScaffoldConfig,
     Step,
 )
@@ -140,7 +141,7 @@ def _adapted_model(
         scaffolding=ScaffoldConfig(),
         theme_id="roblox_obby",
         decoration_zones=[],
-        self_assessment=["I can read CVCe words."],
+        feedback=FeedbackPanel(goal_statement="I can read CVCe words."),
         worksheet_number=worksheet_number,
         worksheet_count=worksheet_count,
         worksheet_title=title,

@@ -43,6 +43,9 @@ def enforce_section_cap(
                 title = f"{title} (Part {g_idx + 1})"
             parts.append(
                 ws.model_copy(
+                    # `feedback` is intentionally not in this update dict — it's
+                    # inherited unchanged from `ws` via model_copy and gets its
+                    # `show_decision_hint` recomputed in the renumber pass below.
                     update={
                         "chunks": renumbered,
                         "worksheet_title": title,
