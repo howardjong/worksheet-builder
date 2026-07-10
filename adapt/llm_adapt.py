@@ -21,6 +21,7 @@ import re
 
 from pydantic import BaseModel, Field
 
+from adapt.feedback import build_feedback_panel
 from adapt.rules import AccommodationRules, build_rules, llm_adapt_enabled
 from adapt.schema import (
     ActivityChunk,
@@ -345,7 +346,7 @@ def _translate_plan(
                     (0.85, 0.0, 1.0, 0.12),
                     (0.0, 0.88, 0.15, 1.0),
                 ],
-                self_assessment=_build_self_assessment(skill)
+                feedback=build_feedback_panel(skill.domain, skill.specific_skill)
                 if ws_idx == len(plan.worksheets) - 1
                 else None,
                 worksheet_number=ws_idx + 1,
@@ -618,21 +619,6 @@ def _build_items_from_activity(
                 )
             )
 
-    return items
-
-
-def _build_self_assessment(skill: LiteracySkillModel) -> list[str]:
-    """Build self-assessment checklist."""
-    items = []
-    if skill.domain == "phonics":
-        items.append(f"I can read words with the {skill.specific_skill} pattern")
-        items.append("I can sound out new words")
-    elif skill.domain == "fluency":
-        items.append("I can read the story smoothly")
-        items.append("I can point to words as I read")
-    else:
-        items.append(f"I can practice {skill.domain} skills")
-    items.append("I'm still learning (and that's okay!)")
     return items
 
 

@@ -53,7 +53,7 @@ def _build_judge_prompt(
     source_text = "\n".join(source_sections) if source_sections else "  (none)"
 
     # Adapted worksheets — FULL text, the judge gates what ships. Render the
-    # ADHD supports (numbered steps, time estimates, brain breaks, self-check)
+    # ADHD supports (numbered steps, time estimates, brain breaks, feedback panel)
     # so the adhd_compliance score reflects what the worksheet actually carries.
     ws_sections = []
     for ws in worksheets:
@@ -82,8 +82,9 @@ def _build_judge_prompt(
         ]
         if ws.break_prompt:
             ws_lines.append(f"    Brain break: {ws.break_prompt}")
-        if ws.self_assessment:
-            ws_lines.append("    Self-check: " + ", ".join(ws.self_assessment))
+        if ws.feedback:
+            ws_lines.append(f"    Feedback panel: {ws.feedback.goal_statement}")
+            ws_lines.append(f"      {ws.feedback.child_prompt}")
         ws_sections.append("\n".join(ws_lines))
     adapted_text = "\n\n".join(ws_sections)
 
@@ -345,14 +346,14 @@ _SEVERE_DEFECT_GLOSS: dict[str, str] = {
         "the instruction is wrong, contradictory, or would mislead the child"
     ),
     "generic_activity_not_exercising_objective": (
-        "generic busywork that does not genuinely exercise THIS objective's " "pattern/skill"
+        "generic busywork that does not genuinely exercise THIS objective's pattern/skill"
     ),
     "child_cannot_reasonably_answer": (
         "a child ages 5-8 cannot reasonably complete the item as written "
         "(missing info, impossible, mis-keyed)"
     ),
     "overwhelming_or_adhd_unsafe": (
-        "the item is overwhelming or ADHD-unsafe (too dense, too many steps, no " "scaffold)"
+        "the item is overwhelming or ADHD-unsafe (too dense, too many steps, no scaffold)"
     ),
 }
 

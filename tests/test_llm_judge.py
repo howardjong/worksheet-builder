@@ -23,6 +23,7 @@ from adapt.schema import (
     ActivityItem,
     AdaptedActivityModel,
     Example,
+    FeedbackPanel,
     ScaffoldConfig,
     Step,
 )
@@ -126,7 +127,7 @@ def _worksheet_with_supports() -> AdaptedActivityModel:
     return _worksheet().model_copy(
         update={
             "break_prompt": "Stand up and stretch!",
-            "self_assessment": ["I can read CVCe words"],
+            "feedback": FeedbackPanel(goal_statement="I can read CVCe words"),
         }
     )
 
@@ -137,7 +138,7 @@ def test_judge_prompt_shows_adhd_supports() -> None:
     assert "About 2 minutes" in prompt  # time estimate per section
     assert "1. Read it aloud." in prompt  # numbered instruction steps
     assert "Stand up and stretch!" in prompt  # brain break between worksheets
-    assert "I can read CVCe words" in prompt  # self-check list
+    assert "I can read CVCe words" in prompt  # feedback panel goal statement
 
 
 def _verdict(
