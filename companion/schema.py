@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
+from datetime import date
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -127,6 +128,13 @@ class LearnerProfile(BaseModel):
     preferences: Preferences | None = None
     progress: Progress | None = None
     operational_signals: OperationalSignals | None = None
+
+    # --- Dosage inputs (spec 2026-07-10; all optional, absent -> legacy) ---
+    # birthdate is DERIVATION-ONLY: never emit it into prompts, design specs,
+    # rendered pages, or artifacts (derived age/grade are fine).
+    birthdate: date | None = None
+    jurisdiction: str | None = None  # ISO country-subdivision, e.g. "CA-ON"
+    adhd_severity: Literal["mild", "moderate", "severe"] | None = None
 
 
 def load_profile(path: str | Path) -> LearnerProfile:
