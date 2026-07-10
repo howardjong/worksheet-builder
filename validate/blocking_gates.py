@@ -293,22 +293,33 @@ def _known_proper_nouns(ledger: ObjectiveLedger) -> frozenset[str]:
     """Proper nouns = tokens capitalized NOT at sentence/line start in source.
 
     Example: in "cube, mute, fuse, tune, rule, June" the token `June` is
-    capitalized mid-list, so it's a proper noun. We deliberately exclude the
-    first token of each line/sentence (can't distinguish required capitalization
-    from sentence-initial capitalization there).
+    capitalized mid-list, so it's a proper noun. Two guards against false
+    positives from passage titles (G14, "Lily's Puppy"):
+
+    1. Title-case segments (every alpha token capitalized, >= 2 tokens) are
+       headings, not sentences — they contribute no proper-noun evidence.
+    2. A token seen lowercase ANYWHERE in the source is exonerated: real
+       proper nouns are never written lowercase in curriculum text.
     """
-    proper: set[str] = set()
+    candidates: set[str] = set()
+    lowercase_seen: set[str] = set()
     for src in ledger.source_items:
         for segment in re.split(r"[\n.!?]", src.content):
-            # Split on commas + whitespace into surface tokens, position-aware.
             tokens = [t for t in re.split(r"[\s,]+", segment) if t]
-            for pos, tok in enumerate(tokens):
+            stripped_tokens = [re.sub(r"^[^0-9A-Za-z]+|[^0-9A-Za-z]+$", "", t) for t in tokens]
+            alpha = [t for t in stripped_tokens if t and t[0].isalpha()]
+            if len(alpha) >= 2 and all(t[0].isupper() for t in alpha):
+                continue  # title-case heading: no proper-noun evidence
+            for pos, stripped in enumerate(stripped_tokens):
+                if not stripped:
+                    continue
+                if stripped == stripped.lower():
+                    lowercase_seen.add(stripped.casefold())
                 if pos == 0:
                     continue  # sentence/line-initial: ambiguous, skip
-                stripped = re.sub(r"^[^0-9A-Za-z]+|[^0-9A-Za-z]+$", "", tok)
                 if len(stripped) >= 2 and stripped[0].isupper() and stripped[1:].islower():
-                    proper.add(stripped.casefold())
-    return frozenset(proper)
+                    candidates.add(stripped.casefold())
+    return frozenset(candidates - lowercase_seen)
 
 
 def _check_capitalization(

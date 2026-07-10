@@ -227,6 +227,40 @@ def test_correctly_capitalized_proper_noun_mid_sentence_passes() -> None:
     assert "capitalization" not in _gate_names(result)
 
 
+def _puppy_ledger() -> ObjectiveLedger:
+    # Passage source item: title-case heading line + body with lowercase "puppy".
+    src = _classified(
+        content="Lily's Puppy\nLily has a puppy. The puppy runs fast.",
+        item_type="word_list",
+    )
+    return _ledger(source_items=[src])
+
+
+def test_title_case_heading_does_not_create_proper_nouns() -> None:
+    ws = _worksheet([_chunk([_item(content="Write puppy here.", response_format="write")])])
+    result = run_blocking_gates([ws], _puppy_ledger())
+    assert "capitalization" not in _gate_names(result)
+
+
+def test_lowercase_occurrence_exonerates_capitalized_token() -> None:
+    # "Puppy" appears capitalized mid-title AND lowercase in the body →
+    # lowercase evidence wins; not a proper noun.
+    ws = _worksheet(
+        [_chunk([_item(content="Feed the puppy today.", response_format="read_aloud")])]
+    )
+    result = run_blocking_gates([ws], _puppy_ledger())
+    assert "capitalization" not in _gate_names(result)
+
+
+def test_title_only_word_without_lowercase_evidence_still_safe() -> None:
+    # Word appears ONLY in the title-case heading ("Lily's") — heading exclusion
+    # alone must keep it out of the proper-noun set... unless it also shows up
+    # capitalized mid-sentence in a body line (like June in a word list).
+    ws = _worksheet([_chunk([_item(content="Say lily out loud.", response_format="verbal")])])
+    result = run_blocking_gates([ws], _puppy_ledger())
+    assert "capitalization" not in _gate_names(result)
+
+
 # --------------------------------------------------------------------------- #
 # heading_as_item gate
 # --------------------------------------------------------------------------- #
