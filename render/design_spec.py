@@ -10,8 +10,9 @@ from typing import Literal, cast
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from adapt.feedback import learning_goal_statement
 from adapt.rules import INTENSITY_VISUALS
-from adapt.schema import ActivityItem, AdaptedActivityModel
+from adapt.schema import ActivityItem, AdaptedActivityModel, FeedbackPanel
 from companion.schema import LearnerProfile
 from theme.schema import ThemeConfig
 
@@ -141,7 +142,7 @@ class SectionSpec(BaseModel):
 class WorksheetDesignSpec(BaseModel):
     """Renderer-neutral worksheet contract."""
 
-    spec_version: str = Field(default="worksheet_design_spec_v1")
+    spec_version: str = Field(default="worksheet_design_spec_v2")
     render_mode: RenderMode
     source_hash: str
     skill_model_hash: str
@@ -161,7 +162,8 @@ class WorksheetDesignSpec(BaseModel):
     required_text: list[str] = Field(description="Exact text renderers must preserve.")
     answer_zones: list[AnswerZoneSpec] = Field(default_factory=list)
     sections: list[SectionSpec] = Field(default_factory=list)
-    self_assessment: list[str] = Field(default_factory=list)
+    learning_goal: str = Field(description="Child-friendly 'I can...' goal for the page banner.")
+    feedback: FeedbackPanel | None = None
     break_prompt: str | None = None
 
     @field_validator("required_text")
@@ -207,9 +209,16 @@ def compile_worksheet_design_spec(
         required_text=_required_text(adapted),
         answer_zones=_answer_zones(adapted),
         sections=_sections(adapted),
-        self_assessment=list(adapted.self_assessment or []),
+        learning_goal=_learning_goal(adapted),
+        feedback=adapted.feedback,
         break_prompt=adapted.break_prompt,
     )
+
+
+def _learning_goal(adapted: AdaptedActivityModel) -> str:
+    if adapted.feedback:
+        return adapted.feedback.goal_statement
+    return learning_goal_statement(adapted.domain, adapted.specific_skill)
 
 
 def _theme_preferences(profile: LearnerProfile) -> list[str]:
@@ -257,7 +266,10 @@ def _worksheet_title(adapted: AdaptedActivityModel) -> str:
 def _required_text(adapted: AdaptedActivityModel) -> list[str]:
     text: list[str] = [
         _worksheet_title(adapted),
+        _learning_goal(adapted),
     ]
+    if adapted.feedback:
+        text.append(adapted.feedback.child_prompt)
     for chunk in adapted.chunks:
         text.append(chunk.micro_goal)
         text.extend(step.text for step in chunk.instructions)

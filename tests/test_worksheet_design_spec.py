@@ -7,6 +7,7 @@ from typing import cast
 import pytest
 from pydantic import ValidationError
 
+from adapt.feedback import build_feedback_panel
 from adapt.schema import (
     ActivityChunk,
     ActivityItem,
@@ -69,6 +70,24 @@ def _adapted() -> AdaptedActivityModel:
         worksheet_number=1,
         worksheet_count=2,
     )
+
+
+def test_spec_carries_learning_goal_and_feedback() -> None:
+    from render.design_spec import compile_worksheet_design_spec
+
+    adapted = _adapted()
+    adapted.feedback = build_feedback_panel(adapted.domain, adapted.specific_skill)
+
+    theme = ThemeConfig(name="Geometry Dash Calm")
+    profile = LearnerProfile(name="Ian", grade_level="1")
+
+    spec = compile_worksheet_design_spec(adapted, theme, profile, render_mode="image_gen")
+
+    assert spec.spec_version == "worksheet_design_spec_v2"
+    assert spec.learning_goal.startswith("I can ")
+    assert spec.feedback is not None
+    assert spec.learning_goal in spec.required_text
+    assert spec.feedback.child_prompt in spec.required_text
 
 
 def test_design_spec_round_trips_and_preserves_required_text() -> None:
@@ -237,7 +256,7 @@ def test_design_spec_preserves_section_grouping() -> None:
     assert [item.content for item in section.items] == ["rain", "play", "tree"]
     assert section.items[1].response_format == "fill_blank"
     assert section.items[1].answer == "ay"
-    assert spec.self_assessment == []
+    assert spec.feedback is None
     assert spec.break_prompt is None
 
 
