@@ -85,7 +85,7 @@ class PackageBudget(BaseModel):
     severity: str = "moderate"
     essential_minutes: int = 0
     minute_sheets: int = 1
-    grade_source: str = "profile"
+    grade_source: Literal["derived", "profile"] = "profile"
 
 
 def derive_package_budget(
@@ -105,8 +105,10 @@ def derive_package_budget(
     today = today or date.today()
     budget_grade, grade_source = dosage.grade_with_source(profile, today)
     table_segment, table_session = GRADE_WORKLOAD.get(budget_grade, GRADE_WORKLOAD["1"])
-    segment_minutes = dosage.segment_minutes(profile, today) or table_segment
-    session_minutes = dosage.session_minutes(profile, today) or table_session
+    derived_segment = dosage.segment_minutes(profile, today)
+    segment_minutes = derived_segment if derived_segment is not None else table_segment
+    derived_session = dosage.session_minutes(profile, today)
+    session_minutes = derived_session if derived_session is not None else table_session
     child_age = (
         round(dosage.age_years(profile.birthdate, today), 1)
         if profile.birthdate is not None

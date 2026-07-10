@@ -11,10 +11,13 @@ from __future__ import annotations
 import logging
 import math
 from datetime import date
+from typing import Literal
 
 from companion.schema import LearnerProfile
 
 logger = logging.getLogger(__name__)
+
+_warned_stale: set[tuple[str, str]] = set()
 
 _SEVERITY_MULTIPLIER = {"mild": 0.85, "moderate": 0.70, "severe": 0.55}
 # "moderate" matches the calibration implicit in adapt/workload.GRADE_WORKLOAD
@@ -60,18 +63,23 @@ def derived_grade(birthdate: date, jurisdiction: str, today: date) -> str | None
     return str(number)
 
 
-def grade_with_source(profile: LearnerProfile, today: date | None = None) -> tuple[str, str]:
+def grade_with_source(
+    profile: LearnerProfile, today: date | None = None
+) -> tuple[str, Literal["derived", "profile"]]:
     """The child's current grade and where it came from ("derived"|"profile")."""
     today = today or date.today()
     if profile.birthdate is not None and profile.jurisdiction is not None:
         derived = derived_grade(profile.birthdate, profile.jurisdiction, today)
         if derived is not None:
             if derived != profile.grade_level:
-                logger.warning(
-                    "dosage: profile grade_level=%r is stale; derived grade is %r",
-                    profile.grade_level,
-                    derived,
-                )
+                warn_key = (profile.grade_level, derived)
+                if warn_key not in _warned_stale:
+                    logger.warning(
+                        "dosage: profile grade_level=%r is stale; derived grade is %r",
+                        profile.grade_level,
+                        derived,
+                    )
+                    _warned_stale.add(warn_key)
             return derived, "derived"
     return profile.grade_level, "profile"
 

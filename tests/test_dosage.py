@@ -67,6 +67,19 @@ def test_grade_source_and_stale_profile_fallbacks() -> None:
     assert current_grade(derived, JULY) == "2"
 
 
+def test_stale_grade_warning_emitted_once(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr("companion.dosage.date", _FrozenDate)
+    monkeypatch.setattr("companion.dosage._warned_stale", set())
+    stale = _profile(birthdate=IAN_BD, jurisdiction="CA-ON", grade_level="1")
+    with caplog.at_level("WARNING"):
+        current_grade(stale, JULY)
+        current_grade(stale, JULY)
+    stale_warnings = [r for r in caplog.records if "stale" in r.message]
+    assert len(stale_warnings) == 1
+
+
 def test_severity_default_and_explicit() -> None:
     assert severity(_profile()) == "moderate"
     assert severity(_profile(adhd_severity="severe")) == "severe"
