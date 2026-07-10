@@ -19,6 +19,14 @@ IAN_BD = date(2019, 9, 21)
 JULY = date(2026, 7, 10)
 
 
+class _FrozenDate(date):
+    """date subclass whose today() is pinned, so arithmetic still works."""
+
+    @classmethod
+    def today(cls) -> "_FrozenDate":
+        return cls(2026, 7, 10)
+
+
 def _profile(**overrides) -> LearnerProfile:
     data = {"name": "Ian", "grade_level": "2"}
     data.update(overrides)
@@ -100,11 +108,12 @@ def test_invalid_severity_rejected() -> None:
         _profile(adhd_severity="extreme")
 
 
-def test_birthdate_never_enters_planner_prompt() -> None:
+def test_birthdate_never_enters_planner_prompt(monkeypatch: pytest.MonkeyPatch) -> None:
     from adapt.llm_planner import _build_planner_prompt
     from adapt.rules import build_rules
     from skill.schema import LiteracySkillModel, SourceItem
 
+    monkeypatch.setattr("companion.dosage.date", _FrozenDate)
     profile = _profile(
         birthdate=IAN_BD, jurisdiction="CA-ON", adhd_severity="moderate", grade_level="1"
     )
@@ -128,20 +137,22 @@ def test_birthdate_never_enters_planner_prompt() -> None:
     assert "Grade: 2" in prompt  # derived grade (July -> incoming grade 2), not stale '1'
 
 
-def test_rules_use_current_grade() -> None:
+def test_rules_use_current_grade(monkeypatch: pytest.MonkeyPatch) -> None:
     from adapt.rules import build_rules
 
+    monkeypatch.setattr("companion.dosage.date", _FrozenDate)
     stale = _profile(birthdate=IAN_BD, jurisdiction="CA-ON", grade_level="1")
     plain_grade2 = _profile(grade_level="2")
 
     assert build_rules(stale) == build_rules(plain_grade2)
 
 
-def test_design_spec_uses_current_grade() -> None:
+def test_design_spec_uses_current_grade(monkeypatch: pytest.MonkeyPatch) -> None:
     from adapt.schema import ActivityChunk, AdaptedActivityModel, Example, ScaffoldConfig, Step
     from render.design_spec import compile_worksheet_design_spec
     from theme.schema import ThemeConfig
 
+    monkeypatch.setattr("companion.dosage.date", _FrozenDate)
     stale = _profile(birthdate=IAN_BD, jurisdiction="CA-ON", grade_level="1")
     adapted = AdaptedActivityModel(
         source_hash="source_hash",

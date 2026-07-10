@@ -508,9 +508,17 @@ class TestCaregiver:
         assert "chunking_level" in report.accommodation_summary
         assert report.accommodation_summary["chunking_level"] == "medium"
 
-    def test_view_progress_uses_current_grade(self) -> None:
+    def test_view_progress_uses_current_grade(self, monkeypatch: MonkeyPatch) -> None:
         from datetime import date
 
+        class _FrozenDate(date):
+            """date subclass whose today() is pinned, so arithmetic still works."""
+
+            @classmethod
+            def today(cls) -> _FrozenDate:
+                return cls(2026, 7, 10)
+
+        monkeypatch.setattr("companion.dosage.date", _FrozenDate)
         stale = LearnerProfile(
             name="Ian",
             grade_level="1",
