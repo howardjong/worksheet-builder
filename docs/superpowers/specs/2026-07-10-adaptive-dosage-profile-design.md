@@ -130,8 +130,10 @@ he ages the segments lengthen automatically.
 
 TDD throughout: derivation unit tests (age, CA-ON grade math incl. Dec-31
 cutoff edges and Sept-1 rollover, clamps, severity multipliers, disagree
-warning); budget tests (legacy profile → byte-identical rationale/table
-values; birthdate profile → worked-example numbers; minute-demand escalation;
+warning); budget tests (legacy profile → identical segment/session table
+values — note the minutes-demand escalation intentionally applies to ALL
+profiles, so legacy sheet counts may rise where essential minutes exceed
+section-count demand; birthdate profile → worked-example numbers;
 rounding ceiling non-drift at all four table values); privacy test (birthdate
 string absent from every prompt artifact and the design spec); ian.yaml
 round-trip. Full gates: `make test`, `make lint`, `make typecheck` (CI mypy
