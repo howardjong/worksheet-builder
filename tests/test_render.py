@@ -30,7 +30,7 @@ from render.pose_planner import ScenePlan, plan_scenes, plan_word_pictures
 from skill.schema import LiteracySkillModel, SourceItem
 from theme.engine import load_theme
 from theme.schema import AssetManifest
-from validate.print_checks import validate_print_quality
+from validate.print_checks import _check_text_image_overlap, validate_print_quality
 
 
 def _phonics_skill() -> LiteracySkillModel:
@@ -72,6 +72,13 @@ def _fluency_skill() -> LiteracySkillModel:
 
 def _profile() -> LearnerProfile:
     return LearnerProfile(name="Test", grade_level="1")
+
+
+def _solid_page_png() -> bytes:
+    """A minimal solid-color PNG sized like a full worksheet page image."""
+    pix = fitz.Pixmap(fitz.csRGB, (0, 0, 612, 792), False)
+    pix.set_rect(pix.irect, (255, 255, 255))
+    return pix.tobytes("png")
 
 
 def _render_pdf(skill: LiteracySkillModel | None = None, theme_id: str = "space") -> str:
@@ -211,6 +218,59 @@ class TestPrintQuality:
         page_violations = [v for v in result.violations if v.check == "has_pages"]
         assert len(page_violations) == 0
         Path(pdf_path).unlink()
+
+    def test_invisible_searchable_text_layer_is_not_flagged_as_overlap(self) -> None:
+        """Reproduces render/image_gen.py::_write_page_pdf exactly: a full-page
+        image with an invisible (render_mode=3, fontsize=2) searchable text
+        layer on top. This is our own intentional accessibility layer, not a
+        print defect, and must not trigger a text/image overlap warning.
+        """
+        doc = fitz.open()
+        try:
+            page = doc.new_page(width=PAGE_WIDTH, height=PAGE_HEIGHT)
+            image_bytes = _solid_page_png()
+            page.insert_image(
+                fitz.Rect(0, 0, PAGE_WIDTH, PAGE_HEIGHT),
+                stream=image_bytes,
+                keep_proportion=True,
+            )
+            page.insert_textbox(
+                fitz.Rect(0, 0, PAGE_WIDTH, PAGE_HEIGHT),
+                "Word Work I can read words with the y pattern fluffy angry jelly",
+                fontsize=2,
+                fontname="helv",
+                render_mode=3,
+            )
+            overlaps = _check_text_image_overlap(page)
+        finally:
+            doc.close()
+
+        assert overlaps == []
+
+    def test_visible_text_over_image_still_flagged_as_overlap(self) -> None:
+        """Positive control: genuine visible text overlapping an image must
+        still be caught — the fix must not blind the detector entirely.
+        """
+        doc = fitz.open()
+        try:
+            page = doc.new_page(width=PAGE_WIDTH, height=PAGE_HEIGHT)
+            image_bytes = _solid_page_png()
+            page.insert_image(
+                fitz.Rect(0, 0, PAGE_WIDTH, PAGE_HEIGHT),
+                stream=image_bytes,
+                keep_proportion=True,
+            )
+            page.insert_textbox(
+                fitz.Rect(0, 0, PAGE_WIDTH, PAGE_HEIGHT),
+                "This text is visible and printed directly on top of the image.",
+                fontsize=14,
+                fontname="helv",
+            )
+            overlaps = _check_text_image_overlap(page)
+        finally:
+            doc.close()
+
+        assert overlaps != []
 
 
 # --- Multi-Worksheet Render Tests ---
