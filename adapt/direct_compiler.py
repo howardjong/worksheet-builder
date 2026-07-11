@@ -13,6 +13,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from adapt.feedback import build_feedback_panel
 from adapt.schema import AdaptedActivityModel
 from companion.character_identity import CharacterIdentity
 from companion.dosage import current_grade
@@ -139,7 +140,15 @@ def _parse_direct_compiler_response(response_text: str) -> list[AdaptedActivityM
         worksheet_payloads = _worksheet_payloads(data)
         if worksheet_payloads is None:
             return None
-        return [AdaptedActivityModel.model_validate(worksheet) for worksheet in worksheet_payloads]
+        worksheets = [
+            AdaptedActivityModel.model_validate(worksheet) for worksheet in worksheet_payloads
+        ]
+        for worksheet in worksheets:
+            if worksheet.feedback is None:
+                worksheet.feedback = build_feedback_panel(
+                    worksheet.domain, worksheet.specific_skill
+                )
+        return worksheets
     except (json.JSONDecodeError, TypeError, ValidationError, ValueError) as exc:
         logger.warning("Failed to parse direct compiler output: %s", exc)
         return None

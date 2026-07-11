@@ -279,6 +279,24 @@ def test_title_only_word_exonerated_by_heading_exclusion_alone() -> None:
     assert "capitalization" not in _gate_names(result)
 
 
+def _bumpy_ledger() -> ObjectiveLedger:
+    # "Bumpy" is capitalized mid-sentence in a NON-title body line (the segment
+    # is not all-title-case, so heuristic 1's heading exclusion cannot apply),
+    # but "bumpy" also appears lowercase later in the same source item →
+    # heuristic 2 (lowercase-seen guard) alone must exonerate it.
+    src = _classified(
+        content="We saw Bumpy roads today. The bumpy road was long.",
+        item_type="word_list",
+    )
+    return _ledger(source_items=[src])
+
+
+def test_lowercase_corroboration_alone_exonerates() -> None:
+    ws = _worksheet([_chunk([_item(content="Read bumpy aloud.", response_format="read_aloud")])])
+    result = run_blocking_gates([ws], _bumpy_ledger())
+    assert "capitalization" not in _gate_names(result)
+
+
 # --------------------------------------------------------------------------- #
 # heading_as_item gate
 # --------------------------------------------------------------------------- #

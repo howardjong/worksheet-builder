@@ -232,3 +232,20 @@ def test_direct_compiler_failure_falls_back_to_deterministic_path(
 
     actual = [ws.model_dump() for ws in adapt_lesson(_skill(), _profile(), "roblox_obby")]
     assert actual == expected
+
+
+def test_parsed_worksheet_backfills_missing_feedback_panel() -> None:
+    from adapt import direct_compiler
+
+    direct = _worksheet(
+        ["grade", "slide", "quite", "tune tone cone cane", "The slide is quite tall."],
+        title="Direct Compiler Result",
+    )
+    assert direct.feedback is None
+
+    response_text = json.dumps([direct.model_dump(mode="json")])
+    worksheets = direct_compiler._parse_direct_compiler_response(response_text)
+
+    assert worksheets is not None
+    assert worksheets[0].feedback is not None
+    assert worksheets[0].feedback.goal_statement.startswith("I can ")

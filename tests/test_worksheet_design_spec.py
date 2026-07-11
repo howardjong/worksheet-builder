@@ -88,6 +88,7 @@ def test_spec_carries_learning_goal_and_feedback() -> None:
     assert spec.feedback is not None
     assert spec.learning_goal in spec.required_text
     assert spec.feedback.child_prompt in spec.required_text
+    assert "Grown-up quick log" in spec.required_text
 
 
 def test_design_spec_round_trips_and_preserves_required_text() -> None:

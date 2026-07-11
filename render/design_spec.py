@@ -271,6 +271,9 @@ def _required_text(adapted: AdaptedActivityModel) -> list[str]:
     ]
     if adapted.feedback:
         text.append(adapted.feedback.child_prompt)
+        text.append(adapted.feedback.parent_log_title)
+        # DECISION_HINT stays gate-unverified: demanding a ~150-char string from
+        # the OCR gate trades real flakiness for marginal value (spec 2026-07-10 §6).
     for chunk in adapted.chunks:
         text.append(chunk.micro_goal)
         text.extend(step.text for step in chunk.instructions)
