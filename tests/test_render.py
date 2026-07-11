@@ -78,7 +78,7 @@ def _solid_page_png() -> bytes:
     """A minimal solid-color PNG sized like a full worksheet page image."""
     pix = fitz.Pixmap(fitz.csRGB, (0, 0, 612, 792), False)
     pix.set_rect(pix.irect, (255, 255, 255))
-    return pix.tobytes("png")
+    return bytes(pix.tobytes("png"))
 
 
 def _render_pdf(skill: LiteracySkillModel | None = None, theme_id: str = "space") -> str:
