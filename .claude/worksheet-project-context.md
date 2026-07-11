@@ -1777,7 +1777,7 @@ Note: index step requires GOOGLE_CLOUD_PROJECT=ws-builder-rag env var.
 | Q1 | PaddleOCR vs Tesseract cross-platform install | PaddleOCR has heavier dependencies; may affect dev setup | Open |
 | Q2 | Nunito font licensing for embedded PDF | Listed as primary theme font | Open |
 | Q3 | How to create synthetic golden test images | Need to mimic UFLI layout without using UFLI content | Open — solve during Checkpoint 1.3 |
-| Q4 | Should the ADVISORY judge + package coverage validator use objective-sufficiency in lesson mode? | Session 58c fixed the PLANNER judge rubric, but the transform-level advisory judge (coverage=0.08) and validate/ content-coverage (11/36 ERROR) still measure exhaustive coverage against packages the workload budget deliberately capped — every capped lesson run ERRORs by design | Open — P3, now the SOLE `objective_approved` blocker (Session 60: G14 fixed; live rerun rejects only on coverage — `obj_manipulation` missing `word_chain` form, named in planner_attempts.json) |
+| Q4 | Should the ADVISORY judge + package coverage validator use objective-sufficiency in lesson mode? | Session 58c fixed the PLANNER judge rubric, but the transform-level advisory judge (coverage=0.08) and validate/ content-coverage (11/36 ERROR) still measure exhaustive coverage against packages the workload budget deliberately capped — every capped lesson run ERRORs by design | RESOLVED Session 60c (finish-line plan, commits fb40807-region..f1a9d03): lesson-mode package validator now runs objective sufficiency post-hoc (validate/objective_package.py); advisory verdict = the objective judge, fallback-only, with owner cost policy (reject → UnapprovedPackageError BEFORE render spend; abstain/unavailable → ship + loud warning; override WORKSHEET_SHIP_UNAPPROVED=1); coverage-rejected plans get ONE retry with per-cell feedback. Photo path untouched (exhaustive validator + old judge, flag-gated). Note: `objective_approved` still requires the LLM to author compliant plans — live run showed plans failing on missing word_chain + 60-min bounds overshoot twice; next lever is planner plan-quality, not validators |
 
 ---
 
@@ -3138,3 +3138,17 @@ Then evaluate honestly and record both scorecards. Do NOT touch parent-plan Task
 - ian.yaml updated on disk only (profiles/ is gitignored — the right home for PII).
 
 **What's next:** P3 (coverage validator + advisory judge → objective-sufficiency; sole objective_approved blocker), objective-aware trim (chip task_46163d0f), then --record-results ingestion (FeedbackPanel signals → observed per-child dosage overriding population norms).
+
+### Session 60c — 2026-07-10 (finish-line plan: P3 shipped, cost circuit-breaker, trim guard; Q4 RESOLVED)
+
+**Participants:** Claude controller (Fable 5) + Sonnet 5 implementers/task-reviewers + Fable 5 exit review (owner-directed model split), owner (policy decisions)
+
+**What happened:**
+- Finish-line plan executed (11 commits `dc436c0..f1a9d03` after spec/plan `8b15c84`): P3a objective-sufficiency package validator (validate/objective_package.py, exhaustive ERRORs gone in lesson mode); P3b advisory objective judge with owner cost policy — judge REJECT aborts BEFORE render spend (`UnapprovedPackageError`, override `WORKSHEET_SHIP_UNAPPROVED=1`; abstain/unavailable ship with loud warning); P3c one coverage-retry with per-cell feedback (`coverage_retry` recorded in the shipping artifact); objective-aware trim guard (Story Time survives cap-2, proven E2E); print-check invisible-layer false positive fixed (5pt threshold; remaining warnings are TRUE positives — 8pt merge footer over full-bleed art, product decision pending); minors swept.
+- Deep find during T1: the evidence layer couldn't see deterministic-engine practice (chain items invisible → stitching; then two connected-text dilution sources → positive allowlist: read_aloud + sentence-shaped production only). Three evidence-layer touches audited coherent by the Fable exit review.
+- Exit gate (owner /goal criteria) MET: Fable TDD audit EVIDENCE COMPLETE (14 red/green cycles across 6 tasks); verdict READY TO MERGE; gates green (815 tests / lint / mypy 0 of 186 files, 3.11-verified); live lesson-74 run = exit outcome (b): zero coverage ERRORs, retry fired, trim kept Story Time, advisory reject aborted pre-render with the actionable message.
+- Process notes: implementers escalated 4 times (all correct stops); one agent session died on a rate limit and was re-dispatched fresh; task reviewers reproduced two bugs the implementers missed (carrier dilution; second_outcome gap).
+
+**Gotchas discovered:** planner plans overshoot the session budget (60 est. min vs 20) and keep omitting the word_chain form even with feedback retry — planner plan-quality is now the sole `objective_approved` lever. Judge scored deterministic Story Time 0.58 connected-text with an ADHD-load defect — possibly real template feedback.
+
+**What's next:** (1) planner plan-quality (author required forms reliably; respect time bounds — consider bounds in the prompt's budget line); (2) product call on the 8pt footer-over-image warnings; (3) accepted-minor housekeeping pass (dead arrow check, splice guard comment, WORKSHEET_SHIP_UNAPPROVED=0 truthiness normalize, ai_review redundancy on fallback runs); (4) `--record-results`. Owner to decide push.
