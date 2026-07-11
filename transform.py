@@ -799,36 +799,49 @@ def _run_multi_worksheet_pipeline(
         # Objective mode, fallback (deterministic-engine) package: the planner
         # didn't already judge it, so run the advisory objective judge here.
         # This is ADVISORY — it never overrides the deterministic gates/
-        # coverage that already shipped the package — but a not-approved
-        # verdict is cost-driven owner policy: abort BEFORE the render loop
-        # below spends image-generation budget on a package that will just
-        # get thrown away (spec 2026-07-10 P3b policy matrix).
+        # coverage that already shipped the package — but a REJECTED verdict
+        # is cost-driven owner policy: abort BEFORE the render loop below
+        # spends image-generation budget on a package that will just get
+        # thrown away (spec 2026-07-10 P3b policy matrix). Only an affirmative
+        # reject trips the circuit breaker: abstain is the judge-level
+        # analogue of the deterministic validator's needs_verification
+        # ("cannot confidently verify"), which counts as pass-with-note —
+        # abstain ships with a loud warning, exactly like judge-unavailable.
         judge_result = {"enabled": False, "unavailable": True}
         from adapt.llm_judge import judge_package_objective
 
         objective_verdict = judge_package_objective(skill_model, worksheets)
-        objective_approved: bool | None = None
+        recommendation: str | None = None
         if objective_verdict is not None:
-            objective_approved = objective_verdict.approval_recommendation == "approve"
+            recommendation = objective_verdict.approval_recommendation
             judge_result = objective_verdict.model_dump()
-            judge_result["approved"] = objective_approved
-            pedagogical_judge_passed = objective_approved
-            if objective_approved:
+            if recommendation == "approve":
+                judge_result["approved"] = True
+                pedagogical_judge_passed = True
                 logger.info(
                     "  Objective judge (advisory): APPROVED (%.2f)",
                     objective_verdict.overall_score,
                 )
-            else:
+            elif recommendation == "reject":
+                judge_result["approved"] = False
+                pedagogical_judge_passed = False
                 logger.warning(
                     "  Objective judge (advisory): NOT APPROVED (%.2f) — %s",
                     objective_verdict.overall_score,
                     "; ".join(objective_verdict.feedback),
                 )
+            # abstain: no approved bool, no pedagogical gate — pass-with-note,
+            # mirroring how needs_verification counts as passed (advisory).
         judge_json.write_text(json.dumps(judge_result, indent=2))
 
         if objective_verdict is None:
             logger.warning("  Advisory judge unavailable — shipping unjudged deterministic package")
-        elif objective_approved:
+        elif recommendation == "abstain":
+            logger.warning(
+                "  Advisory judge abstained — shipping unverified package; "
+                "verdict details in judge_verdict.json"
+            )
+        elif recommendation == "approve":
             pass  # render proceeds
         elif os.environ.get("WORKSHEET_SHIP_UNAPPROVED"):
             logger.warning("  WORKSHEET_SHIP_UNAPPROVED=1 — shipping NOT-APPROVED package anyway")

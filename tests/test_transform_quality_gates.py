@@ -530,7 +530,12 @@ def _run_pipeline_with_worksheets(
 # =========================================================================== #
 
 
-def _objective_verdict(*, approved: bool, defects: bool = False) -> ObjectiveJudgeVerdict:
+def _objective_verdict(
+    *,
+    approved: bool,
+    defects: bool = False,
+    recommendation: str | None = None,
+) -> ObjectiveJudgeVerdict:
     cell = ObjectiveJudgeCellScore(
         objective_id="obj_decode",
         quality=0.30 if not approved else 0.85,
@@ -542,6 +547,8 @@ def _objective_verdict(*, approved: bool, defects: bool = False) -> ObjectiveJud
         evidence_item_ids=["e1"],
         rationale="stub",
     )
+    if recommendation is None:
+        recommendation = "approve" if approved else "reject"
     return ObjectiveJudgeVerdict(
         objective_scores=[cell],
         objective_sufficiency=0.85 if approved else 0.30,
@@ -550,7 +557,7 @@ def _objective_verdict(*, approved: bool, defects: bool = False) -> ObjectiveJud
         adhd_cognitive_load_fit=0.85 if approved else 0.30,
         lesson_flow_and_usability=0.85 if approved else 0.30,
         overall_score=0.85 if approved else 0.30,
-        approval_recommendation="approve" if approved else "reject",
+        approval_recommendation=recommendation,  # type: ignore[arg-type]
         feedback=["all good"] if approved else ["cell obj_decode is weak busywork"],
     )
 
@@ -698,3 +705,31 @@ def test_objective_advisory_judge_none_ships_with_warning(
     verdict = json.loads((artifacts / "judge_verdict.json").read_text())
     assert verdict.get("unavailable") is True
     assert any("unavailable" in record.message for record in caplog.records)
+
+
+def test_objective_advisory_abstain_ships_with_warning(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Abstain -> render + loud warning; only an affirmative reject trips the abort.
+
+    Abstain is the judge-level analogue of the deterministic validator's
+    needs_verification ("cannot confidently verify"), which counts as
+    pass-with-note — it must not fire the cost circuit-breaker.
+    """
+    monkeypatch.delenv("WORKSHEET_SHIP_UNAPPROVED", raising=False)
+
+    with caplog.at_level("WARNING"):
+        output, artifacts, run_artifacts = _run_objective_pipeline_with_stubbed_judge(
+            tmp_path,
+            monkeypatch,
+            judge_return=_objective_verdict(approved=False, recommendation="abstain"),
+        )
+
+    # Render loop ran: PDF paths collected + per-worksheet artifacts on disk.
+    assert run_artifacts.pdf_paths == [str(output / "lesson.pdf")]
+    assert (artifacts / "adapted_model_1.json").exists()
+    assert any("abstain" in record.message.lower() for record in caplog.records)
+    # Abstain is pass-with-note: it must not mark package validation failed.
+    assert run_artifacts.validation_results.get("pedagogical_judge_passed") is not False
