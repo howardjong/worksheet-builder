@@ -95,6 +95,7 @@ def enforce_package_cap(
     worksheets: list[AdaptedActivityModel],
     max_worksheets: int,
     fallback_feedback: FeedbackPanel | None = None,
+    essential_forms: dict[str, list[int]] | None = None,
 ) -> list[AdaptedActivityModel]:
     """Hard-cap the package size by keeping a family-balanced subset.
 
@@ -104,6 +105,17 @@ def enforce_package_cap(
     of every family first, then Part 2s, and so on — so a capped package still
     touches every activity family instead of, say, four flavors of Word
     Discovery. Dropped titles are logged loudly.
+
+    ``essential_forms`` (owner decision 2026-07-10): objective-blind round-robin
+    can drop the sole carrier of a required pedagogical form (e.g. the only
+    Story Time sheet, carrying the decodable passage). Maps required-form name
+    → pre-trim worksheet indices (into ``worksheets``) that carry that form. A
+    form is "seeded" — its first carrier forced into the selection ahead of the
+    round-robin — only when the plain round-robin would otherwise drop ALL of
+    its carriers. Forms are iterated in sorted (alphabetical) name order for
+    determinism. The cap stays hard: if seeds alone exceed ``max_worksheets``,
+    only the first ``cap`` seeds (in that sorted-form order) survive, and the
+    overflow is logged loudly.
     """
     if max_worksheets < 1 or len(worksheets) <= max_worksheets:
         return worksheets
@@ -117,18 +129,68 @@ def enforce_package_cap(
             order.append(family)
         families[family].append(ws)
 
-    selected: list[AdaptedActivityModel] = []
+    plain_selected: list[AdaptedActivityModel] = []
     round_index = 0
-    while len(selected) < max_worksheets:
+    while len(plain_selected) < max_worksheets:
         took_any = False
         for family in order:
             parts = families[family]
-            if round_index < len(parts) and len(selected) < max_worksheets:
-                selected.append(parts[round_index])
+            if round_index < len(parts) and len(plain_selected) < max_worksheets:
+                plain_selected.append(parts[round_index])
                 took_any = True
         if not took_any:
             break
         round_index += 1
+
+    seeds: list[AdaptedActivityModel] = []
+    if essential_forms:
+        seed_indices: list[int] = []
+        for form in sorted(essential_forms):
+            carrier_indices = essential_forms[form]
+            if not carrier_indices:
+                continue
+            survives = any(
+                0 <= i < len(worksheets) and worksheets[i] in plain_selected
+                for i in carrier_indices
+            )
+            if survives:
+                continue
+            first = carrier_indices[0]
+            if not (0 <= first < len(worksheets)):
+                continue
+            if first not in seed_indices:
+                seed_indices.append(first)
+
+        if len(seed_indices) > max_worksheets:
+            logger.warning(
+                "Package cap: %s essential-form seeds exceed the %s-worksheet cap; "
+                "keeping the first %s seed(s) (in form order) and dropping the rest. "
+                "Some required forms may still be missing from the capped package.",
+                len(seed_indices),
+                max_worksheets,
+                max_worksheets,
+            )
+            seed_indices = seed_indices[:max_worksheets]
+
+        seeds = [worksheets[i] for i in seed_indices]
+
+    selected: list[AdaptedActivityModel] = list(seeds)
+    if len(selected) < max_worksheets:
+        round_index = 0
+        while len(selected) < max_worksheets:
+            took_any = False
+            for family in order:
+                parts = families[family]
+                if round_index < len(parts) and len(selected) < max_worksheets:
+                    candidate = parts[round_index]
+                    if candidate not in selected:
+                        selected.append(candidate)
+                        took_any = True
+                if len(selected) >= max_worksheets:
+                    break
+            if not took_any:
+                break
+            round_index += 1
 
     dropped = [ws.worksheet_title or "Untitled" for ws in worksheets if ws not in selected]
     logger.warning(

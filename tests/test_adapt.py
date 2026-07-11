@@ -962,3 +962,55 @@ class TestLessonPackageCapWiring:
         worksheets = adapt_lesson(skill, profile)
         # Photo-path behavior preserved: dense content splits freely past 3.
         assert len(worksheets) > 3
+
+    def test_essential_form_carriers_agrees_with_evidence_layer_on_real_output(self) -> None:
+        """`_essential_form_carriers` must classify identically to independently
+        probing the evidence layer (build_evidence_index + evaluate_objective_coverage
+        per single-worksheet subset) — it's a thin wrapper around that machinery,
+        not a parallel discriminator, per the objective-aware package trim design.
+
+        Reimplements the carrier check independently (rather than calling the
+        function under test) so this is a real cross-check, not a tautology.
+        """
+        from adapt.engine import _essential_form_carriers
+        from adapt.objective_ledger import build_objective_ledger
+        from validate.objective_coverage import build_evidence_index, evaluate_objective_coverage
+
+        skill = _ufli_59_skill()
+        profile = _grade_1_profile()
+        worksheets = adapt_lesson(skill, profile)
+        assert len(worksheets) >= 2  # real split output, not a single trivial sheet
+
+        carriers = _essential_form_carriers(skill, worksheets)
+        assert carriers  # this fixture has both a word_chain and a passage source item
+
+        ledger = build_objective_ledger(skill)
+
+        # Map objective_type -> its one load-bearing required-form label (the
+        # only forms actually gated by validate/objective_coverage.py's per-cell
+        # evaluators; see _GATED_CELL_TYPES / _default_form_for_cell docstrings).
+        form_by_objective_type = {
+            "phoneme_grapheme_manipulation": "word_chain",
+            "connected_text_fluency": "decodable_passage",
+        }
+
+        expected: dict[str, set[int]] = {}
+        for cell in ledger.objectives:
+            if cell.importance != "essential":
+                continue
+            form = form_by_objective_type.get(cell.objective_type)
+            if form is None and cell.objective_type == "encode_target_pattern":
+                if "encoding_or_spelling" in cell.required_forms:
+                    form = "encoding_or_spelling"
+            if form is None:
+                continue
+            for idx, ws in enumerate(worksheets):
+                evidence = build_evidence_index([ws], ledger)
+                result = evaluate_objective_coverage(ledger, evidence, worksheets=[ws])
+                cell_result = next(
+                    r for r in result.objective_results if r.objective_id == cell.objective_id
+                )
+                if cell_result.required_forms_present:
+                    expected.setdefault(form, set()).add(idx)
+
+        assert {k: set(v) for k, v in carriers.items()} == expected

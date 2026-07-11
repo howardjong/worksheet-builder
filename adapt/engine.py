@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from adapt.feedback import build_feedback_panel
+from adapt.objective_ledger import ObjectiveCell, build_objective_ledger
 from adapt.rules import (
     BRAIN_BREAK_PROMPTS,
     AccommodationRules,
@@ -28,11 +29,31 @@ from adapt.section_cap import enforce_package_cap, enforce_section_cap
 from companion.schema import LearnerProfile
 from skill.lesson_loader import EXTRACTION_ARTIFACTS
 from skill.schema import LiteracySkillModel
+from validate.objective_coverage import build_evidence_index, evaluate_objective_coverage
 
 if TYPE_CHECKING:
     from companion.character_identity import CharacterIdentity
 
 logger = logging.getLogger(__name__)
+
+# Ledger cell types whose evaluator gates a genuine required pedagogical form
+# (validate/objective_coverage.py::_evaluate_cell dispatch). Only these three
+# forms are ever load-bearing in `missing_required_forms`:
+#   - "phoneme_grapheme_manipulation" -> _evaluate_manipulation_cell requires an
+#     authored word_chain/chain_script sequence (evidence stamped only by our
+#     own deterministic chain templates: adapt/engine.py's
+#     metadata={"display": "chain_step"} / "chain", see _build_builder_chunks
+#     above and adapt/llm_adapt.py's mirror of the same stamp).
+#   - "connected_text_fluency" -> _evaluate_connected_cell requires connected
+#     text (2+ sentences, or read_aloud/multiword passage practice) per
+#     validate/objective_coverage.py::_is_connected_text.
+#   - "encode_target_pattern" cells that declare "encoding_or_spelling" in
+#     required_forms -> _evaluate_pattern_cell requires student-production
+#     evidence (write/fill_blank/trace/... response formats).
+# (irregular_word_reading / generic cells never gate on required_forms — see
+# _evaluate_irregular_cell / _evaluate_generic_cell, which always report
+# required_forms_present=True.)
+_GATED_CELL_TYPES = frozenset({"phoneme_grapheme_manipulation", "connected_text_fluency"})
 
 
 @dataclass(frozen=True)
@@ -121,13 +142,79 @@ def _finalize_lesson_package(
     the photo path doesn't set it, keeping split-never-trim there.
     """
     capped = enforce_section_cap(worksheets, rules)
-    if package_cap is not None:
+    if package_cap is not None and len(capped) > package_cap:
         capped = enforce_package_cap(
             capped,
             package_cap,
             fallback_feedback=build_feedback_panel(skill.domain, skill.specific_skill),
+            essential_forms=_essential_form_carriers(skill, capped),
         )
     return capped
+
+
+def _essential_form_carriers(
+    skill: LiteracySkillModel, worksheets: list[AdaptedActivityModel]
+) -> dict[str, list[int]]:
+    """Map each essential required-form name to the pre-trim indices that carry it.
+
+    Reuses the objective-coverage evidence layer (the SAME machinery the
+    package validator and LLM judge use) rather than inventing a parallel
+    discriminator: for each essential ledger cell that gates a required form
+    (see `_GATED_CELL_TYPES` + the encode/`encoding_or_spelling` case above),
+    probe every worksheet ALONE — `build_evidence_index([worksheets[i]], ledger)`
+    — and ask whether that single sheet's evidence satisfies the cell's
+    required-form check (`ObjectiveCellResult.required_forms_present`, via
+    `evaluate_objective_coverage`). A sheet "carries" the form iff evaluating
+    the cell against that sheet's evidence alone reports the form present —
+    e.g. `word_chain` iff the sheet alone yields an authored chain sequence
+    (see `_evaluate_manipulation_cell`), `decodable_passage` iff the sheet
+    alone has connected-text practice evidence (see `_evaluate_connected_cell`).
+
+    Pure: builds a fresh ledger + evidence index per call, no mutation, stable
+    ordering (ledger objective order, then worksheet order).
+    """
+    ledger = build_objective_ledger(skill)
+    carriers: dict[str, list[int]] = {}
+
+    for cell in ledger.objectives:
+        if cell.importance != "essential":
+            continue
+        is_gated_type = cell.objective_type in _GATED_CELL_TYPES
+        is_gated_encode = (
+            cell.objective_type == "encode_target_pattern"
+            and "encoding_or_spelling" in cell.required_forms
+        )
+        if not (is_gated_type or is_gated_encode):
+            continue
+
+        for idx, ws in enumerate(worksheets):
+            evidence = build_evidence_index([ws], ledger)
+            result = evaluate_objective_coverage(ledger, evidence, worksheets=[ws])
+            cell_result = next(
+                (r for r in result.objective_results if r.objective_id == cell.objective_id),
+                None,
+            )
+            if cell_result is None or not cell_result.required_forms_present:
+                continue
+            for form in cell.required_forms or _default_form_for_cell(cell):
+                carriers.setdefault(form, []).append(idx)
+
+    return carriers
+
+
+def _default_form_for_cell(cell: ObjectiveCell) -> list[str]:
+    """Fallback required-form label for a gated cell that declares none explicitly.
+
+    `phoneme_grapheme_manipulation` / `connected_text_fluency` cells are gated
+    by their evaluator regardless of `required_forms` contents (see
+    `_GATED_CELL_TYPES` docstring); label them by the form their evaluator
+    actually checks so seeding still has a name to key on.
+    """
+    if cell.objective_type == "phoneme_grapheme_manipulation":
+        return ["word_chain"]
+    if cell.objective_type == "connected_text_fluency":
+        return ["decodable_passage"]
+    return []
 
 
 def _resolve_lesson_package_cap(

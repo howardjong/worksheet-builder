@@ -202,3 +202,62 @@ class TestEnforcePackageCap:
         joined = " ".join(r.message for r in caplog.records)
         assert "keeping 1 of 4" in joined
         assert "Word Discovery (Part 2)" in joined
+
+    def test_no_essential_forms_arg_is_byte_identical_to_current_behavior(self) -> None:
+        """No essential_forms → identical selection/order to the plain round-robin."""
+        package = (
+            [_part("Word Discovery", i, 10, i) for i in range(1, 5)]
+            + [_part("Word Builder", i, 10, 4 + i) for i in range(1, 5)]
+            + [_part("Story Time", i, 10, 8 + i) for i in range(1, 3)]
+        )
+        without_kw = enforce_package_cap(package, 3)
+        with_none = enforce_package_cap(package, 3, essential_forms=None)
+        assert without_kw == with_none
+
+    def test_package_cap_never_drops_sole_carrier_of_essential_form(self) -> None:
+        # 5 sheets from 5 distinct families; round-robin with cap=2 would keep
+        # only the first two families ("Word Discovery", "Word Builder"),
+        # dropping "Story Time" — the sole carrier of decodable_passage.
+        package = [
+            _part("Word Discovery", 1, 5, 1),
+            _part("Word Builder", 1, 5, 2),
+            _part("Sound Sort", 1, 5, 3),
+            _part("Spelling Practice", 1, 5, 4),
+            _part("Story Time", 1, 5, 5),
+        ]
+        capped = enforce_package_cap(package, 2, essential_forms={"decodable_passage": [4]})
+        titles = [ws.worksheet_title for ws in capped]
+        assert "Story Time (Part 1)" in titles
+        assert len(capped) == 2
+
+    def test_seeds_exceeding_cap_keep_first_cap_seeds_and_log(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        package = [
+            _part("Word Discovery", 1, 5, 1),
+            _part("Word Builder", 1, 5, 2),
+            _part("Sound Sort", 1, 5, 3),
+            _part("Spelling Practice", 1, 5, 4),
+            _part("Story Time", 1, 5, 5),
+        ]
+        with caplog.at_level(logging.WARNING, logger="adapt.section_cap"):
+            capped = enforce_package_cap(
+                package,
+                2,
+                essential_forms={
+                    "decodable_passage": [4],
+                    "word_chain": [2],
+                    "encoding_or_spelling": [3],
+                },
+            )
+        # 3 seeds requested, cap is 2 -> keep first 2 seeds in (sorted) form order:
+        # "decodable_passage" (Story Time) then "encoding_or_spelling" (Spelling
+        # Practice); "word_chain" (Word Builder) is dropped.
+        assert len(capped) == 2
+        titles = [ws.worksheet_title for ws in capped]
+        assert "Story Time (Part 1)" in titles
+        assert "Spelling Practice (Part 1)" in titles
+        assert "Word Builder (Part 1)" not in titles
+        joined = " ".join(r.message for r in caplog.records)
+        assert "essential" in joined.lower()
+        assert "exceed" in joined.lower()
