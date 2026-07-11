@@ -1043,3 +1043,98 @@ def test_coverage_fail_twice_falls_back_with_both_attempts(
     assert attempts["coverage_failure"]["failing_objectives"][0]["objective_id"] == (
         "obj_manipulation"
     )
+
+
+def test_retry_gate_failure_records_gate_rejected_outcome(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """First plan fails coverage, RETRY plan fails blocking gates → gate fallback.
+
+    The retry routes to the EXISTING gate-fallback path (gate_violations details,
+    no second retry) and coverage_retry records second_outcome == "gate_rejected"
+    so the attempts artifact says how the retry ended, not just that it happened.
+    """
+    from adapt import llm_planner
+
+    _objective_env(monkeypatch)
+    monkeypatch.setattr(llm_planner, "build_objective_ledger", lambda s: _manip_ledger())
+
+    gate_results = iter([_gates(True), _gates(False)])
+    monkeypatch.setattr(llm_planner, "run_blocking_gates", lambda w, ld: next(gate_results))
+
+    prompts: list[str] = []
+
+    def _fake_call(prompt: str) -> tuple[str, str]:
+        prompts.append(prompt)
+        return _PLAN_JSON, "gpt-5.4"
+
+    monkeypatch.setattr(llm_planner, "_call_planner", _fake_call)
+    monkeypatch.setattr(
+        llm_planner, "evaluate_objective_coverage", lambda ld, e, w: _manip_failing_coverage()
+    )
+
+    def _no_judge(*args: object, **kwargs: object) -> list[ObjectiveJudgeVerdict]:
+        raise AssertionError("judge must not be called after a retry gate block")
+
+    monkeypatch.setattr(llm_planner, "judge_objective_adaptation_samples", _no_judge)
+
+    result = llm_planner.plan_lesson_llm(_skill(), _profile(), artifacts_dir=str(tmp_path))
+
+    assert result is None
+    assert len(prompts) == 2  # one retry, then the gate block — no third call
+    assert not (tmp_path / "judge_verdict.json").exists()
+
+    attempts = json.loads((tmp_path / "planner_attempts.json").read_text())
+    assert attempts["outcome"] == "objective_rejected_gate"
+    assert attempts["gate_violations"][0]["gate"] == "answer_key"  # normal gate details
+    retry = attempts["coverage_retry"]
+    assert retry["attempted"] is True
+    assert retry["second_outcome"] == "gate_rejected"
+    assert retry["first_failure"]["failing_objectives"][0]["objective_id"] == "obj_manipulation"
+
+
+def test_retry_needs_verification_recorded_not_collapsed_to_pass(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Retry coverage 'needs_verification' proceeds to the judge AND is recorded verbatim.
+
+    second_outcome must carry the actual tri-state status string, not a hardcoded
+    "pass" — needs_verification and pass are distinct documented values.
+    """
+    from adapt import llm_planner
+
+    _objective_env(monkeypatch)
+    monkeypatch.setattr(llm_planner, "build_objective_ledger", lambda s: _manip_ledger())
+    monkeypatch.setattr(llm_planner, "run_blocking_gates", lambda w, ld: _gates(True))
+
+    prompts: list[str] = []
+
+    def _fake_call(prompt: str) -> tuple[str, str]:
+        prompts.append(prompt)
+        return _PLAN_JSON, "gpt-5.4"
+
+    monkeypatch.setattr(llm_planner, "_call_planner", _fake_call)
+
+    coverage_results = iter([_manip_failing_coverage(), _coverage("needs_verification")])
+    monkeypatch.setattr(
+        llm_planner, "evaluate_objective_coverage", lambda ld, e, w: next(coverage_results)
+    )
+    # needs_verification coverage → the judge still runs; derive() then abstains.
+    judged: list[bool] = []
+
+    def _judge(*args: object, **kwargs: object) -> list[ObjectiveJudgeVerdict]:
+        judged.append(True)
+        return [_obj_verdict(0.8, objective_id="obj_manipulation")]
+
+    monkeypatch.setattr(llm_planner, "judge_objective_adaptation_samples", _judge)
+
+    result = llm_planner.plan_lesson_llm(_skill(), _profile(), artifacts_dir=str(tmp_path))
+
+    assert judged == [True]  # needs_verification proceeded to the judge, not straight fallback
+    assert result is None  # coverage needs_verification → judge derive() abstains → fallback
+    assert len(prompts) == 2
+
+    attempts = json.loads((tmp_path / "planner_attempts.json").read_text())
+    assert attempts["outcome"] == "objective_abstain_fallback"
+    assert attempts["coverage_retry"]["attempted"] is True
+    assert attempts["coverage_retry"]["second_outcome"] == "needs_verification"

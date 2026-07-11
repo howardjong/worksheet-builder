@@ -649,6 +649,11 @@ def _generate_and_gate(
         }
         if extra_details:
             details.update(extra_details)
+            # A gate block on the coverage RETRY plan: record how the retry ended
+            # so coverage_retry.second_outcome is never silently absent.
+            retry_info = details.get("coverage_retry")
+            if isinstance(retry_info, dict):
+                details["coverage_retry"] = {**retry_info, "second_outcome": "gate_rejected"}
         _objective_fallback(
             skill, "objective_rejected_gate", model_label, None, artifacts_dir, details=details
         )
