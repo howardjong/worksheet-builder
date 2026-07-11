@@ -331,7 +331,125 @@ def _evidence_for_chunk(
 
     for item in chunk.items:
         out.extend(_evidence_for_item(ws_index, chunk, item, ledger, index))
+
+    stitched = _stitched_chain_evidence(ws_index, chunk, ledger, index)
+    if stitched is not None:
+        out.append(stitched)
     return out
+
+
+# Metadata stamp set ONLY by our own deterministic chain derivation
+# (adapt/engine.py::_build_builder_chunks and adapt/llm_adapt.py::
+# _build_items_from_activity, both via _parse_chain_steps). A model cannot
+# assert this stamp — it can only supply words the parser verifies into
+# single-letter-change steps — so it is a sound evidence discriminator for
+# "deterministically verified chain step" (P3a scope extension).
+_CHAIN_DISPLAYS = frozenset({"chain_step", "chain"})
+
+_QUOTED_WORD_RE = re.compile(r'"([A-Za-z]+)"')
+
+
+def _chain_step_pair(item: ActivityItem) -> tuple[str, str] | None:
+    """(from_word, to_word) for an engine-templated chain-step item.
+
+    The deterministic template is fixed ('Start with "<from>". Change ...'),
+    so the first quoted word is the from-word; the target word is what the
+    child writes — carried in ``answer``.
+    """
+    if not item.answer:
+        return None
+    m = _QUOTED_WORD_RE.search(item.content)
+    if m is None:
+        return None
+    frm = _normalize(m.group(1))
+    to = _normalize(item.answer)
+    if not frm or not to:
+        return None
+    return frm, to
+
+
+def _example_arrow_pair(content: str) -> tuple[str, str] | None:
+    """(from_word, to_word) modeled by an arrowed worked example.
+
+    The engine's chain example reads '<from> → <to>  (change the "x" to "y")':
+    the from-word is the last word before the first arrow, the to-word the
+    first word after it.
+    """
+    if _ARROW_RE.search(content) is None:
+        return None
+    left, right = _ARROW_RE.split(content, maxsplit=1)
+    left_words = [_normalize(t) for t in _WORD_RE.findall(left)]
+    right_words = [_normalize(t) for t in _WORD_RE.findall(right)]
+    if not left_words or not right_words or not left_words[-1] or not right_words[0]:
+        return None
+    return left_words[-1], right_words[0]
+
+
+def _stitched_chain_evidence(
+    ws_index: int,
+    chunk: ActivityChunk,
+    ledger: ObjectiveLedger,
+    index: _LedgerIndex,
+) -> EvidenceItem | None:
+    """Stitch a chunk's deterministically-stamped chain items into ONE chain unit.
+
+    The engines author a chain as per-step write items: the from-word is in the
+    visible content, the target word in ``answer`` — which the child WRITES
+    (the practice), so counting it here is faithful, not a key leak. Within one
+    chunk, the stamped items stitch in order into a single ordered sequence the
+    manipulation evaluator can compare against the ledger chain.
+
+    The chunk's worked example is prepended ONLY when it models the chain's
+    first step (its arrowed to-word is the first authored from-word) — the
+    UFLI chain activity includes the modeled first hop. This is chain-evidence
+    only: worked examples still never satisfy any other cell type.
+    """
+    seq: list[str] = []
+    found = False
+    for item in chunk.items:
+        display = item.metadata.get("display")
+        if display not in _CHAIN_DISPLAYS:
+            continue
+        if display == "chain_step":
+            pair = _chain_step_pair(item)
+            if pair is None:
+                continue
+            found = True
+            if not seq or seq[-1] != pair[0]:
+                seq.append(pair[0])
+            seq.append(pair[1])
+        else:  # display == "chain": the content IS the arrowed chain
+            words = _chain_words_ordered(item.content)
+            if len(words) < 2:
+                continue
+            found = True
+            for w in words:
+                if not seq or seq[-1] != w:
+                    seq.append(w)
+    if not found or len(seq) < 2:
+        return None
+
+    ex = chunk.worked_example
+    if ex is not None:
+        ex_pair = _example_arrow_pair(ex.content)
+        if ex_pair is not None and ex_pair[1] == seq[0]:
+            seq.insert(0, ex_pair[0])
+
+    visible = " -> ".join(seq)
+    return EvidenceItem(
+        visible_text=visible,
+        practice_role=PRACTICE_STUDENT,
+        # The canonical chain form — recognized by _cell_touched for
+        # manipulation cells exactly like a planner-authored chain item.
+        response_format="word_chain",
+        # Conservative: production credit stays with the underlying write
+        # items; this unit exists to reconstruct the ordered transformation
+        # sequence, not to feed encode-production numerators with the modeled
+        # first hop / read-only from-words.
+        is_student_production=False,
+        objective_ids=_match_cells(_words(visible), "word_chain", ledger, index, practice=True),
+        evidence_item_id=f"{_chunk_provenance(ws_index, chunk)}_stitched_chain",
+    )
 
 
 def _evidence_for_item(

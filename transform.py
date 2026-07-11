@@ -950,7 +950,19 @@ def _run_multi_worksheet_pipeline(
     _validate_format_variety(worksheets)
 
     validation_results = _aggregate_validation_results(validation_runs)
-    content_result = _validate_package_content_coverage(skill_model, worksheets, artifacts)
+    if os.environ.get("WORKSHEET_OBJECTIVE_COVERAGE"):
+        # Objective mode (lesson-mode default): the package is judged by
+        # objective sufficiency — the same deterministic machinery the planner
+        # uses (validate/objective_package.py) — not exhaustive word coverage.
+        # needs_verification counts as passed (advisory), fail does not.
+        content_coverage_passed = _validate_package_objective_coverage(
+            skill_model, worksheets, artifacts
+        )
+    else:
+        # Photo path: exhaustive content coverage, exactly as before.
+        content_coverage_passed = _validate_package_content_coverage(
+            skill_model, worksheets, artifacts
+        ).passed
     time_budget_result = validate_lesson_time_budget(worksheets)
     time_budget_json = artifacts / "validation_lesson_time_budget.json"
     time_budget_json.write_text(
@@ -960,7 +972,7 @@ def _run_multi_worksheet_pipeline(
         if violation.severity == "warning":
             logger.warning("  Lesson time budget: %s", violation.message)
 
-    validation_results["content_coverage_passed"] = content_result.passed
+    validation_results["content_coverage_passed"] = content_coverage_passed
     validation_results["lesson_time_budget_passed"] = time_budget_result.passed
     validation_results["ai_review_passed"] = ai_review_passed
     validation_results["renderer_produces_pdf"] = strategy.produces_pdf
@@ -969,7 +981,7 @@ def _run_multi_worksheet_pipeline(
         validation_results["pedagogical_judge_passed"] = pedagogical_judge_passed
     validation_results["all_validators_passed"] = (
         validation_results.get("all_validators_passed", False)
-        and content_result.passed
+        and content_coverage_passed
         and time_budget_result.passed
         and ai_review_passed
         and (pedagogical_judge_passed if pedagogical_judge_passed is not None else True)
@@ -1268,6 +1280,47 @@ def _validate_package_content_coverage(
             logger.warning("  Content coverage package: %s", violation.message)
 
     return result
+
+
+def _validate_package_objective_coverage(
+    skill_model: object,
+    worksheets: Sequence[AdaptedActivityModel],
+    artifacts: Path,
+) -> bool:
+    """Objective-sufficiency package validation (lesson mode, spec 2026-07-10 P3a).
+
+    Returns the content-coverage pass flag: True for status ``pass`` or
+    ``needs_verification`` ("uncertain, not provably short" — advisory INFO
+    note, never an ERROR), False only for a hard ``fail``.
+    """
+    from skill.schema import LiteracySkillModel
+    from validate.objective_package import validate_objective_package
+
+    assert isinstance(skill_model, LiteracySkillModel)
+
+    result = validate_objective_package(skill_model, list(worksheets))
+    val_json = artifacts / "validation_objective_coverage.json"
+    val_json.write_text(
+        json.dumps({"objective_coverage": result.model_dump(mode="json")}, indent=2)
+    )
+
+    logger.info("  Objective coverage package: status=%s", result.status)
+    for cell in result.objective_results:
+        if cell.status == "fail":
+            logger.info(
+                "  Objective coverage package: %s FAIL (missing forms: %s) %s",
+                cell.objective_id,
+                ", ".join(cell.missing_required_forms) or "none",
+                "; ".join(cell.notes),
+            )
+    for breach in result.package_bounds.breaches:
+        logger.info("  Objective coverage package: bound breach — %s", breach)
+    if result.status == "needs_verification":
+        logger.info(
+            "  Objective coverage package: needs_verification — no essential shortfall "
+            "proven; counted as passed (advisory)"
+        )
+    return result.status != "fail"
 
 
 def _validate_final_print_quality(pdf_path: str, artifacts: Path) -> ValidationResult:

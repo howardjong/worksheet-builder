@@ -331,6 +331,121 @@ def test_case3b_complete_chain_required_form_pass() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Case 3c/3d: deterministic-engine chain-step items stitch into chain evidence
+# (P3a scope extension). The engines (adapt/engine.py::_build_builder_chunks and
+# adapt/llm_adapt.py::_build_items_from_activity) author chains as per-step
+# write items — from-word in the quoted content, target word in `answer`, and
+# metadata {"display": "chain_step"} stamped ONLY by our own deterministic
+# derivation (_parse_chain_steps); a model cannot assert the stamp. Those items
+# must be recognized as manipulation evidence.
+# --------------------------------------------------------------------------- #
+
+
+def _chain_step_item(item_id: int, from_word: str, old: str, new: str, answer: str) -> ActivityItem:
+    """An engine-shaped chain-step item (adapt/engine.py:739-751 template)."""
+    return _item(
+        item_id,
+        f'Start with "{from_word}". Change the "{old}" to "{new}". Write the new word.',
+        "write",
+        answer=answer,
+        metadata={"display": "chain_step"},
+    )
+
+
+def test_case3c_engine_chain_steps_stitch_into_chain_evidence() -> None:
+    # Ledger chain mule -> mute -> cute; the engine authors it as write items
+    # whose target word lives in `answer` (the child writes it). Stitched in
+    # item order they reconstruct the full transformation sequence → PASS.
+    ledger = _ledger(
+        [_manip_cell()],
+        source_items=[_chain_source("mule -> mute -> cute")],
+    )
+    items = [
+        _chain_step_item(1, "mule", "l", "t", "mute"),
+        _chain_step_item(2, "mute", "m", "c", "cute"),
+    ]
+    package = [_worksheet([_chunk(1, items, response_format="write")])]
+
+    evidence = build_evidence_index(package, ledger)
+    result = evaluate_objective_coverage(ledger, evidence)
+    manip_res = next(r for r in result.objective_results if r.objective_id == "obj_manipulation")
+
+    assert manip_res.required_forms_present is True
+    assert manip_res.status == "pass"
+
+
+def test_case3d_worked_example_first_hop_completes_engine_chain() -> None:
+    # The engine spends the chain's FIRST step on the chunk's worked example
+    # (adapt/engine.py:713-724) and authors the rest as chain-step items. The
+    # modeled first hop counts as part of the stitched chain (the UFLI chain
+    # activity includes the modeled first hop) — chain evidence only; worked
+    # examples still never satisfy any other cell type.
+    from adapt.schema import Example
+
+    ledger = _ledger(
+        [_manip_cell()],
+        source_items=[_chain_source("mule -> mute -> cute -> cube")],
+    )
+    chunk = ActivityChunk(
+        chunk_id=1,
+        micro_goal="Build 2 new words",
+        instructions=[Step(number=1, text="Read the starting word.")],
+        worked_example=Example(
+            instruction="Watch how the letters change:",
+            content='mule → mute  (change the "l" to "t")',
+        ),
+        items=[
+            _chain_step_item(1, "mute", "m", "c", "cute"),
+            _chain_step_item(2, "cute", "t", "b", "cube"),
+        ],
+        response_format="write",
+        time_estimate="About 1 minute",
+    )
+    package = [_worksheet([chunk])]
+
+    evidence = build_evidence_index(package, ledger)
+    result = evaluate_objective_coverage(ledger, evidence)
+    manip_res = next(r for r in result.objective_results if r.objective_id == "obj_manipulation")
+
+    assert manip_res.required_forms_present is True
+    assert manip_res.status == "pass"
+
+
+def test_case3e_disconnected_worked_example_does_not_prefix_chain() -> None:
+    # A worked example that does NOT model the chain's first step (its target
+    # word is not the first authored from-word) must not be stitched in — the
+    # chain stays incomplete and the required form FAILS.
+    from adapt.schema import Example
+
+    ledger = _ledger(
+        [_manip_cell()],
+        source_items=[_chain_source("mule -> mute -> cute -> cube")],
+    )
+    chunk = ActivityChunk(
+        chunk_id=1,
+        micro_goal="Build 1 new word",
+        instructions=[Step(number=1, text="Read the starting word.")],
+        worked_example=Example(
+            instruction="Watch how the letters change:",
+            content='fuse → fume  (change the "s" to "m")',  # unrelated hop
+        ),
+        items=[
+            _chain_step_item(1, "cute", "t", "b", "cube"),  # tail only
+        ],
+        response_format="write",
+        time_estimate="About 1 minute",
+    )
+    package = [_worksheet([chunk])]
+
+    evidence = build_evidence_index(package, ledger)
+    result = evaluate_objective_coverage(ledger, evidence)
+    manip_res = next(r for r in result.objective_results if r.objective_id == "obj_manipulation")
+
+    assert manip_res.required_forms_present is False
+    assert manip_res.status == "fail"
+
+
+# --------------------------------------------------------------------------- #
 # Case 4: decode cell satisfied only by contrast/review words → FAIL
 # --------------------------------------------------------------------------- #
 

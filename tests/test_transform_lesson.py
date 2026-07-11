@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 from collections.abc import Callable, Iterator
 from pathlib import Path
@@ -494,6 +495,71 @@ def test_stale_run_artifacts_cleared_before_adapt(
     assert not (art / "validation_9.json").exists()
     assert not (art / "planner_attempts.json").exists()
     assert (art / "adapted_model_1.json").exists()
+
+
+def test_lesson_mode_objective_coverage_replaces_word_exhaustion(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """Objective mode (the lesson-mode default): the package validator judges
+    objective sufficiency (spec 2026-07-10 P3a) — validation_objective_coverage.json
+    is written, no exhaustive package-coverage ERROR is logged, and a stub
+    package meeting every essential objective passes content coverage.
+    """
+    passage_ws = _worksheet(3, [])
+    passage_ws = passage_ws.model_copy(
+        update={
+            "chunks": [
+                ActivityChunk(
+                    chunk_id=1,
+                    micro_goal="Read the story",
+                    instructions=[Step(number=1, text="Read the story out loud.")],
+                    worked_example=None,
+                    items=[
+                        ActivityItem(
+                            item_id=1,
+                            content="Ray and May like to play. They play in the hay all day.",
+                            response_format="read_aloud",
+                        )
+                    ],
+                    response_format="read_aloud",
+                    time_estimate="About 2 minutes",
+                )
+            ]
+        }
+    )
+    worksheets = [
+        _worksheet(1, ["day", "play", "stay", "say"]),
+        _worksheet(2, ["way", "tray", "clay", "gray"]),
+        passage_ws,
+    ]
+
+    def fake_adapt_lesson(*a: Any, **k: Any) -> list[AdaptedActivityModel]:
+        artifacts_dir = k.get("artifacts_dir")
+        if artifacts_dir:
+            verdict = json.dumps({"approved": True, "overall_score": 1.0})
+            (Path(str(artifacts_dir)) / "judge_verdict.json").write_text(verdict)
+        return worksheets
+
+    profile_path = _stub_lesson_pipeline(tmp_path, monkeypatch, fake_adapt_lesson)
+
+    art = tmp_path / "art"
+    art.mkdir(exist_ok=True)
+    with caplog.at_level(logging.ERROR):
+        result = run_lesson_pipeline_collect_artifacts(
+            74,
+            str(profile_path),
+            "roblox_obby",
+            str(tmp_path / "out"),
+            str(art),
+            index_results=False,
+            render_mode="pdf_classic",
+        )
+
+    payload = json.loads((art / "validation_objective_coverage.json").read_text())
+    assert payload["objective_coverage"]["status"] in ("pass", "needs_verification")
+    assert result.validation_results["content_coverage_passed"] is True
+    coverage_errors = [r for r in caplog.records if "coverage" in r.getMessage().lower()]
+    assert coverage_errors == []
 
 
 def test_cli_requires_exactly_one_entry_point(tmp_path: Path) -> None:
