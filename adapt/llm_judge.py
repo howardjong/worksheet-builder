@@ -18,11 +18,15 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from adapt.objective_ledger import EvidenceItem, ObjectiveLedger
+from adapt.objective_ledger import EvidenceItem, ObjectiveLedger, build_objective_ledger
 from adapt.schema import AdaptedActivityModel
 from skill.schema import LiteracySkillModel
-from validate.blocking_gates import BlockingGateResult
-from validate.objective_coverage import ObjectiveCoverageResult
+from validate.blocking_gates import BlockingGateResult, run_blocking_gates
+from validate.objective_coverage import (
+    ObjectiveCoverageResult,
+    build_evidence_index,
+    evaluate_objective_coverage,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -901,3 +905,42 @@ def derive_objective_approval(
         return "abstain"
 
     return "approve"
+
+
+# =========================================================================== #
+# Advisory objective judge — fail-before-render policy (P3b)
+#
+# A single public entry point transform.py Stage 5c calls for the FALLBACK
+# (deterministic-engine) package, i.e. when the planner did NOT already write
+# judge_verdict.json. Composes exactly what the planner-path objective judging
+# does (build_objective_ledger -> run_blocking_gates -> build_evidence_index ->
+# evaluate_objective_coverage -> judge_objective_adaptation, which itself calls
+# _build_objective_judge_prompt + _call_openai + _parse_objective_verdict) —
+# no prompt text is duplicated here. Never raises: any exception anywhere in
+# that chain is caught, logged, and turned into None so a judge-side failure
+# can never block a package from shipping (transform.py's policy for None is
+# "ship with a loud warning").
+# =========================================================================== #
+
+
+def judge_package_objective(
+    skill_model: LiteracySkillModel,
+    worksheets: list[AdaptedActivityModel],
+) -> ObjectiveJudgeVerdict | None:
+    """Advisory objective-sufficiency judge for a finished fallback package.
+
+    Returns a single-sample ``ObjectiveJudgeVerdict`` (contract_version
+    ``objective_sufficiency_judge_v1``) on success, or ``None`` on ANY
+    infra/API failure (no key, provider error, unparseable response) — this
+    function must never raise. transform.py Stage 5c decides what to do with
+    each outcome per the P3b policy matrix.
+    """
+    try:
+        ledger = build_objective_ledger(skill_model)
+        gates = run_blocking_gates(worksheets, ledger)
+        evidence = build_evidence_index(worksheets, ledger)
+        coverage = evaluate_objective_coverage(ledger, evidence, worksheets)
+        return judge_objective_adaptation(ledger, gates, coverage, worksheets, evidence)
+    except Exception as exc:
+        logger.warning("  Objective judge (advisory): unavailable — %s", exc)
+        return None

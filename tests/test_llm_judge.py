@@ -789,3 +789,71 @@ def test_objective_output_format_section_names_required_fields() -> None:
         "approval_recommendation",
     ):
         assert field in prompt
+
+
+# =========================================================================== #
+# judge_package_objective (P3b) — public wrapper composing the objective-judge
+# machinery (ledger + evidence + deterministic coverage + prompt + provider
+# call + parse) into a single advisory entry point transform.py Stage 5c can
+# call. Mocked at the module's OpenAI-call boundary (_call_openai), same style
+# as the planner-chain tests in tests/test_llm_planner.py.
+# =========================================================================== #
+
+
+def test_judge_package_objective_returns_verdict(monkeypatch: pytest.MonkeyPatch) -> None:
+    from adapt.llm_judge import judge_package_objective
+
+    monkeypatch.setenv("OPENAI_API_KEY", "fake")
+    skill = _obj_skill()
+    ledger = build_objective_ledger(skill, corpus_lookup=fixture_corpus_lookup)
+    decode = next(o for o in ledger.objectives if o.objective_id == "obj_decode")
+    worksheets = [_obj_worksheet(decode.target_words[:7])]
+
+    approving_json = json.dumps(
+        {
+            "objective_scores": [
+                {
+                    "objective_id": cell.objective_id,
+                    "quality": 0.85,
+                    "severe_defects": [],
+                    "evidence_item_ids": [],
+                    "rationale": "solid",
+                }
+                for cell in ledger.objectives
+            ],
+            "objective_sufficiency": 0.85,
+            "skill_form_fidelity": 0.85,
+            "structured_literacy_alignment": 0.85,
+            "adhd_cognitive_load_fit": 0.85,
+            "lesson_flow_and_usability": 0.85,
+            "overall_score": 0.85,
+            "approval_recommendation": "approve",
+            "feedback": ["Looks good."],
+        }
+    )
+
+    monkeypatch.setattr("adapt.llm_judge._call_openai", lambda *a, **k: approving_json)
+
+    verdict = judge_package_objective(skill, worksheets)
+
+    assert verdict is not None
+    assert verdict.approval_recommendation == "approve"
+
+
+def test_judge_package_objective_none_on_api_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    from adapt.llm_judge import judge_package_objective
+
+    monkeypatch.setenv("OPENAI_API_KEY", "fake")
+    skill = _obj_skill()
+    ledger = build_objective_ledger(skill, corpus_lookup=fixture_corpus_lookup)
+    decode = next(o for o in ledger.objectives if o.objective_id == "obj_decode")
+    worksheets = [_obj_worksheet(decode.target_words[:7])]
+
+    def _boom(*args: object, **kwargs: object) -> str:
+        raise RuntimeError("boundary exploded")
+
+    monkeypatch.setattr("adapt.llm_judge._call_openai", _boom)
+
+    verdict = judge_package_objective(skill, worksheets)
+
+    assert verdict is None

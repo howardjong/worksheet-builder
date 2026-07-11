@@ -5,9 +5,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from pytest import MonkeyPatch
 
 import transform as transform_module
+from adapt.llm_judge import ObjectiveJudgeCellScore, ObjectiveJudgeVerdict, SevereDefect
 from adapt.schema import (
     ActivityChunk,
     ActivityItem,
@@ -19,7 +21,11 @@ from adapt.schema import (
 from companion.schema import LearnerProfile
 from skill.schema import LiteracySkillModel, SourceItem
 from theme.schema import ThemeConfig
-from transform import _aggregate_validation_results, _run_multi_worksheet_pipeline
+from transform import (
+    UnapprovedPackageError,
+    _aggregate_validation_results,
+    _run_multi_worksheet_pipeline,
+)
 from validate.ai_review import ReviewResult
 from validate.schema import ValidationResult, ValidationViolation
 
@@ -510,3 +516,185 @@ def _run_pipeline_with_worksheets(
         rag_prior_adaptations=None,
         rag_curriculum_references=None,
     )
+
+
+# =========================================================================== #
+# P3b — advisory objective judge + fail-before-render policy.
+#
+# Objective mode (WORKSHEET_OBJECTIVE_COVERAGE=1), fallback package (no
+# judge_verdict.json on disk — the planner didn't already judge it). Stubs
+# judge_package_objective at the transform import site (its own behavior is
+# covered in tests/test_llm_judge.py) and asserts the P3b policy matrix:
+# not-approved + flag unset aborts BEFORE any render artifacts exist; the
+# flag overrides; a None verdict (judge unavailable) ships with a warning.
+# =========================================================================== #
+
+
+def _objective_verdict(*, approved: bool, defects: bool = False) -> ObjectiveJudgeVerdict:
+    cell = ObjectiveJudgeCellScore(
+        objective_id="obj_decode",
+        quality=0.30 if not approved else 0.85,
+        severe_defects=(
+            [SevereDefect(defect_type="generic_activity_not_exercising_objective", evidence="e1")]
+            if defects
+            else []
+        ),
+        evidence_item_ids=["e1"],
+        rationale="stub",
+    )
+    return ObjectiveJudgeVerdict(
+        objective_scores=[cell],
+        objective_sufficiency=0.85 if approved else 0.30,
+        skill_form_fidelity=0.85 if approved else 0.30,
+        structured_literacy_alignment=0.85 if approved else 0.30,
+        adhd_cognitive_load_fit=0.85 if approved else 0.30,
+        lesson_flow_and_usability=0.85 if approved else 0.30,
+        overall_score=0.85 if approved else 0.30,
+        approval_recommendation="approve" if approved else "reject",
+        feedback=["all good"] if approved else ["cell obj_decode is weak busywork"],
+    )
+
+
+def _run_objective_pipeline_with_stubbed_judge(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+    *,
+    judge_return: ObjectiveJudgeVerdict | None,
+) -> tuple[Path, Path, transform_module.RunArtifacts]:
+    """Run the multi-worksheet pipeline in objective mode, fallback (unjudged) package.
+
+    Returns (output_dir, artifacts_dir, run_artifacts) so callers can assert
+    on-disk state (or lack of it) even when the pipeline raises.
+    """
+    worksheets = [
+        _adapted_worksheet(1, ["grade", "slide", "tune tone"]),
+        _adapted_worksheet(2, ["quite", "cone cane", "The slide is quite tall."]),
+    ]
+    output = tmp_path / "output"
+    artifacts = tmp_path / "artifacts"
+    output.mkdir()
+    artifacts.mkdir()
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.setenv("WORKSHEET_OBJECTIVE_COVERAGE", "1")
+    # No judge_verdict.json written — this is the fallback (unjudged) package
+    # path, exactly what triggers the advisory judge in Stage 5c.
+
+    def fake_adapt_lesson(*args: object, **kwargs: object) -> list[AdaptedActivityModel]:
+        return worksheets
+
+    def fake_render_worksheet(*args: object, **kwargs: object) -> None:
+        return None
+
+    def fake_apply_theme(*args: object, **kwargs: object) -> None:
+        return None
+
+    def fake_merge_lesson_package(*args: object, **kwargs: object) -> list[str]:
+        return [str(output / "lesson.pdf")]
+
+    def fake_validate_print_quality(*args: object, **kwargs: object) -> ValidationResult:
+        return ValidationResult(validator="print_quality", passed=True, checks_run=1)
+
+    def fake_review_adapted_worksheet(
+        adapted: AdaptedActivityModel,
+    ) -> tuple[AdaptedActivityModel, list[ReviewResult]]:
+        return adapted, [
+            ReviewResult(passed=True, issues=[], suggestions=[], skipped_no_api_key=True)
+        ]
+
+    def fake_judge_package_objective(
+        *args: object, **kwargs: object
+    ) -> ObjectiveJudgeVerdict | None:
+        return judge_return
+
+    monkeypatch.setattr(transform_module, "adapt_lesson", fake_adapt_lesson)
+    monkeypatch.setattr("render.strategies.render_worksheet", fake_render_worksheet)
+    monkeypatch.setattr(transform_module, "apply_theme", fake_apply_theme)
+    monkeypatch.setattr(transform_module, "_merge_lesson_package", fake_merge_lesson_package)
+    monkeypatch.setattr(transform_module, "validate_print_quality", fake_validate_print_quality)
+    monkeypatch.setattr(transform_module, "review_adapted_worksheet", fake_review_adapted_worksheet)
+    monkeypatch.setattr("adapt.llm_judge.judge_package_objective", fake_judge_package_objective)
+
+    run_artifacts = _run_multi_worksheet_pipeline(
+        skill_model=_ufli_split_word_work_skill(),
+        profile=LearnerProfile(name="Test", grade_level="1"),
+        theme=ThemeConfig(name="Test", multi_worksheet=True),
+        theme_id="test_theme",
+        source_image_path="source.png",
+        source_image_hash="source_hash",
+        extracted_text="source text",
+        template_type="ufli_word_work",
+        ocr_engine="test",
+        region_count=3,
+        output=output,
+        artifacts=artifacts,
+        rag_prior_adaptations=None,
+        rag_curriculum_references=None,
+    )
+    return output, artifacts, run_artifacts
+
+
+def test_objective_advisory_not_approved_aborts_before_render(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Not-approved + WORKSHEET_SHIP_UNAPPROVED unset -> abort, no render artifacts."""
+    monkeypatch.delenv("WORKSHEET_SHIP_UNAPPROVED", raising=False)
+
+    with pytest.raises(UnapprovedPackageError):
+        _run_objective_pipeline_with_stubbed_judge(
+            tmp_path,
+            monkeypatch,
+            judge_return=_objective_verdict(approved=False, defects=True),
+        )
+
+    output = tmp_path / "output"
+    artifacts = tmp_path / "artifacts"
+    assert list(output.glob("*.pdf")) == []
+    assert not (artifacts / "adapted_model_1.json").exists()
+    # The verdict artifact itself is allowed to remain (debuggability).
+    assert (artifacts / "judge_verdict.json").exists()
+
+
+def test_objective_advisory_not_approved_ships_when_flag_set(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    """Not-approved + WORKSHEET_SHIP_UNAPPROVED=1 -> render proceeds with a warning."""
+    monkeypatch.setenv("WORKSHEET_SHIP_UNAPPROVED", "1")
+
+    output, artifacts, run_artifacts = _run_objective_pipeline_with_stubbed_judge(
+        tmp_path,
+        monkeypatch,
+        judge_return=_objective_verdict(approved=False, defects=True),
+    )
+
+    # Render loop ran: PDF paths collected + per-worksheet artifacts on disk.
+    assert run_artifacts.pdf_paths == [str(output / "lesson.pdf")]
+    assert (artifacts / "adapted_model_1.json").exists()
+    assert (artifacts / "adapted_model_2.json").exists()
+    verdict = json.loads((artifacts / "judge_verdict.json").read_text())
+    assert verdict["approved"] is False
+
+
+def test_objective_advisory_judge_none_ships_with_warning(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """judge_package_objective returning None -> ship + 'unavailable' warning."""
+    monkeypatch.delenv("WORKSHEET_SHIP_UNAPPROVED", raising=False)
+
+    with caplog.at_level("WARNING"):
+        output, artifacts, run_artifacts = _run_objective_pipeline_with_stubbed_judge(
+            tmp_path,
+            monkeypatch,
+            judge_return=None,
+        )
+
+    # Render loop ran: PDF paths collected + per-worksheet artifacts on disk.
+    assert run_artifacts.pdf_paths == [str(output / "lesson.pdf")]
+    assert (artifacts / "adapted_model_1.json").exists()
+    verdict = json.loads((artifacts / "judge_verdict.json").read_text())
+    assert verdict.get("unavailable") is True
+    assert any("unavailable" in record.message for record in caplog.records)

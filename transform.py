@@ -51,6 +51,14 @@ from validate.skill_parity import validate_age_band, validate_skill_parity
 logger = logging.getLogger(__name__)
 
 
+class UnapprovedPackageError(RuntimeError):
+    """Fallback package failed the advisory objective judge (spec 2026-07-10 P3b).
+
+    Raised BEFORE rendering so a low-quality package never spends image-
+    generation budget. Override: WORKSHEET_SHIP_UNAPPROVED=1.
+    """
+
+
 class RunArtifacts(BaseModel):
     """Collected artifacts from a pipeline run, used for optional RAG indexing."""
 
@@ -787,7 +795,64 @@ def _run_multi_worksheet_pipeline(
                 score,
                 judge_result.get("rationale", ""),
             )
+    elif os.environ.get("WORKSHEET_OBJECTIVE_COVERAGE"):
+        # Objective mode, fallback (deterministic-engine) package: the planner
+        # didn't already judge it, so run the advisory objective judge here.
+        # This is ADVISORY — it never overrides the deterministic gates/
+        # coverage that already shipped the package — but a not-approved
+        # verdict is cost-driven owner policy: abort BEFORE the render loop
+        # below spends image-generation budget on a package that will just
+        # get thrown away (spec 2026-07-10 P3b policy matrix).
+        judge_result = {"enabled": False, "unavailable": True}
+        from adapt.llm_judge import judge_package_objective
+
+        objective_verdict = judge_package_objective(skill_model, worksheets)
+        objective_approved: bool | None = None
+        if objective_verdict is not None:
+            objective_approved = objective_verdict.approval_recommendation == "approve"
+            judge_result = objective_verdict.model_dump()
+            judge_result["approved"] = objective_approved
+            pedagogical_judge_passed = objective_approved
+            if objective_approved:
+                logger.info(
+                    "  Objective judge (advisory): APPROVED (%.2f)",
+                    objective_verdict.overall_score,
+                )
+            else:
+                logger.warning(
+                    "  Objective judge (advisory): NOT APPROVED (%.2f) — %s",
+                    objective_verdict.overall_score,
+                    "; ".join(objective_verdict.feedback),
+                )
+        judge_json.write_text(json.dumps(judge_result, indent=2))
+
+        if objective_verdict is None:
+            logger.warning("  Advisory judge unavailable — shipping unjudged deterministic package")
+        elif objective_approved:
+            pass  # render proceeds
+        elif os.environ.get("WORKSHEET_SHIP_UNAPPROVED"):
+            logger.warning("  WORKSHEET_SHIP_UNAPPROVED=1 — shipping NOT-APPROVED package anyway")
+        else:
+            failing_cells = [
+                f"{cell.objective_id} (quality={cell.quality:.2f}, "
+                f"defects={[d.defect_type for d in cell.severe_defects]})"
+                for cell in objective_verdict.objective_scores
+                if cell.severe_defects
+            ]
+            details = (
+                failing_cells or objective_verdict.feedback or ["overall score below threshold"]
+            )
+            raise UnapprovedPackageError(
+                "Advisory objective judge did NOT approve this package "
+                f"(overall={objective_verdict.overall_score:.2f}, "
+                f"recommendation={objective_verdict.approval_recommendation}): "
+                f"failing criteria/defects: {details}. "
+                "Remedies: re-run the pipeline (the planner/judge call is "
+                "non-deterministic), or set WORKSHEET_SHIP_UNAPPROVED=1 to "
+                "ship this package anyway."
+            )
     else:
+        # Photo path: unchanged verbatim.
         judge_result = {"enabled": False}
         try:
             from adapt.llm_judge import judge_adaptation
