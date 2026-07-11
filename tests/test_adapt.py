@@ -1014,3 +1014,87 @@ class TestLessonPackageCapWiring:
                     expected.setdefault(form, set()).add(idx)
 
         assert {k: set(v) for k, v in carriers.items()} == expected
+
+    def test_chain_step_text_no_longer_counted_as_decodable_passage_carrier(self) -> None:
+        """T4 trim-guard fix (reviewer finding): on the real UFLI-59 fixture,
+        chain-step instruction prose ("Start with 'tone'. Change the 't' to
+        'c'. Write the new word.") on worksheet 0 (Word Work Part 1) used to
+        satisfy connected_text_fluency's blanket len(words) >= 2 discriminator
+        in validate/objective_coverage.py::_cell_touched, making
+        _essential_form_carriers report decodable_passage carriers = [0, 3, 4]
+        instead of the true carrier set. Index 0 is chain-stamped manipulation
+        drill prose, not reading material, and must never carry
+        decodable_passage.
+
+        RED (pre-fix) recipe, reproduced here as documentation: this exact
+        skill/profile pair via adapt_lesson() produced
+        carriers["decodable_passage"] == [0, 3, 4].
+
+        NOTE — residual, OUT-OF-SCOPE finding for the controller: index 3
+        ("Word Practice (Part 2)") ALSO appears as a decodable_passage carrier,
+        via a DIFFERENT root cause — its circle-format item's `content` field
+        is fixed instruction chrome ("Circle all the words that follow the
+        pattern.") which independently trips the same len(words) >= 2
+        discriminator; that item carries no {"display": "chain_step"/"chain"}
+        stamp, so it is NOT chain material and this fix correctly leaves it
+        alone (fixing it is out of this fix's authorized scope — a distinct
+        root cause in the same discriminator, flagged for separate review).
+        Consequently this test asserts the chain-specific guarantee
+        (index 0 excluded) rather than the full carriers == [4] bar.
+        """
+        from adapt.engine import _essential_form_carriers
+
+        skill = _ufli_59_skill()
+        profile = _grade_1_profile()
+        worksheets = adapt_lesson(skill, profile)
+        titles = [ws.worksheet_title for ws in worksheets]
+        assert titles[0] == "Word Work (Part 1)"  # the chain-bearing sheet
+        assert titles[-1] == "Story Time"
+
+        carriers = _essential_form_carriers(skill, worksheets)
+
+        # GREEN: the chain sheet (index 0) is no longer a false decodable_passage
+        # carrier — this is the reviewer-reproduced bug, now fixed.
+        assert 0 not in carriers.get("decodable_passage", []), (
+            f"chain-stamped worksheet 0 must not carry decodable_passage; got {carriers}"
+        )
+        # Story Time (the real carrier) is still correctly recognized.
+        assert (len(worksheets) - 1) in carriers.get("decodable_passage", [])
+
+    def test_word_chain_package_cap_seeding_end_to_end(self) -> None:
+        """End-to-end guard (direct enforce_package_cap call, deterministic, no
+        LLM): real adapt_lesson() output on the UFLI-59 fixture (chain sheets +
+        one Story Time sheet), essential_forms computed by
+        _essential_form_carriers exactly as _finalize_lesson_package does,
+        capped at 2.
+
+        Documents the CURRENT end-to-end outcome honestly: Story Time is still
+        dropped at cap=2 on this fixture, because of the SEPARATE, out-of-scope
+        circle-instruction-prose carrier at index 3 (see the test above) — that
+        carrier survives plain round-robin, so the "would ALL carriers be
+        dropped" seeding condition never fires for decodable_passage. This is
+        not a regression from this fix (index 3 was already a false carrier
+        pre-fix, alongside index 0); it is a residual gap this fix does not
+        close, flagged explicitly for controller re-audit rather than silently
+        papered over by broadening this fix's scope.
+        """
+        from adapt.engine import _essential_form_carriers
+        from adapt.section_cap import enforce_package_cap
+
+        skill = _ufli_59_skill()
+        profile = _grade_1_profile()
+        worksheets = adapt_lesson(skill, profile)
+        assert worksheets[-1].worksheet_title == "Story Time"
+
+        carriers = _essential_form_carriers(skill, worksheets)
+        capped = enforce_package_cap(worksheets, 2, essential_forms=carriers)
+
+        assert len(capped) == 2
+        # Documents today's residual behavior (see docstring): NOT yet "Story
+        # Time in titles" end-to-end, because of the separate index-3 carrier.
+        titles = [ws.worksheet_title for ws in capped]
+        assert "Story Time" not in titles, (
+            "if this now passes, the residual index-3 circle-instruction-prose "
+            "carrier bug has been fixed elsewhere — update this test to assert "
+            "Story Time IS kept, and remove the residual-gap docstring caveat"
+        )

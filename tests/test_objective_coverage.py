@@ -446,6 +446,116 @@ def test_case3e_disconnected_worked_example_does_not_prefix_chain() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Case 3f/3g: chain-stamped items must NOT count as connected_text_fluency
+# evidence (T4 trim-guard fix). Chain-step instruction prose ("Start with
+# 'tone'. Change the 't' to 'c'. Write the new word.") satisfies the old
+# blanket len(words) >= 2 discriminator in _cell_touched — it is manipulation
+# drill prose, not reading material, and must never make a package look like
+# it has connected-text coverage it doesn't. Sentence-type evidence (genuine
+# multiword sentences, NOT chain-stamped) must still count normally — the
+# ledger's "2-4 connected sentences" sufficiency stays honored.
+# --------------------------------------------------------------------------- #
+
+
+def _connected_cell(*, min_count: int = 1) -> ObjectiveCell:
+    return ObjectiveCell(
+        objective_id="obj_connected_text",
+        objective_type="connected_text_fluency",
+        display_name="Read connected text",
+        concept="fluency",
+        target_pattern="u_e",
+        importance="essential",
+        required_forms=["decodable_passage"],
+        min_practice_count=min_count,
+        max_recommended_count=1,
+        acceptable_response_formats=["read_aloud"],
+        sufficiency_rule="2-4 connected sentences",
+    )
+
+
+def test_case3f_chain_step_items_do_not_tag_connected_text_evidence() -> None:
+    """Evidence layer: a chain-stamped item's objective_ids must never include a
+    connected_text_fluency cell, even though its content is multi-word prose
+    that would otherwise trip the blanket len(words) >= 2 discriminator."""
+    connected = _connected_cell()
+    ledger = _ledger([connected])
+    chain_item = _chain_step_item(1, "tone", "t", "c", "cone")
+
+    evidence = build_evidence_index(
+        [_worksheet([_chunk(1, [chain_item], response_format="write")])], ledger
+    )
+    content_ev = next(e for e in evidence if e.evidence_item_id == "ws0_chunk1_item1_content")
+
+    assert connected.objective_id not in content_ev.objective_ids
+
+
+def test_case3g_stitched_chain_evidence_does_not_tag_connected_text() -> None:
+    """The stitched chain unit (_stitched_chain_evidence) is itself multi-word
+    (the ordered chain sequence) — it must not tag connected_text_fluency
+    either, only phoneme_grapheme_manipulation cells."""
+    connected = _connected_cell()
+    manip = _manip_cell()
+    ledger = _ledger(
+        [connected, manip],
+        source_items=[_chain_source("mule -> mute -> cute")],
+    )
+    items = [
+        _chain_step_item(1, "mule", "l", "t", "mute"),
+        _chain_step_item(2, "mute", "m", "c", "cute"),
+    ]
+    package = [_worksheet([_chunk(1, items, response_format="write")])]
+
+    evidence = build_evidence_index(package, ledger)
+    stitched = next(e for e in evidence if e.evidence_item_id == "ws0_chunk1_stitched_chain")
+
+    assert connected.objective_id not in stitched.objective_ids
+    assert manip.objective_id in stitched.objective_ids
+
+
+def test_case3h_chain_only_package_fails_essential_connected_text_cell() -> None:
+    """Coverage-honesty: a package whose ONLY multiword practice is chain items
+    (no passage, no sentence items) must NOT satisfy an essential
+    connected_text_fluency cell.
+
+    Per _pattern_status-analogous tri-state logic in _evaluate_connected_cell:
+    an essential cell with zero connected-text evidence and NO other signal
+    (no advisory low-confidence path exists for this cell type — it's binary
+    has_connected/not) hard-FAILs rather than needs_verification, mirroring
+    _is_connected_text's "no connected decodable text present" branch. This is
+    the correct tri-state outcome here (not needs_verification) because the
+    absence of ANY multiword evidence for this cell is a definite, deterministic
+    fact — not an ambiguous corpus-miss/low-confidence signal that would
+    warrant abstaining.
+    """
+    connected = _connected_cell()
+    manip = _manip_cell()
+    ledger = _ledger(
+        [connected, manip],
+        source_items=[_chain_source("mule -> mute -> cute")],
+    )
+    items = [
+        _chain_step_item(1, "mule", "l", "t", "mute"),
+        _chain_step_item(2, "mute", "m", "c", "cute"),
+    ]
+    package = [_worksheet([_chunk(1, items, response_format="write")])]
+
+    evidence = build_evidence_index(package, ledger)
+    result = evaluate_objective_coverage(ledger, evidence)
+
+    connected_res = next(
+        r for r in result.objective_results if r.objective_id == "obj_connected_text"
+    )
+    assert connected_res.required_forms_present is False
+    assert connected_res.status == "fail"
+    assert result.status == "fail"
+
+    # Manipulation cell is genuinely satisfied by the same package (sanity check
+    # that the fix didn't over-exclude chain evidence from ITS own cell type).
+    manip_res = next(r for r in result.objective_results if r.objective_id == "obj_manipulation")
+    assert manip_res.required_forms_present is True
+
+
+# --------------------------------------------------------------------------- #
 # Case 4: decode cell satisfied only by contrast/review words → FAIL
 # --------------------------------------------------------------------------- #
 

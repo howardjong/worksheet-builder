@@ -447,7 +447,9 @@ def _stitched_chain_evidence(
         # sequence, not to feed encode-production numerators with the modeled
         # first hop / read-only from-words.
         is_student_production=False,
-        objective_ids=_match_cells(_words(visible), "word_chain", ledger, index, practice=True),
+        objective_ids=_match_cells(
+            _words(visible), "word_chain", ledger, index, practice=True, is_chain_material=True
+        ),
         evidence_item_id=f"{_chunk_provenance(ws_index, chunk)}_stitched_chain",
     )
 
@@ -463,6 +465,10 @@ def _evidence_for_item(
     is_production = _is_production(fmt)
     base_id = _item_provenance(ws_index, chunk, item)
     out: list[EvidenceItem] = []
+    # Chain-stamped items (see _CHAIN_DISPLAYS) are manipulation-practice prose
+    # ("Start with 'tone'. Change the 't' to 'c'. Write the new word."), not
+    # connected reading material — excluded from connected_text_fluency below.
+    is_chain_material = item.metadata.get("display") in _CHAIN_DISPLAYS
 
     # 1. The item content is always student practice.
     content_words = _words(item.content)
@@ -473,7 +479,14 @@ def _evidence_for_item(
             answer_key_text=None,
             response_format=fmt,
             is_student_production=is_production,
-            objective_ids=_match_cells(content_words, fmt, ledger, index, practice=True),
+            objective_ids=_match_cells(
+                content_words,
+                fmt,
+                ledger,
+                index,
+                practice=True,
+                is_chain_material=is_chain_material,
+            ),
             evidence_item_id=f"{base_id}_content",
         )
     )
@@ -538,17 +551,24 @@ def _match_cells(
     index: _LedgerIndex,
     *,
     practice: bool,
+    is_chain_material: bool = False,
 ) -> list[str]:
     """Return ledger cell ids whose word lists + acceptable forms this evidence hits.
 
     Order-stable (ledger objective order). Only practice surfaces are matched; key
     / distractor surfaces are emitted with empty ``objective_ids`` upstream.
+
+    ``is_chain_material`` marks evidence stamped by our own deterministic chain
+    derivation (``_CHAIN_DISPLAYS`` / the stitched chain unit): manipulation-
+    practice prose ("Start with 'tone'. Change the 't' to 'c'. Write the new
+    word.") that must never satisfy ``connected_text_fluency`` — see
+    ``_cell_touched``.
     """
     if not practice or not words:
         return []
     matched: list[str] = []
     for cell in ledger.objectives:
-        if _cell_touched(cell, words, response_format, index):
+        if _cell_touched(cell, words, response_format, index, is_chain_material=is_chain_material):
             matched.append(cell.objective_id)
     return matched
 
@@ -558,6 +578,8 @@ def _cell_touched(
     words: list[str],
     response_format: str,
     index: _LedgerIndex,
+    *,
+    is_chain_material: bool = False,
 ) -> bool:
     """True when at least one practiced word plausibly exercises this cell."""
     if cell.objective_type in ("decode_target_pattern", "encode_target_pattern"):
@@ -583,7 +605,14 @@ def _cell_touched(
         irregulars = {_normalize(w) for w in cell.irregular_words}
         return any(w in irregulars for w in words)
     if cell.objective_type in ("connected_text_fluency", "sentence_reading_or_writing"):
-        # Connected text is exercised by multi-word surfaces.
+        # Connected text is exercised by multi-word surfaces — EXCEPT chain
+        # manipulation prose, which is drill instruction text ("Start with
+        # 'tone'. Change the 't' to 'c'. Write the new word."), not reading
+        # material. Excluding it here (not by dropping sentence-type items)
+        # keeps the ledger's "2-4 connected sentences" sufficiency honored for
+        # genuine sentence/passage evidence.
+        if is_chain_material:
+            return False
         return len(words) >= 2
     if cell.objective_type == "phoneme_grapheme_manipulation":
         return response_format in ("word_chain",) or _ARROW_RE.search(" ".join(words)) is not None
