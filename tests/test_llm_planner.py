@@ -601,13 +601,15 @@ def _coverage(status: str) -> ObjectiveCoverageResult:
 
 
 def _obj_verdict(
-    cell_quality: float, defects: list[SevereDefect] | None = None
+    cell_quality: float,
+    defects: list[SevereDefect] | None = None,
+    objective_id: str = "obj_decode",
 ) -> ObjectiveJudgeVerdict:
-    """A judge sample scoring obj_decode at the given quality (overall/adhd healthy)."""
+    """A judge sample scoring ``objective_id`` at the given quality (overall/adhd healthy)."""
     return ObjectiveJudgeVerdict(
         objective_scores=[
             ObjectiveJudgeCellScore(
-                objective_id="obj_decode",
+                objective_id=objective_id,
                 quality=cell_quality,
                 severe_defects=defects or [],
                 rationale="r",
@@ -891,3 +893,153 @@ def test_objective_and_slot_contract_mutually_exclusive(
 
     with pytest.raises((RuntimeError, ValueError)):
         llm_planner.plan_lesson_llm(_skill(), _profile())
+
+
+# --- P3c: one coverage-retry with targeted feedback ----------------------------
+
+
+def _manip_ledger() -> ObjectiveLedger:
+    """A ledger with an essential manipulation cell requiring a word chain."""
+    return ObjectiveLedger(
+        source_skill_hash="h",
+        lesson_number=74,
+        corpus_status="matched",
+        corpus_version="v",
+        primary_pattern="a_e",
+        objectives=[
+            ObjectiveCell(
+                objective_id="obj_manipulation",
+                objective_type="phoneme_grapheme_manipulation",
+                display_name="Build and change words (word chain)",
+                concept="phoneme-grapheme manipulation",
+                target_pattern="a_e",
+                importance="essential",
+                required_forms=["word_chain", "chain_script"],
+                target_words=["cake", "ride"],
+                min_practice_count=1,
+                max_recommended_count=6,
+                sufficiency_rule="rule",
+            )
+        ],
+        source_items=[],
+    )
+
+
+def _manip_failing_coverage() -> ObjectiveCoverageResult:
+    """Coverage result rejecting obj_manipulation for a missing word_chain form."""
+    return _coverage("fail").model_copy(
+        update={
+            "objective_results": [
+                ObjectiveCellResult(
+                    objective_id="obj_manipulation",
+                    importance="essential",
+                    status="fail",
+                    distinct_high_confidence_count=0,
+                    min_practice_count=1,
+                    advisory_low_confidence_count=0,
+                    required_forms_present=False,
+                    missing_required_forms=["word_chain"],
+                    notes=["no word-chain activity present"],
+                )
+            ]
+        }
+    )
+
+
+def test_coverage_fail_triggers_single_retry_with_feedback(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """First plan fails coverage (missing word chain) → ONE retry with feedback.
+
+    The retry prompt must carry the per-cell failure so the model can fix it;
+    a passing retry proceeds to the objective judge exactly like a first-attempt
+    pass, not to the deterministic fallback.
+    """
+    from adapt import llm_planner
+
+    _objective_env(monkeypatch)
+    monkeypatch.setattr(llm_planner, "build_objective_ledger", lambda s: _manip_ledger())
+    monkeypatch.setattr(llm_planner, "run_blocking_gates", lambda w, ld: _gates(True))
+
+    prompts: list[str] = []
+
+    def _fake_call(prompt: str) -> tuple[str, str]:
+        prompts.append(prompt)
+        return _PLAN_JSON, "gpt-5.4"
+
+    monkeypatch.setattr(llm_planner, "_call_planner", _fake_call)
+
+    coverage_results = iter([_manip_failing_coverage(), _coverage("pass")])
+    monkeypatch.setattr(
+        llm_planner, "evaluate_objective_coverage", lambda ld, e, w: next(coverage_results)
+    )
+    monkeypatch.setattr(
+        llm_planner,
+        "judge_objective_adaptation_samples",
+        lambda ld, g, c, w, e, n: [_obj_verdict(0.8, objective_id="obj_manipulation")],
+    )
+
+    result = llm_planner.plan_lesson_llm(_skill(), _profile(), artifacts_dir=str(tmp_path))
+
+    assert result is not None  # retry passed coverage → proceeded to judge, not fallback
+    assert len(prompts) == 2
+    assert "REVISION REQUIRED" in prompts[1]
+    assert "obj_manipulation" in prompts[1]
+    assert "word_chain" in prompts[1]
+
+    # Retry-pass proceeds to the judge exactly like a first-attempt pass: the
+    # ship-path artifact is judge_verdict.json (planner_attempts.json is the
+    # fallback-only artifact — see _objective_fallback), carrying coverage_retry.
+    verdict = json.loads((tmp_path / "judge_verdict.json").read_text())
+    assert verdict["outcome"] == "objective_approved"
+    assert not (tmp_path / "planner_attempts.json").exists()
+    assert verdict["coverage_retry"]["attempted"] is True
+    assert verdict["coverage_retry"]["second_outcome"] == "pass"
+    assert (
+        verdict["coverage_retry"]["first_failure"]["failing_objectives"][0]["objective_id"]
+        == "obj_manipulation"
+    )
+
+
+def test_coverage_fail_twice_falls_back_with_both_attempts(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Both the original and the retried plan fail coverage → fallback, ONLY two calls."""
+    from adapt import llm_planner
+
+    _objective_env(monkeypatch)
+    monkeypatch.setattr(llm_planner, "build_objective_ledger", lambda s: _manip_ledger())
+    monkeypatch.setattr(llm_planner, "run_blocking_gates", lambda w, ld: _gates(True))
+
+    prompts: list[str] = []
+
+    def _fake_call(prompt: str) -> tuple[str, str]:
+        prompts.append(prompt)
+        return _PLAN_JSON, "gpt-5.4"
+
+    monkeypatch.setattr(llm_planner, "_call_planner", _fake_call)
+    monkeypatch.setattr(
+        llm_planner, "evaluate_objective_coverage", lambda ld, e, w: _manip_failing_coverage()
+    )
+
+    def _no_judge(*args: object, **kwargs: object) -> list[ObjectiveJudgeVerdict]:
+        raise AssertionError("judge must not be called when both attempts fail coverage")
+
+    monkeypatch.setattr(llm_planner, "judge_objective_adaptation_samples", _no_judge)
+
+    result = llm_planner.plan_lesson_llm(_skill(), _profile(), artifacts_dir=str(tmp_path))
+
+    assert result is None
+    assert len(prompts) == 2  # exactly two provider calls, no third
+    assert not (tmp_path / "judge_verdict.json").exists()
+
+    attempts = json.loads((tmp_path / "planner_attempts.json").read_text())
+    assert attempts["outcome"] == "objective_rejected_coverage"
+    assert attempts["coverage_retry"]["attempted"] is True
+    assert attempts["coverage_retry"]["second_outcome"] == "fail"
+    first_failure = attempts["coverage_retry"]["first_failure"]
+    assert first_failure["failing_objectives"][0]["objective_id"] == "obj_manipulation"
+    # the top-level coverage_failure records the SECOND (final) failure
+    assert attempts["coverage_failure"]["failing_objectives"][0]["objective_id"] == (
+        "obj_manipulation"
+    )

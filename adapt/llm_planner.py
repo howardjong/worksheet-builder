@@ -49,8 +49,12 @@ from companion.dosage import current_grade
 from companion.schema import LearnerProfile
 from corpus.ufli.lookup import lookup_lesson
 from skill.schema import LiteracySkillModel
-from validate.blocking_gates import run_blocking_gates
-from validate.objective_coverage import build_evidence_index, evaluate_objective_coverage
+from validate.blocking_gates import BlockingGateResult, run_blocking_gates
+from validate.objective_coverage import (
+    ObjectiveCoverageResult,
+    build_evidence_index,
+    evaluate_objective_coverage,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -540,6 +544,119 @@ def plan_lesson_llm(
     return None
 
 
+def _coverage_feedback_block(coverage: ObjectiveCoverageResult) -> str:
+    """Per-cell revision feedback appended to the prompt for the ONE coverage retry."""
+    lines = [
+        "## REVISION REQUIRED — previous plan rejected by deterministic coverage",
+        "Fix EVERY item below; keep everything else that was working.",
+    ]
+    for cell in coverage.objective_results:
+        if cell.status != "fail":
+            continue
+        missing = ", ".join(cell.missing_required_forms) or "insufficient distinct practice"
+        lines.append(
+            f"- {cell.objective_id}: REJECTED — missing/insufficient: {missing}. "
+            f"Your revised plan MUST satisfy this objective IN its required form."
+        )
+    for breach in coverage.package_bounds.breaches:
+        lines.append(f"- PACKAGE BOUND BREACH: {breach}")
+    return "\n".join(lines)
+
+
+def _coverage_failure_details(coverage: ObjectiveCoverageResult) -> dict[str, object]:
+    """Shape a coverage failure the same way the (pre-existing) fallback details are shaped."""
+    failing = [
+        cell.model_dump(
+            mode="json",
+            include={"objective_id", "status", "missing_required_forms", "notes"},
+        )
+        for cell in coverage.objective_results
+        if cell.status != "pass"
+    ]
+    return {
+        "status": coverage.status,
+        "failing_objectives": failing,
+        "package_bounds": coverage.package_bounds.model_dump(mode="json"),
+    }
+
+
+def _generate_and_gate(
+    prompt: str,
+    skill: LiteracySkillModel,
+    profile: LearnerProfile,
+    theme_id: str,
+    rules: AccommodationRules,
+    ledger: ObjectiveLedger,
+    artifacts_dir: str | None,
+    extra_details: dict[str, object] | None,
+) -> tuple[list[AdaptedActivityModel], BlockingGateResult, str] | None:
+    """Call the provider chain, parse, translate, clamp, and gate — once.
+
+    Shared by the first planning attempt and the single coverage retry (P3c) so
+    the two never drift: on any failure this writes the deterministic-fallback
+    attempt itself (merging ``extra_details``, e.g. the retry's ``coverage_retry``
+    bookkeeping) and returns ``None``; the caller just propagates that ``None``.
+    """
+    response_text, model_label = _call_planner(prompt)
+    if response_text is None:
+        _objective_fallback(
+            skill, "llm_unavailable", model_label, None, artifacts_dir, details=extra_details
+        )
+        return None
+
+    plan = _parse_lesson_plan(response_text)
+    if plan is None:
+        logger.warning("  LLM planner (objective): failed to parse plan")
+        _objective_fallback(
+            skill,
+            "objective_parse_failure",
+            model_label,
+            None,
+            artifacts_dir,
+            details=extra_details,
+        )
+        return None
+
+    worksheets = enforce_section_cap(_translate_plan(plan, skill, profile, theme_id, rules), rules)
+    if not worksheets:
+        logger.warning("  LLM planner (objective): translation produced no worksheets")
+        _objective_fallback(
+            skill,
+            "objective_no_worksheets",
+            model_label,
+            None,
+            artifacts_dir,
+            details=extra_details,
+        )
+        return None
+
+    # Deterministic blocking gates — block → reject, skip the judge entirely.
+    gates = run_blocking_gates(worksheets, ledger)
+    if not gates.passed:
+        summary = "; ".join(
+            f"{v.gate} {v.item_id or v.activity_id or '?'}: {v.message}"
+            for v in gates.violations[:5]
+        )
+        logger.warning(
+            "  LLM planner (objective): blocking gate failed → reject "
+            "(%d violation(s), gates=%s): %s",
+            len(gates.violations),
+            sorted({v.gate for v in gates.violations}),
+            summary,
+        )
+        details: dict[str, object] = {
+            "gate_violations": [v.model_dump(mode="json") for v in gates.violations]
+        }
+        if extra_details:
+            details.update(extra_details)
+        _objective_fallback(
+            skill, "objective_rejected_gate", model_label, None, artifacts_dir, details=details
+        )
+        return None
+
+    return worksheets, gates, model_label
+
+
 def _plan_lesson_objective(
     skill: LiteracySkillModel,
     profile: LearnerProfile,
@@ -562,81 +679,78 @@ def _plan_lesson_objective(
         skill, profile, rules, theme_id, rag_curriculum_references, objective_ledger=ledger
     )
 
-    response_text, model_label = _call_planner(prompt)
-    if response_text is None:
-        return _objective_fallback(skill, "llm_unavailable", model_label, None, artifacts_dir)
-
-    plan = _parse_lesson_plan(response_text)
-    if plan is None:
-        logger.warning("  LLM planner (objective): failed to parse plan")
-        return _objective_fallback(
-            skill, "objective_parse_failure", model_label, None, artifacts_dir
-        )
-
-    worksheets = enforce_section_cap(_translate_plan(plan, skill, profile, theme_id, rules), rules)
-    if not worksheets:
-        logger.warning("  LLM planner (objective): translation produced no worksheets")
-        return _objective_fallback(
-            skill, "objective_no_worksheets", model_label, None, artifacts_dir
-        )
-
-    # 1. Deterministic blocking gates — block → reject, skip the judge entirely.
-    gates = run_blocking_gates(worksheets, ledger)
-    if not gates.passed:
-        summary = "; ".join(
-            f"{v.gate} {v.item_id or v.activity_id or '?'}: {v.message}"
-            for v in gates.violations[:5]
-        )
-        logger.warning(
-            "  LLM planner (objective): blocking gate failed → reject "
-            "(%d violation(s), gates=%s): %s",
-            len(gates.violations),
-            sorted({v.gate for v in gates.violations}),
-            summary,
-        )
-        return _objective_fallback(
-            skill,
-            "objective_rejected_gate",
-            model_label,
-            None,
-            artifacts_dir,
-            details={"gate_violations": [v.model_dump(mode="json") for v in gates.violations]},
-        )
+    generated = _generate_and_gate(
+        prompt, skill, profile, theme_id, rules, ledger, artifacts_dir, extra_details=None
+    )
+    if generated is None:
+        return None
+    worksheets, gates, model_label = generated
 
     # 2. Deterministic objective coverage — pass the SAME worksheets to both the
     #    evidence index AND the evaluator (the evaluator silently skips the package
-    #    ADHD upper-bound checks if worksheets is omitted). det fail → reject.
+    #    ADHD upper-bound checks if worksheets is omitted). det fail → ONE retry with
+    #    targeted per-cell feedback (P3c); retry fail (or a gate block on the retry)
+    #    → existing fallback paths, with both attempts recorded.
     evidence = build_evidence_index(worksheets, ledger)
     coverage = evaluate_objective_coverage(ledger, evidence, worksheets)
+    coverage_retry_details: dict[str, object] | None = None
     if coverage.status == "fail":
-        failing = [
-            cell.model_dump(
-                mode="json",
-                include={"objective_id", "status", "missing_required_forms", "notes"},
-            )
-            for cell in coverage.objective_results
-            if cell.status != "pass"
-        ]
+        first_failure = _coverage_failure_details(coverage)
+        failing_ids = [c.objective_id for c in coverage.objective_results if c.status != "pass"]
         logger.warning(
-            "  LLM planner (objective): deterministic coverage failed → reject "
+            "  LLM planner (objective): deterministic coverage failed → retry once "
             "(%d failing objective(s): %s)",
-            len(failing),
-            [f["objective_id"] for f in failing],
+            len(failing_ids),
+            failing_ids,
         )
-        return _objective_fallback(
+
+        retry_prompt = prompt + "\n\n" + _coverage_feedback_block(coverage)
+        retry_extra_details: dict[str, object] = {
+            "coverage_retry": {"attempted": True, "first_failure": first_failure}
+        }
+        generated = _generate_and_gate(
+            retry_prompt,
             skill,
-            "objective_rejected_coverage",
-            model_label,
-            None,
+            profile,
+            theme_id,
+            rules,
+            ledger,
             artifacts_dir,
-            details={
-                "coverage_failure": {
-                    "status": coverage.status,
-                    "failing_objectives": failing,
-                    "package_bounds": coverage.package_bounds.model_dump(mode="json"),
-                }
-            },
+            extra_details=retry_extra_details,
         )
+        if generated is None:
+            return None
+        worksheets, gates, model_label = generated
+
+        evidence = build_evidence_index(worksheets, ledger)
+        coverage = evaluate_objective_coverage(ledger, evidence, worksheets)
+        coverage_retry_details = {
+            "coverage_retry": {
+                "attempted": True,
+                "first_failure": first_failure,
+                "second_outcome": coverage.status,
+            }
+        }
+
+        if coverage.status == "fail":
+            second_failure = _coverage_failure_details(coverage)
+            second_failing_ids = [
+                c.objective_id for c in coverage.objective_results if c.status != "pass"
+            ]
+            logger.warning(
+                "  LLM planner (objective): retry ALSO failed coverage → reject "
+                "(%d failing objective(s): %s)",
+                len(second_failing_ids),
+                second_failing_ids,
+            )
+            return _objective_fallback(
+                skill,
+                "objective_rejected_coverage",
+                model_label,
+                None,
+                artifacts_dir,
+                details={"coverage_failure": second_failure, **coverage_retry_details},
+            )
 
     # 3. Objective judge (raw per-sample list; [] when unavailable).
     samples = judge_objective_adaptation_samples(
@@ -649,12 +763,20 @@ def _plan_lesson_objective(
             # transform.py judges what actually ships.
             logger.warning("  LLM planner (objective): judge unavailable → abstain to fallback")
             return _objective_fallback(
-                skill, "objective_abstain_judge_unavailable", model_label, None, artifacts_dir
+                skill,
+                "objective_abstain_judge_unavailable",
+                model_label,
+                None,
+                artifacts_dir,
+                details=coverage_retry_details,
             )
         # Opt-in (WORKSHEET_ALLOW_UNJUDGED_OBJECTIVE_PLAN): the deterministic gates +
         # coverage already vetted it; ship unjudged.
         outcome = "objective_planned_unjudged"
-        _write_verdict_artifact(_unjudged_payload(outcome), artifacts_dir)
+        unjudged_payload = _unjudged_payload(outcome)
+        if coverage_retry_details:
+            unjudged_payload.update(coverage_retry_details)
+        _write_verdict_artifact(unjudged_payload, artifacts_dir)
         _log_performance(
             _objective_entry(skill, outcome, None, None, model_label, judged=False),
             artifacts_dir,
@@ -670,7 +792,10 @@ def _plan_lesson_objective(
     # 5. Route on the authoritative tri-state decision.
     if decision == "approve":
         outcome = "objective_approved"
-        _write_verdict_artifact(_objective_verdict_payload(aggregated, outcome), artifacts_dir)
+        verdict_payload = _objective_verdict_payload(aggregated, outcome)
+        if coverage_retry_details:
+            verdict_payload.update(coverage_retry_details)
+        _write_verdict_artifact(verdict_payload, artifacts_dir)
         _log_performance(
             _objective_entry(skill, outcome, aggregated, aggregated.overall_score, model_label),
             artifacts_dir,
@@ -682,7 +807,9 @@ def _plan_lesson_objective(
 
     outcome = "objective_abstain_fallback" if decision == "abstain" else "objective_rejected_judge"
     logger.info("  LLM planner (objective): judge decision=%s → fallback", decision)
-    return _objective_fallback(skill, outcome, model_label, aggregated, artifacts_dir)
+    return _objective_fallback(
+        skill, outcome, model_label, aggregated, artifacts_dir, details=coverage_retry_details
+    )
 
 
 def _objective_fallback(
