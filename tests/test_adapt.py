@@ -1017,30 +1017,23 @@ class TestLessonPackageCapWiring:
 
     def test_chain_step_text_no_longer_counted_as_decodable_passage_carrier(self) -> None:
         """T4 trim-guard fix (reviewer finding): on the real UFLI-59 fixture,
-        chain-step instruction prose ("Start with 'tone'. Change the 't' to
-        'c'. Write the new word.") on worksheet 0 (Word Work Part 1) used to
-        satisfy connected_text_fluency's blanket len(words) >= 2 discriminator
-        in validate/objective_coverage.py::_cell_touched, making
-        _essential_form_carriers report decodable_passage carriers = [0, 3, 4]
-        instead of the true carrier set. Index 0 is chain-stamped manipulation
-        drill prose, not reading material, and must never carry
-        decodable_passage.
+        `_essential_form_carriers` used to report decodable_passage carriers =
+        [0, 3, 4] instead of just the Story Time index, because
+        validate/objective_coverage.py::_cell_touched's old blanket
+        len(words) >= 2 discriminator for connected_text_fluency was satisfied
+        by non-reading surfaces:
 
-        RED (pre-fix) recipe, reproduced here as documentation: this exact
-        skill/profile pair via adapt_lesson() produced
-        carriers["decodable_passage"] == [0, 3, 4].
+        - index 0: chain-step instruction prose ("Start with 'tone'. Change
+          the 't' to 'c'. Write the new word.") — manipulation drill, not
+          reading material;
+        - index 3: circle-item instruction chrome ("Circle all the words that
+          follow the pattern.") — task chrome, not reading material.
 
-        NOTE — residual, OUT-OF-SCOPE finding for the controller: index 3
-        ("Word Practice (Part 2)") ALSO appears as a decodable_passage carrier,
-        via a DIFFERENT root cause — its circle-format item's `content` field
-        is fixed instruction chrome ("Circle all the words that follow the
-        pattern.") which independently trips the same len(words) >= 2
-        discriminator; that item carries no {"display": "chain_step"/"chain"}
-        stamp, so it is NOT chain material and this fix correctly leaves it
-        alone (fixing it is out of this fix's authorized scope — a distinct
-        root cause in the same discriminator, flagged for separate review).
-        Consequently this test asserts the chain-specific guarantee
-        (index 0 excluded) rather than the full carriers == [4] bar.
+        Connected-text evidence is now ALLOWLISTED to genuine reading/sentence
+        material (read_aloud items, or sentence-shaped production-format items
+        that aren't task chrome / chain notation) — see
+        validate/objective_coverage.py::_connected_text_eligible. Only Story
+        Time actually carries decodable_passage.
         """
         from adapt.engine import _essential_form_carriers
 
@@ -1053,30 +1046,20 @@ class TestLessonPackageCapWiring:
 
         carriers = _essential_form_carriers(skill, worksheets)
 
-        # GREEN: the chain sheet (index 0) is no longer a false decodable_passage
-        # carrier — this is the reviewer-reproduced bug, now fixed.
-        assert 0 not in carriers.get("decodable_passage", []), (
-            f"chain-stamped worksheet 0 must not carry decodable_passage; got {carriers}"
+        # The FULL acceptance bar: Story Time is the ONLY decodable_passage
+        # carrier — no chain prose (index 0), no circle chrome (index 3).
+        assert carriers.get("decodable_passage") == [len(worksheets) - 1], (
+            f"decodable_passage carriers must be the Story Time index only; got {carriers}"
         )
-        # Story Time (the real carrier) is still correctly recognized.
-        assert (len(worksheets) - 1) in carriers.get("decodable_passage", [])
 
     def test_word_chain_package_cap_seeding_end_to_end(self) -> None:
         """End-to-end guard (direct enforce_package_cap call, deterministic, no
         LLM): real adapt_lesson() output on the UFLI-59 fixture (chain sheets +
         one Story Time sheet), essential_forms computed by
         _essential_form_carriers exactly as _finalize_lesson_package does,
-        capped at 2.
-
-        Documents the CURRENT end-to-end outcome honestly: Story Time is still
-        dropped at cap=2 on this fixture, because of the SEPARATE, out-of-scope
-        circle-instruction-prose carrier at index 3 (see the test above) — that
-        carrier survives plain round-robin, so the "would ALL carriers be
-        dropped" seeding condition never fires for decodable_passage. This is
-        not a regression from this fix (index 3 was already a false carrier
-        pre-fix, alongside index 0); it is a residual gap this fix does not
-        close, flagged explicitly for controller re-audit rather than silently
-        papered over by broadening this fix's scope.
+        capped at 2. Story Time is the sole decodable_passage carrier and plain
+        round-robin would drop it, so the T4 seeding guard must force it into
+        the capped selection.
         """
         from adapt.engine import _essential_form_carriers
         from adapt.section_cap import enforce_package_cap
@@ -1089,12 +1072,8 @@ class TestLessonPackageCapWiring:
         carriers = _essential_form_carriers(skill, worksheets)
         capped = enforce_package_cap(worksheets, 2, essential_forms=carriers)
 
-        assert len(capped) == 2
-        # Documents today's residual behavior (see docstring): NOT yet "Story
-        # Time in titles" end-to-end, because of the separate index-3 carrier.
+        assert len(capped) == 2  # cap stays hard
         titles = [ws.worksheet_title for ws in capped]
-        assert "Story Time" not in titles, (
-            "if this now passes, the residual index-3 circle-instruction-prose "
-            "carrier bug has been fixed elsewhere — update this test to assert "
-            "Story Time IS kept, and remove the residual-gap docstring caveat"
+        assert "Story Time" in titles, (
+            f"the sole decodable_passage carrier must survive cap=2; kept {titles}"
         )

@@ -446,14 +446,19 @@ def test_case3e_disconnected_worked_example_does_not_prefix_chain() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Case 3f/3g: chain-stamped items must NOT count as connected_text_fluency
-# evidence (T4 trim-guard fix). Chain-step instruction prose ("Start with
-# 'tone'. Change the 't' to 'c'. Write the new word.") satisfies the old
-# blanket len(words) >= 2 discriminator in _cell_touched — it is manipulation
-# drill prose, not reading material, and must never make a package look like
-# it has connected-text coverage it doesn't. Sentence-type evidence (genuine
-# multiword sentences, NOT chain-stamped) must still count normally — the
-# ledger's "2-4 connected sentences" sufficiency stays honored.
+# Case 3f-3j: connected-text evidence is ALLOWLISTED to genuine reading/
+# sentence material (T4 trim-guard fix, allowlist revision). The old blanket
+# len(words) >= 2 discriminator in _cell_touched let non-reading surfaces —
+# chain-step drill prose ("Start with 'tone'. Change the 't' to 'c'. Write
+# the new word."), selection-prompt chrome ("Circle all the words that follow
+# the pattern.") — make a package look like it had connected-text coverage it
+# didn't. Now an evidence surface may touch connected_text_fluency /
+# sentence_reading_or_writing cells ONLY if it passes the positive allowlist
+# (validate/objective_coverage.py::_connected_text_eligible): read_aloud
+# items, or sentence-shaped production-format (write/fill_blank/trace) items
+# that are neither task chrome nor chain notation. Genuine sentence evidence
+# still counts normally — the ledger's "2-4 connected sentences" sufficiency
+# stays honored.
 # --------------------------------------------------------------------------- #
 
 
@@ -553,6 +558,74 @@ def test_case3h_chain_only_package_fails_essential_connected_text_cell() -> None
     # that the fix didn't over-exclude chain evidence from ITS own cell type).
     manip_res = next(r for r in result.objective_results if r.objective_id == "obj_manipulation")
     assert manip_res.required_forms_present is True
+
+
+def test_case3i_circle_chrome_only_package_does_not_satisfy_connected_text() -> None:
+    """Coverage-honesty: a package whose only multiword surface is selection-
+    prompt chrome (the circle item's `content` is the fixed instruction
+    template "Circle all the words that follow the pattern." — the practiced
+    words live in `options`, see adapt/engine.py:750) must NOT satisfy an
+    essential connected_text_fluency cell. Chrome fails the allowlist twice
+    over: circle is not an allowlisted connected-text format, and the content
+    is a leading-imperative task directive, not reading material.
+
+    Tri-state outcome: hard FAIL (same reasoning as case 3h — the absence of
+    any connected-text evidence is a definite deterministic fact for this
+    binary cell type, not an abstain-worthy ambiguous signal).
+    """
+    connected = _connected_cell()
+    ledger = _ledger([connected])
+    chrome_item = _item(
+        1,
+        "Circle all the words that follow the pattern.",
+        "circle",
+        options=["mule", "mute", "sock"],
+        answer="mule,mute",
+    )
+    package = [_worksheet([_chunk(1, [chrome_item], response_format="circle")])]
+
+    evidence = build_evidence_index(package, ledger)
+    result = evaluate_objective_coverage(ledger, evidence)
+
+    connected_res = next(
+        r for r in result.objective_results if r.objective_id == "obj_connected_text"
+    )
+    assert connected_res.required_forms_present is False
+    assert connected_res.status == "fail"
+
+
+def test_case3j_genuine_sentence_and_passage_material_still_counts() -> None:
+    """Positive control for the allowlist: genuine reading/sentence material
+    must keep satisfying connected-text cells exactly as before —
+    (a) a read_aloud passage, and (b) a sentence-shaped production-format item
+    (a fill_blank sentence completion, engine-shaped per adapt/engine.py:
+    1216-1228) each independently qualify."""
+    # (a) read_aloud passage alone satisfies the cell.
+    connected = _connected_cell()
+    ledger = _ledger([connected])
+    passage_item = _item(1, "A cake for Tess. Tess had a huge cake!", "read_aloud")
+    evidence = build_evidence_index([_worksheet([_chunk(1, [passage_item])])], ledger)
+    result = evaluate_objective_coverage(ledger, evidence)
+    connected_res = next(
+        r for r in result.objective_results if r.objective_id == "obj_connected_text"
+    )
+    assert connected_res.required_forms_present is True
+    assert connected_res.status == "pass"
+
+    # (b) sentence-completion fill_blank material is allowlisted too (tagged as
+    # connected-text-eligible evidence; the sentence reads as narration).
+    sentence_item = _item(
+        2,
+        "The mule was quite cute on the huge slide.",
+        "fill_blank",
+        options=["mule", "mute"],
+        answer="mule",
+    )
+    evidence2 = build_evidence_index(
+        [_worksheet([_chunk(1, [sentence_item], response_format="fill_blank")])], ledger
+    )
+    sentence_ev = next(e for e in evidence2 if e.evidence_item_id == "ws0_chunk1_item2_content")
+    assert connected.objective_id in sentence_ev.objective_ids
 
 
 # --------------------------------------------------------------------------- #

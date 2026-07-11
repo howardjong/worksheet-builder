@@ -346,6 +346,73 @@ def _evidence_for_chunk(
 # "deterministically verified chain step" (P3a scope extension).
 _CHAIN_DISPLAYS = frozenset({"chain_step", "chain"})
 
+
+# ---------------------------------------------------------------------------- #
+# Connected-text evidence allowlist
+# ---------------------------------------------------------------------------- #
+#
+# connected_text_fluency / sentence_reading_or_writing cells may be touched ONLY
+# by genuine reading/sentence material — a POSITIVE allowlist, not a blocklist
+# of known dilution sources (chain prose, circle chrome, ...):
+#
+#   (a) read_aloud items — passages/stories are authored exclusively as
+#       read_aloud on both paths (adapt/engine.py:1270 Story Time passage
+#       chunk, adapt/engine.py:1716 generic passage path,
+#       adapt/llm_adapt.py:576 read_aloud activity);
+#   (b) sentence material — sentence items carry NO display stamp on either
+#       authoring path (adapt/engine.py:1216-1236 sentence-completion
+#       fill_blank/write, adapt/engine.py:1684-1690 sentence-split items,
+#       adapt/llm_adapt.py:551-567 sentence_completion), so they are
+#       recognized by shape: a production-format item (write/fill_blank/trace)
+#       whose content has a sentence terminator, does not read as task chrome
+#       (a leading imperative task verb), and is not chain/transformation
+#       notation (arrow tokens).
+#
+# Chain material fails this allowlist naturally: chain-step prose ("Start with
+# 'tone'. Change the 't' to 'c'. Write the new word.") is verb-initial chrome;
+# display=="chain" items are arrow notation; the stitched chain unit's
+# word_chain response_format is not an allowlisted format at all.
+_CONNECTED_SENTENCE_FORMATS = frozenset({"write", "fill_blank", "trace"})
+
+# Leading imperative task verbs used by our own item templates (chain steps:
+# "Start with...", "Change the...", "Write the new word."; selection prompts:
+# "Circle all the words..."). A decodable sentence reads as narration ("The
+# grade on the slide was quite nice."), not as a task directive.
+_TASK_CHROME_RE = re.compile(
+    r"^\s*['\"]?(start|change|write|circle|underline|match|trace|draw|fill|"
+    r"read|say|look|point|find|choose|pick|color|colour|cut)\b",
+    re.IGNORECASE,
+)
+
+# Chain/transformation notation arrows. Deliberately tighter than _ARROW_RE:
+# a bare hyphen inside a real sentence (a hyphenated word) must not make the
+# sentence read as chain notation.
+_CHAIN_ARROW_RE = re.compile(r"→|->|>")
+
+
+def _connected_text_eligible(item: ActivityItem) -> bool:
+    """True iff this item's content is genuine reading/sentence material.
+
+    Gate for tagging evidence to connected_text_fluency /
+    sentence_reading_or_writing cells (see the allowlist comment above).
+    Everything else — chain drill prose, selection-prompt chrome, word/label
+    surfaces — must never make a package look like it has connected-text
+    coverage it doesn't.
+    """
+    if item.response_format == "read_aloud":
+        return True
+    if item.response_format not in _CONNECTED_SENTENCE_FORMATS:
+        return False
+    content = item.content
+    if not _SENTENCE_SPLIT_RE.search(content):
+        return False  # no sentence terminator → a word/label, not a sentence
+    if _TASK_CHROME_RE.match(content):
+        return False  # task chrome (instruction template), not reading material
+    if _CHAIN_ARROW_RE.search(content):
+        return False  # chain/transformation notation
+    return True
+
+
 _QUOTED_WORD_RE = re.compile(r'"([A-Za-z]+)"')
 
 
@@ -447,9 +514,9 @@ def _stitched_chain_evidence(
         # sequence, not to feed encode-production numerators with the modeled
         # first hop / read-only from-words.
         is_student_production=False,
-        objective_ids=_match_cells(
-            _words(visible), "word_chain", ledger, index, practice=True, is_chain_material=True
-        ),
+        # word_chain is not an allowlisted connected-text format, so this unit
+        # never tags connected_text_fluency (see _connected_text_eligible).
+        objective_ids=_match_cells(_words(visible), "word_chain", ledger, index, practice=True),
         evidence_item_id=f"{_chunk_provenance(ws_index, chunk)}_stitched_chain",
     )
 
@@ -465,12 +532,10 @@ def _evidence_for_item(
     is_production = _is_production(fmt)
     base_id = _item_provenance(ws_index, chunk, item)
     out: list[EvidenceItem] = []
-    # Chain-stamped items (see _CHAIN_DISPLAYS) are manipulation-practice prose
-    # ("Start with 'tone'. Change the 't' to 'c'. Write the new word."), not
-    # connected reading material — excluded from connected_text_fluency below.
-    is_chain_material = item.metadata.get("display") in _CHAIN_DISPLAYS
 
-    # 1. The item content is always student practice.
+    # 1. The item content is always student practice. Connected-text cells are
+    # additionally gated on the positive reading/sentence-material allowlist —
+    # chain drill prose and selection-prompt chrome never qualify.
     content_words = _words(item.content)
     out.append(
         EvidenceItem(
@@ -485,7 +550,7 @@ def _evidence_for_item(
                 ledger,
                 index,
                 practice=True,
-                is_chain_material=is_chain_material,
+                connected_text_eligible=_connected_text_eligible(item),
             ),
             evidence_item_id=f"{base_id}_content",
         )
@@ -551,24 +616,25 @@ def _match_cells(
     index: _LedgerIndex,
     *,
     practice: bool,
-    is_chain_material: bool = False,
+    connected_text_eligible: bool = False,
 ) -> list[str]:
     """Return ledger cell ids whose word lists + acceptable forms this evidence hits.
 
     Order-stable (ledger objective order). Only practice surfaces are matched; key
     / distractor surfaces are emitted with empty ``objective_ids`` upstream.
 
-    ``is_chain_material`` marks evidence stamped by our own deterministic chain
-    derivation (``_CHAIN_DISPLAYS`` / the stitched chain unit): manipulation-
-    practice prose ("Start with 'tone'. Change the 't' to 'c'. Write the new
-    word.") that must never satisfy ``connected_text_fluency`` — see
-    ``_cell_touched``.
+    ``connected_text_eligible`` is the positive reading/sentence-material
+    allowlist verdict for this surface (``_connected_text_eligible``):
+    connected-text cells may only be touched when it is True. Deny-by-default —
+    option/word-bank surfaces and the stitched chain unit never pass it.
     """
     if not practice or not words:
         return []
     matched: list[str] = []
     for cell in ledger.objectives:
-        if _cell_touched(cell, words, response_format, index, is_chain_material=is_chain_material):
+        if _cell_touched(
+            cell, words, response_format, index, connected_text_eligible=connected_text_eligible
+        ):
             matched.append(cell.objective_id)
     return matched
 
@@ -579,7 +645,7 @@ def _cell_touched(
     response_format: str,
     index: _LedgerIndex,
     *,
-    is_chain_material: bool = False,
+    connected_text_eligible: bool = False,
 ) -> bool:
     """True when at least one practiced word plausibly exercises this cell."""
     if cell.objective_type in ("decode_target_pattern", "encode_target_pattern"):
@@ -605,15 +671,13 @@ def _cell_touched(
         irregulars = {_normalize(w) for w in cell.irregular_words}
         return any(w in irregulars for w in words)
     if cell.objective_type in ("connected_text_fluency", "sentence_reading_or_writing"):
-        # Connected text is exercised by multi-word surfaces — EXCEPT chain
-        # manipulation prose, which is drill instruction text ("Start with
-        # 'tone'. Change the 't' to 'c'. Write the new word."), not reading
-        # material. Excluding it here (not by dropping sentence-type items)
-        # keeps the ledger's "2-4 connected sentences" sufficiency honored for
-        # genuine sentence/passage evidence.
-        if is_chain_material:
-            return False
-        return len(words) >= 2
+        # POSITIVE allowlist: only genuine reading/sentence material (read_aloud
+        # passages, sentence-shaped production items — see
+        # _connected_text_eligible) may touch connected-text cells. Chain drill
+        # prose, selection-prompt chrome, and word/label surfaces never do,
+        # regardless of word count. Genuine multiword sentence evidence keeps
+        # the ledger's "2-4 connected sentences" sufficiency honored.
+        return connected_text_eligible and len(words) >= 2
     if cell.objective_type == "phoneme_grapheme_manipulation":
         return response_format in ("word_chain",) or _ARROW_RE.search(" ".join(words)) is not None
     if cell.objective_type == "contrast_discrimination":
@@ -1156,7 +1220,12 @@ def _evaluate_package_bounds(
                     dense_blocks += 1
                 ws_objectives.update(
                     _match_cells(
-                        _words(item.content), item.response_format, ledger, index, practice=True
+                        _words(item.content),
+                        item.response_format,
+                        ledger,
+                        index,
+                        practice=True,
+                        connected_text_eligible=_connected_text_eligible(item),
                     )
                 )
         max_objectives = max(max_objectives, len(ws_objectives))
