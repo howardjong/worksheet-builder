@@ -452,13 +452,32 @@ def _chain_step_pair(item: ActivityItem) -> tuple[str, str] | None:
     return frm, to
 
 
+# Suffix-chain worked-example template (adapt/engine.py:811-814):
+# '<base> + -<suffix> → <derived>', e.g. 'slow + -er → slower'. The generic
+# arrow extraction below mis-parses it: _ARROW_RE treats the hyphen in '-er'
+# as an arrow, so the "to-word" comes back as the suffix token ('er'), not
+# the derived word. Recognized up front, additively.
+_SUFFIX_EXAMPLE_RE = re.compile(r"^([A-Za-z]+)\s*\+\s*-[A-Za-z]+\s*→\s*([A-Za-z]+)")
+
+
 def _example_arrow_pair(content: str) -> tuple[str, str] | None:
     """(from_word, to_word) modeled by an arrowed worked example.
 
-    The engine's chain example reads '<from> → <to>  (change the "x" to "y")':
-    the from-word is the last word before the first arrow, the to-word the
-    first word after it.
+    Two deterministic engine templates author chain worked examples:
+
+    - Letter chain: '<from> → <to>  (change the "x" to "y")' — the from-word
+      is the last word before the first arrow, the to-word the first word
+      after it.
+    - Suffix chain: '<base> + -<suffix> → <derived>' — the base is the
+      from-word and the derived word the to-word (the '-<suffix>' token is
+      notation, not a chain word).
     """
+    suffix_m = _SUFFIX_EXAMPLE_RE.match(content)
+    if suffix_m is not None:
+        frm = _normalize(suffix_m.group(1))
+        to = _normalize(suffix_m.group(2))
+        if frm and to:
+            return frm, to
     if _ARROW_RE.search(content) is None:
         return None
     left, right = _ARROW_RE.split(content, maxsplit=1)
@@ -483,10 +502,20 @@ def _stitched_chain_evidence(
     chunk, the stamped items stitch in order into a single ordered sequence the
     manipulation evaluator can compare against the ledger chain.
 
-    The chunk's worked example is prepended ONLY when it models the chain's
-    first step (its arrowed to-word is the first authored from-word) — the
-    UFLI chain activity includes the modeled first hop. This is chain-evidence
-    only: worked examples still never satisfy any other cell type.
+    The chunk's worked example is stitched in ONLY when it models the chain's
+    first step — the UFLI chain activity includes the modeled first hop. Two
+    linkage shapes, matching the two engine templates:
+
+    - Consecutive (letter chains): the example's to-word IS the first authored
+      from-word → prepend the modeled from-word.
+    - Base-anchored (suffix chains): every hop starts from the chain base, so
+      the example's from-word equals the first authored from-word → splice the
+      modeled hop in after the leading base (re-stating the base for the next
+      hop), exactly the sequence the item-stitching rule above would have
+      produced had the example been authored as the first item.
+
+    This is chain-evidence only: worked examples still never satisfy any other
+    cell type.
     """
     seq: list[str] = []
     found = False
@@ -516,8 +545,14 @@ def _stitched_chain_evidence(
     ex = chunk.worked_example
     if ex is not None:
         ex_pair = _example_arrow_pair(ex.content)
-        if ex_pair is not None and ex_pair[1] == seq[0]:
-            seq.insert(0, ex_pair[0])
+        if ex_pair is not None:
+            if ex_pair[1] == seq[0]:
+                # Consecutive linkage: prepend the modeled from-word.
+                seq.insert(0, ex_pair[0])
+            elif ex_pair[0] == seq[0] and ex_pair[1] != seq[1]:
+                # Base-anchored linkage: splice the modeled hop after the
+                # leading base — [base, derived, base, ...].
+                seq[1:1] = [ex_pair[1], ex_pair[0]]
 
     visible = " -> ".join(seq)
     return EvidenceItem(

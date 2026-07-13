@@ -1,7 +1,7 @@
 """Suffix-aware word chains + chain hygiene (spec 2026-07-13, defects D1/D13)."""
 
 from adapt.engine import _build_builder_chunks, _parse_suffix_chain_steps
-from adapt.objective_ledger import ObjectiveCell, ObjectiveLedger
+from adapt.objective_ledger import ClassifiedSourceItem, ObjectiveCell, ObjectiveLedger
 from adapt.rules import AccommodationRules
 from adapt.schema import AdaptedActivityModel, ScaffoldConfig
 from skill.schema import LiteracySkillModel
@@ -121,6 +121,13 @@ def _manip_cell() -> ObjectiveCell:
 
 
 def test_engine_suffix_chunks_satisfy_manipulation_cell_end_to_end() -> None:
+    # SINGLE chain, WITH the canonical ledger chain (review round 2): the
+    # engine spends the first suffix hop (slow + -er → slower) on the worked
+    # example, so the authored items alone reconstruct only [slow, slowest].
+    # The ledger's word_chain source item makes _chain_covers actually run
+    # against the full canonical sequence — the stitcher must recover the
+    # modeled worked-example hop or a correct single-chain suffix lesson
+    # false-fails with "authored chain is incomplete".
     chain = "slow → slower → slowest"
     chunks = _build_builder_chunks([chain], [], [], _skill(), _rules())
 
@@ -132,7 +139,18 @@ def test_engine_suffix_chunks_satisfy_manipulation_cell_end_to_end() -> None:
         corpus_lesson_id="ufli_1",
         primary_pattern=None,
         objectives=[_manip_cell()],
-        source_items=[],
+        source_items=[
+            ClassifiedSourceItem(
+                source_item_id="src_chain",
+                item_type="word_chain",
+                content="slow -> slower -> slowest",
+                normalized_content="slow -> slower -> slowest",
+                coverage_class="required_form",
+                required_form="word_chain",
+                objective_ids=["obj_manipulation"],
+                mandatory=True,
+            )
+        ],
     )
     worksheet = AdaptedActivityModel(
         source_hash="s",

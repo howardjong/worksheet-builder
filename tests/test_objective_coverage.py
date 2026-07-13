@@ -494,6 +494,44 @@ def test_case3k_suffix_chain_steps_stitch_into_chain_evidence() -> None:
     assert manip_res.status == "pass"
 
 
+def test_case3l_suffix_worked_example_hop_completes_suffix_chain() -> None:
+    # Suffix analogue of case3d (review round 2): the engine spends the FIRST
+    # suffix hop on the chunk's worked example ('slow + -er → slower',
+    # adapt/engine.py:810-814) and authors the rest as suffix chain-step items.
+    # Suffix hops are all BASE-anchored (every from-word is the chain base), so
+    # the letter-chain prepend rule (example to-word == first item from-word)
+    # never fires — the modeled hop must be spliced in after the leading base
+    # instead, or a single-chain suffix lesson false-fails as incomplete.
+    from adapt.schema import Example
+
+    ledger = _ledger(
+        [_manip_cell()],
+        source_items=[_chain_source("slow -> slower -> slowest")],
+    )
+    chunk = ActivityChunk(
+        chunk_id=1,
+        micro_goal="Build 1 new word",
+        instructions=[Step(number=1, text="Read the word.")],
+        worked_example=Example(
+            instruction="Watch how to add the ending:",
+            content="slow + -er → slower",
+        ),
+        items=[
+            _suffix_chain_step_item(1, "slow", "est", "slowest"),
+        ],
+        response_format="write",
+        time_estimate="About 1 minute",
+    )
+    package = [_worksheet([chunk])]
+
+    evidence = build_evidence_index(package, ledger)
+    result = evaluate_objective_coverage(ledger, evidence)
+    manip_res = next(r for r in result.objective_results if r.objective_id == "obj_manipulation")
+
+    assert manip_res.required_forms_present is True
+    assert manip_res.status == "pass"
+
+
 # --------------------------------------------------------------------------- #
 # Case 3f-3j: connected-text evidence is ALLOWLISTED to genuine reading/
 # sentence material (T4 trim-guard fix, allowlist revision). The old blanket
