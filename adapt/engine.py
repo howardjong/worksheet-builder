@@ -1268,11 +1268,14 @@ def _build_story_chunks(
             item_id += 1
             blank_sent, removed_word = _sentence_to_fill_blank(sent, target_words)
             if blank_sent and removed_word:
-                # Create word bank from target words + the answer
+                # Create word bank from target words + the answer. Capped at
+                # 3 regardless of the chunk's item cap — a bank with every
+                # target word lets a child guess by elimination instead of
+                # reading the sentence (D7).
                 bank = _limit_options(
                     [removed_word, *target_words],
                     required=removed_word,
-                    max_items=max_items,
+                    max_items=3,
                 )
                 items.append(
                     ActivityItem(

@@ -536,6 +536,31 @@ class TestAdaptLesson:
         assert vowel in "aeiou"
         assert len(blanked) == len("grade")
 
+    def test_sentence_word_bank_capped_at_three_options(self) -> None:
+        """Sentence fill-blank word banks must have <=3 options even when the
+        chunk cap is larger and there are many target words (D7: a bank with
+        every target word lets a child guess by elimination instead of
+        reading the sentence)."""
+        # Grade 3 / large chunking gives max_items_per_chunk == 8, well above
+        # the desired bank size — this is what let D7 slip through before.
+        profile = _grade_3_profile()
+        rules = build_rules(profile)
+        worksheets = adapt_lesson(_ufli_59_skill(), profile, rules=rules)
+
+        sentence_items = [
+            item
+            for ws in worksheets
+            for chunk in ws.chunks
+            for item in chunk.items
+            if item.response_format == "fill_blank"
+            and item.options
+            and " " in item.content  # sentence fill-blank, not word-level vowel fill-blank
+        ]
+        assert sentence_items, "expected at least one fill_blank sentence item"
+        for item in sentence_items:
+            assert len(item.options) <= 3
+            assert item.answer in item.options
+
     def test_circle_distractors(self) -> None:
         """Distractor words should be plausible non-pattern words."""
         from adapt.engine import _generate_distractors

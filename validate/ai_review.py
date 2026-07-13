@@ -151,7 +151,11 @@ def _build_review_prompt(adapted: AdaptedActivityModel) -> str:
         "- Use 'remove_item' for items that are formatting artifacts "
         "(e.g., raw markup, teacher instructions that leaked through).\n"
         "- Use 'fix_content' ONLY to fix truncated text or obvious "
-        "OCR errors — never to substitute different words.\n\n"
+        "OCR errors — never to substitute different words.\n"
+        "- For every sentence with a word bank: does EXACTLY ONE option fit "
+        "the sentence? If more than one fits, emit suggestion "
+        '{"action": "remove_option", "item_id": N, "option": "word"} '
+        "for each extra plausible option.\n\n"
         "Here is the worksheet content:\n\n"
         f"{worksheet_text}\n\n"
         "Respond with ONLY this JSON (no markdown fences):\n"
@@ -164,8 +168,9 @@ def _build_review_prompt(adapted: AdaptedActivityModel) -> str:
         "    {\n"
         '      "chunk_id": 1,\n'
         '      "item_id": 1,\n'
-        '      "action": "fix_content" or "remove_item",\n'
-        '      "fixed_content": "corrected text (only if fix_content)"\n'
+        '      "action": "fix_content" or "remove_item" or "remove_option",\n'
+        '      "fixed_content": "corrected text (only if fix_content)",\n'
+        '      "option": "word to remove (only if remove_option)"\n'
         "    }\n"
         "  ]\n"
         "}\n\n"
@@ -261,6 +266,7 @@ def _apply_suggestions(
     # Build a lookup of fixes: (chunk_id, item_id) -> suggestion
     fixes: dict[tuple[int, int], dict[str, str]] = {}
     removals: set[tuple[int, int]] = set()
+    option_removals: dict[tuple[int, int], list[str]] = {}
 
     for s in suggestions:
         try:
@@ -272,10 +278,12 @@ def _apply_suggestions(
                 removals.add((chunk_id, item_id))
             elif action == "fix_content" and s.get("fixed_content"):
                 fixes[(chunk_id, item_id)] = s
+            elif action == "remove_option" and s.get("option"):
+                option_removals.setdefault((chunk_id, item_id), []).append(str(s["option"]))
         except (ValueError, TypeError):
             continue
 
-    if not fixes and not removals:
+    if not fixes and not removals and not option_removals:
         return adapted
 
     # Rebuild chunks with fixes applied
@@ -297,9 +305,28 @@ def _apply_suggestions(
                     f"  Fixing chunk {chunk.chunk_id} item {item.item_id}: "
                     f'"{item.content[:30]}" -> "{fixed[:30]}"'
                 )
-                new_items.append(item.model_copy(update={"content": str(fixed)}))
-            else:
-                new_items.append(item)
+                item = item.model_copy(update={"content": str(fixed)})
+
+            if key in option_removals and item.options:
+                options = list(item.options)
+                for option in option_removals[key]:
+                    # Guardrails: never remove the answer, never drop below
+                    # 2 remaining options.
+                    if option == item.answer:
+                        continue
+                    if option not in options:
+                        continue
+                    if len(options) <= 2:
+                        continue
+                    options.remove(option)
+                    logger.info(
+                        f"  Removing ambiguous option '{option}' from "
+                        f"chunk {chunk.chunk_id} item {item.item_id}"
+                    )
+                if options != item.options:
+                    item = item.model_copy(update={"options": options})
+
+            new_items.append(item)
 
         new_chunks.append(
             ActivityChunk(

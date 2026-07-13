@@ -385,6 +385,95 @@ class TestAiReview:
         assert fixed_item.response_format == original_item.response_format
         assert fixed_item.metadata == original_item.metadata
 
+    def test_remove_option_prunes_ambiguous_distractor(self) -> None:
+        """D7: an AI-flagged ambiguous distractor (a second option that also
+        fits the sentence) is removed, leaving the answer plus the
+        remaining, unambiguous distractor(s)."""
+        original_item = ActivityItem(
+            item_id=3,
+            content="The tree grew ____ than the fence.",
+            response_format="fill_blank",
+            metadata={"display": "sentence_completion"},
+            options=["taller", "higher", "shorter"],
+            answer="taller",
+        )
+        adapted = _make_adapted()
+        adapted.chunks[0].items = [original_item]
+
+        fixed = _apply_suggestions(
+            adapted,
+            [
+                {
+                    "chunk_id": "1",
+                    "item_id": "3",
+                    "action": "remove_option",
+                    "option": "higher",
+                }
+            ],
+        )
+
+        fixed_item = fixed.chunks[0].items[0]
+        assert "higher" not in fixed_item.options
+        assert len(fixed_item.options) >= 2
+        assert fixed_item.answer in fixed_item.options
+        assert fixed_item.answer == "taller"
+
+    def test_remove_option_refuses_below_two_options(self) -> None:
+        """Guardrail: removal is refused if it would leave <2 options."""
+        original_item = ActivityItem(
+            item_id=3,
+            content="The tree grew ____ than the fence.",
+            response_format="fill_blank",
+            metadata={"display": "sentence_completion"},
+            options=["taller", "higher"],
+            answer="taller",
+        )
+        adapted = _make_adapted()
+        adapted.chunks[0].items = [original_item]
+
+        fixed = _apply_suggestions(
+            adapted,
+            [
+                {
+                    "chunk_id": "1",
+                    "item_id": "3",
+                    "action": "remove_option",
+                    "option": "higher",
+                }
+            ],
+        )
+
+        fixed_item = fixed.chunks[0].items[0]
+        assert fixed_item.options == ["taller", "higher"]
+
+    def test_remove_option_refuses_to_remove_the_answer(self) -> None:
+        """Guardrail: removal is refused if the named option is the answer."""
+        original_item = ActivityItem(
+            item_id=3,
+            content="The tree grew ____ than the fence.",
+            response_format="fill_blank",
+            metadata={"display": "sentence_completion"},
+            options=["taller", "higher", "shorter"],
+            answer="taller",
+        )
+        adapted = _make_adapted()
+        adapted.chunks[0].items = [original_item]
+
+        fixed = _apply_suggestions(
+            adapted,
+            [
+                {
+                    "chunk_id": "1",
+                    "item_id": "3",
+                    "action": "remove_option",
+                    "option": "taller",
+                }
+            ],
+        )
+
+        fixed_item = fixed.chunks[0].items[0]
+        assert fixed_item.options == ["taller", "higher", "shorter"]
+
 
 # --- ValidationResult Schema Tests ---
 

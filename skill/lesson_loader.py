@@ -175,6 +175,7 @@ _SCRIPT_STEMS = (
     "add the",
     "take away",
     "replace the",
+    "make the word",
 )
 
 

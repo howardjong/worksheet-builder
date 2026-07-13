@@ -133,6 +133,14 @@ class TestHomePracticeCleaning:
         assert len(sentence_items) == 1
         assert "We play all day." in sentence_items[0].content
 
+    def test_make_the_word_is_teacher_script_not_sentence(self) -> None:
+        from skill.lesson_loader import _home_practice_items
+
+        _, sentences = _home_practice_items(
+            "Make the word slow. Are you older than your brother? Add the ending to tall."
+        )
+        assert sentences == ["Are you older than your brother?"]
+
 
 class TestWordPoolHygiene:
     """The real corpus's Roll and Read blocks are raw PDF-grid extractions and
