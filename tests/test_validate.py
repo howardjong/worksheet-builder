@@ -413,6 +413,7 @@ class TestAiReview:
         )
 
         fixed_item = fixed.chunks[0].items[0]
+        assert fixed_item.options is not None
         assert "higher" not in fixed_item.options
         assert len(fixed_item.options) >= 2
         assert fixed_item.answer in fixed_item.options

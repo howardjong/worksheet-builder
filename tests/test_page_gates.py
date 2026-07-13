@@ -230,6 +230,7 @@ def test_evaluate_page_vacuous_pass_without_match_rows_never_calls_gate(
 
     monkeypatch.setattr(page_gates, "_evaluate_match_alignment", _must_not_be_called)
 
+    empty_rows: list[str] | None
     for empty_rows in (None, []):
         report = page_gates.evaluate_page(b"png", ["rain"], b"ref", [], match_rows=empty_rows)
         assert report.passed is True

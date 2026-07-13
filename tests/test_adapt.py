@@ -558,6 +558,7 @@ class TestAdaptLesson:
         ]
         assert sentence_items, "expected at least one fill_blank sentence item"
         for item in sentence_items:
+            assert item.options is not None
             assert len(item.options) <= 3
             assert item.answer in item.options
 
@@ -631,7 +632,9 @@ class TestAdaptLesson:
         assert "representing" not in we.content
         # It must reference the row-1 PICTURE's word (the shuffled one), which by
         # derangement is never the row-1 word itself:
-        assert match_chunk.items[0].options[0] in we.content
+        row_options = match_chunk.items[0].options
+        assert row_options is not None
+        assert row_options[0] in we.content
         assert match_chunk.items[0].content not in we.content.split('"')[1::2]
 
     def test_single_worksheet_fallback(self) -> None:
