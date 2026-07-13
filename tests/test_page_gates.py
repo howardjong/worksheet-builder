@@ -185,3 +185,51 @@ def test_evaluate_page_passes_when_no_match_rows_aligned(
 
     assert report.passed is True
     assert report.match_alignment.aligned_rows == []
+
+
+def test_evaluate_page_fails_closed_when_match_rows_exist_but_gate_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Module policy is fail closed: match rows exist but both vision providers
+    fail, so the page must NOT ship unverified (mirrors the text-gate
+    fail-closed test)."""
+    import render.page_gates as page_gates
+
+    monkeypatch.setattr(page_gates, "evaluate_page_text", lambda png, req: _text_report())
+    monkeypatch.setattr(
+        page_gates,
+        "judge_character_consistency",
+        lambda ref, gen, criteria: CharacterJudgeResult(available=True, approved=True, score=9),
+    )
+    # Both providers fail (no key / API error / unparseable response) → None.
+    monkeypatch.setattr(page_gates, "_match_alignment_with_gemini", lambda png, rows: None)
+    monkeypatch.setattr(page_gates, "_match_alignment_with_openai", lambda png, rows: None)
+
+    report = page_gates.evaluate_page(b"png", ["rain"], b"ref", [], match_rows=["grade", "chase"])
+
+    assert report.passed is False
+    assert report.match_alignment.available is False
+
+
+def test_evaluate_page_vacuous_pass_without_match_rows_never_calls_gate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No match rows on the page → nothing to verify → vacuous pass, and the
+    match-alignment judge must not be called at all."""
+    import render.page_gates as page_gates
+
+    monkeypatch.setattr(page_gates, "evaluate_page_text", lambda png, req: _text_report())
+    monkeypatch.setattr(
+        page_gates,
+        "judge_character_consistency",
+        lambda ref, gen, criteria: CharacterJudgeResult(available=True, approved=True, score=9),
+    )
+
+    def _must_not_be_called(png: bytes, rows: list[str]) -> object:
+        raise AssertionError("match-alignment gate must not run without match rows")
+
+    monkeypatch.setattr(page_gates, "_evaluate_match_alignment", _must_not_be_called)
+
+    for empty_rows in (None, []):
+        report = page_gates.evaluate_page(b"png", ["rain"], b"ref", [], match_rows=empty_rows)
+        assert report.passed is True

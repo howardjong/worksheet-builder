@@ -41,9 +41,11 @@ PAGE_HEIGHT_PT = 792
 def _attempts_per_provider() -> int:
     """Per-provider generation attempts (WORKSHEET_IMAGE_MAX_ATTEMPTS, min 1).
 
-    Cost guardrail: each attempt is one image-generation call plus 1-2 gate
-    calls, across up to two providers per page. Dial down to 1-2 to cap spend
-    on runs where retry-until-the-gate-passes isn't worth the API cost.
+    Cost guardrail: each attempt is one image-generation call plus up to 3
+    gate calls (text readback, character judge, and match alignment when a
+    match section is present), across up to two providers per page. Dial
+    down to 1-2 to cap spend on runs where retry-until-the-gate-passes
+    isn't worth the API cost.
     """
     try:
         return max(1, int(os.environ.get("WORKSHEET_IMAGE_MAX_ATTEMPTS", "")))

@@ -1,9 +1,13 @@
-"""Full-page worksheet gates: exact-text readback + character consistency.
+"""Full-page worksheet gates: exact-text readback + character consistency
++ match-row picture alignment.
 
 Policy: fail closed. A generated page ships only when the text gate ran and
 passed, and — when a character reference exists — the character judge ran
-and approved. When no reference image is provided the character gate is
-vacuously satisfied (there is no buddy identity to verify).
+and approved, and — when match rows exist — the match-alignment gate ran
+and found no row whose picture depicts its own word. When no reference
+image is provided the character gate is vacuously satisfied (there is no
+buddy identity to verify); when there are no match rows the alignment gate
+is vacuously satisfied (there is nothing to check).
 """
 
 from __future__ import annotations
@@ -53,8 +57,11 @@ class MatchAlignmentReport(BaseModel):
 
     @property
     def passed(self) -> bool:
-        # Not gated on `available`: no match rows / no judge means vacuously OK.
-        return not self.aligned_rows
+        # Fail closed (module policy): this report exists because match rows
+        # were requested, so an unavailable judge means unverified, not
+        # approved. The no-match-rows vacuous pass lives in evaluate_page,
+        # which skips this gate entirely when there is nothing to check.
+        return self.available and not self.aligned_rows
 
 
 class PageGateReport(BaseModel):
@@ -94,12 +101,15 @@ def evaluate_page(
 
     if match_rows:
         match_alignment = _evaluate_match_alignment(page_png, match_rows)
+        # Fail closed: rows exist, so an unavailable judge blocks the page.
+        match_ok = match_alignment.passed
     else:
         match_alignment = MatchAlignmentReport(available=False)
+        # Vacuously satisfied: no match rows on the page means nothing to
+        # verify (same shape as the reference-less character gate above).
+        match_ok = True
 
-    passed = (
-        text_report.available and text_report.passed and character_ok and match_alignment.passed
-    )
+    passed = text_report.available and text_report.passed and character_ok and match_ok
     return PageGateReport(
         passed=passed,
         text=text_report,
