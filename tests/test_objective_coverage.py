@@ -446,6 +446,55 @@ def test_case3e_disconnected_worked_example_does_not_prefix_chain() -> None:
 
 
 # --------------------------------------------------------------------------- #
+# Case 3k: suffix-shaped engine chain-step items ("slow + -er → ______",
+# answer "slower") must ALSO stitch into chain evidence. _chain_step_pair's
+# quoted-word extraction (_QUOTED_WORD_RE) only matches the letter-chain
+# template ('Start with "tone". ...'); suffix-chain content has no quotes at
+# all, so it silently produced no pair and no chain evidence unit — a
+# correctly-authored suffix lesson false-failed the essential manipulation
+# cell. Fix: additive suffix-shape recognition alongside the quoted-word path.
+# --------------------------------------------------------------------------- #
+
+
+def _suffix_chain_step_item(item_id: int, base: str, suffix: str, answer: str) -> ActivityItem:
+    """An engine-shaped suffix chain-step item (adapt/engine.py:820-830)."""
+    return _item(
+        item_id,
+        f"{base} + -{suffix} → ______",
+        "write",
+        answer=answer,
+        metadata={"display": "chain_step"},
+    )
+
+
+def test_case3k_suffix_chain_steps_stitch_into_chain_evidence() -> None:
+    # Ledger chain slow -> slower -> slowest; the suffix-aware engine path
+    # authors each hop as a "<base> + -<suffix> → ______" write item with the
+    # derived word in `answer`. Stitched in item order they must reconstruct
+    # the full transformation sequence → PASS, just like letter chains.
+    ledger = _ledger(
+        [_manip_cell()],
+        source_items=[_chain_source("slow -> slower -> slowest")],
+    )
+    items = [
+        _suffix_chain_step_item(1, "slow", "er", "slower"),
+        _suffix_chain_step_item(2, "slow", "est", "slowest"),
+    ]
+    package = [_worksheet([_chunk(1, items, response_format="write")])]
+
+    evidence = build_evidence_index(package, ledger)
+    stitched = next(e for e in evidence if e.evidence_item_id == "ws0_chunk1_stitched_chain")
+    manip = next(c for c in ledger.objectives if c.objective_id == "obj_manipulation")
+    assert manip.objective_id in stitched.objective_ids
+
+    result = evaluate_objective_coverage(ledger, evidence)
+    manip_res = next(r for r in result.objective_results if r.objective_id == "obj_manipulation")
+
+    assert manip_res.required_forms_present is True
+    assert manip_res.status == "pass"
+
+
+# --------------------------------------------------------------------------- #
 # Case 3f-3j: connected-text evidence is ALLOWLISTED to genuine reading/
 # sentence material (T4 trim-guard fix, allowlist revision). The old blanket
 # len(words) >= 2 discriminator in _cell_touched let non-reading surfaces —

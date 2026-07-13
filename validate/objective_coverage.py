@@ -415,20 +415,37 @@ def _connected_text_eligible(item: ActivityItem) -> bool:
 
 _QUOTED_WORD_RE = re.compile(r'"([A-Za-z]+)"')
 
+# Suffix-chain template (adapt/engine.py:825, suffix-aware _build_builder_chunks
+# path): '<base> + -<suffix> → ______', e.g. 'slow + -er → ______'. No quoted
+# word at all, so _QUOTED_WORD_RE never matches it — this is a second,
+# additive recognition path alongside the letter-chain quoted-word template,
+# not a replacement for it.
+_SUFFIX_CHAIN_STEP_RE = re.compile(r"^([A-Za-z]+)\s*\+\s*-[A-Za-z]+\s*→")
+
 
 def _chain_step_pair(item: ActivityItem) -> tuple[str, str] | None:
     """(from_word, to_word) for an engine-templated chain-step item.
 
-    The deterministic template is fixed ('Start with "<from>". Change ...'),
-    so the first quoted word is the from-word; the target word is what the
-    child writes — carried in ``answer``.
+    Two deterministic engine templates author chain-step items:
+
+    - Letter chain: 'Start with "<from>". Change ...' — the first quoted word
+      is the from-word.
+    - Suffix chain: '<from> + -<suffix> → ______' — no quoted word; the
+      from-word is the leading base word instead.
+
+    Either way, the target word is what the child writes — carried in
+    ``answer``.
     """
     if not item.answer:
         return None
     m = _QUOTED_WORD_RE.search(item.content)
-    if m is None:
-        return None
-    frm = _normalize(m.group(1))
+    if m is not None:
+        frm = _normalize(m.group(1))
+    else:
+        suffix_m = _SUFFIX_CHAIN_STEP_RE.match(item.content)
+        if suffix_m is None:
+            return None
+        frm = _normalize(suffix_m.group(1))
     to = _normalize(item.answer)
     if not frm or not to:
         return None

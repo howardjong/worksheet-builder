@@ -1,8 +1,11 @@
 """Suffix-aware word chains + chain hygiene (spec 2026-07-13, defects D1/D13)."""
 
 from adapt.engine import _build_builder_chunks, _parse_suffix_chain_steps
+from adapt.objective_ledger import ObjectiveCell, ObjectiveLedger
 from adapt.rules import AccommodationRules
+from adapt.schema import AdaptedActivityModel, ScaffoldConfig
 from skill.schema import LiteracySkillModel
+from validate.objective_coverage import build_evidence_index, evaluate_objective_coverage
 
 
 def _rules() -> AccommodationRules:
@@ -77,9 +80,78 @@ def test_letter_chain_lessons_unchanged() -> None:
 
 
 def test_unparseable_chain_fallback_blanks_answers() -> None:
-    # Chains no parser understands still must not print answers.
-    chunks = _build_builder_chunks(["run → sprinted"], [], [], _skill("y"), _rules())
+    # Chains no parser understands still must not print answers. Two chains,
+    # not one: chains[0] is always consumed by the fallback worked example
+    # (adapt/engine.py:872-875), so a single-chain input leaves chain_items
+    # empty and this loop body never runs — de-vacuized per Task 2 review.
+    chunks = _build_builder_chunks(
+        ["run → sprinted", "jump → leaped"], [], [], _skill("y"), _rules()
+    )
     chain_items = [i for c in chunks for i in c.items if i.metadata.get("display") == "chain"]
+    assert chain_items, "fallback path must actually produce items to exercise"
     for item in chain_items:
         assert "______" in item.content
         assert item.answer
+        assert item.answer not in item.content
+
+
+# --------------------------------------------------------------------------- #
+# End-to-end: engine-built suffix chunks pushed through the objective-coverage
+# evidence layer (Task 2 review Finding 2). Finding 1's unit test pins
+# _chain_step_pair directly; this test guards the full seam — nothing else
+# exercised _build_builder_chunks's suffix output through build_evidence_index
+# before a real evaluate_objective_coverage() run.
+# --------------------------------------------------------------------------- #
+
+
+def _manip_cell() -> ObjectiveCell:
+    return ObjectiveCell(
+        objective_id="obj_manipulation",
+        objective_type="phoneme_grapheme_manipulation",
+        display_name="Build and change words",
+        concept="manipulation",
+        target_pattern=None,
+        importance="essential",
+        required_forms=["word_chain", "chain_script"],
+        min_practice_count=1,
+        max_recommended_count=1,
+        acceptable_response_formats=["word_chain"],
+        sufficiency_rule="one coherent chain",
+    )
+
+
+def test_engine_suffix_chunks_satisfy_manipulation_cell_end_to_end() -> None:
+    chain = "slow → slower → slowest"
+    chunks = _build_builder_chunks([chain], [], [], _skill(), _rules())
+
+    ledger = ObjectiveLedger(
+        source_skill_hash="hash",
+        lesson_number=1,
+        corpus_status="matched",
+        corpus_version="v1",
+        corpus_lesson_id="ufli_1",
+        primary_pattern=None,
+        objectives=[_manip_cell()],
+        source_items=[],
+    )
+    worksheet = AdaptedActivityModel(
+        source_hash="s",
+        skill_model_hash="k",
+        learner_profile_hash="p",
+        grade_level="1",
+        domain="phonics",
+        specific_skill="suffix_er_est",
+        chunks=chunks,
+        scaffolding=ScaffoldConfig(),
+        theme_id="default",
+        decoration_zones=[(0.85, 0.0, 1.0, 0.12)],
+        worksheet_number=1,
+        worksheet_count=1,
+    )
+
+    evidence = build_evidence_index([worksheet], ledger)
+    result = evaluate_objective_coverage(ledger, evidence)
+    manip_res = next(r for r in result.objective_results if r.objective_id == "obj_manipulation")
+
+    assert manip_res.required_forms_present is True
+    assert manip_res.status == "pass"
