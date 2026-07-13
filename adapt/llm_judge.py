@@ -673,11 +673,15 @@ def judge_objective_adaptation(
     )
 
     logger.info("  Objective judge: calling GPT 5.4...")
-    response_text = _call_openai(prompt)
+    response_text = _call_openai(prompt, max_completion_tokens=4096)
     if response_text is None:
         return None
 
     verdict = _parse_objective_verdict(response_text)
+    if verdict is None:
+        logger.warning("  Objective judge: verdict parse failed — retrying once")
+        response_text = _call_openai(prompt, max_completion_tokens=4096)
+        verdict = _parse_objective_verdict(response_text) if response_text else None
     if verdict is None:
         return None
 

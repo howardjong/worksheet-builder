@@ -440,6 +440,21 @@ def test_objective_block_nonempty_with_header_when_flag_on(
     assert _OBJ_HEADER in block
 
 
+# D12: the LLM planner authored 0/4 word-chain activities across lessons
+# 74+100 even with retry feedback — the authoring block STATES the
+# build/change-chain requirement but never SHOWS one, so the model can't
+# ground what "in its form" means. Fix: embed a concrete example + a
+# one-line session-minutes budget reminder.
+def test_authoring_block_contains_concrete_chain_example_and_budget_line(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("WORKSHEET_OBJECTIVE_COVERAGE", "1")
+    block = _objective_authoring_block(_skill())
+    assert "→ ______" in block
+    assert "MUST include" in block
+    assert "minutes" in block.lower()
+
+
 def test_prompt_omits_objective_authoring_when_flag_off(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

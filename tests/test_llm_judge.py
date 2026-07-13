@@ -857,3 +857,83 @@ def test_judge_package_objective_none_on_api_failure(monkeypatch: pytest.MonkeyP
     verdict = judge_package_objective(skill, worksheets)
 
     assert verdict is None
+
+
+# =========================================================================== #
+# D11 — objective judge truncation retry. The judge's max_completion_tokens
+# was 1024, too small for the full JSON verdict; a truncated response fails
+# JSON parsing and the package ships unjudged via the "unavailable" path.
+# Fix: call at 4096 tokens, and on a parse failure retry the SAME request
+# once before giving up (cost bound: +1 judge call, only on parse failure).
+# =========================================================================== #
+
+
+def test_objective_judge_retries_once_on_parse_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    from adapt.llm_judge import judge_objective_adaptation
+
+    monkeypatch.setenv("OPENAI_API_KEY", "fake")
+    skill = _obj_skill()
+    ledger = build_objective_ledger(skill, corpus_lookup=fixture_corpus_lookup)
+    decode = next(o for o in ledger.objectives if o.objective_id == "obj_decode")
+    worksheets = [_obj_worksheet(decode.target_words[:7])]
+    gates = run_blocking_gates(worksheets, ledger)
+    evidence = build_evidence_index(worksheets, ledger)
+    coverage = evaluate_objective_coverage(ledger, evidence, worksheets)
+
+    good = json.dumps(
+        {
+            "objective_scores": [
+                {
+                    "objective_id": cell.objective_id,
+                    "quality": 0.85,
+                    "severe_defects": [],
+                    "evidence_item_ids": [],
+                    "rationale": "solid",
+                }
+                for cell in ledger.objectives
+            ],
+            "objective_sufficiency": 0.85,
+            "skill_form_fidelity": 0.85,
+            "structured_literacy_alignment": 0.85,
+            "adhd_cognitive_load_fit": 0.85,
+            "lesson_flow_and_usability": 0.85,
+            "overall_score": 0.85,
+            "approval_recommendation": "approve",
+            "feedback": ["Looks good."],
+        }
+    )
+
+    calls: list[int] = []
+
+    def fake_call(prompt: str, max_completion_tokens: int = 1024) -> str:
+        calls.append(max_completion_tokens)
+        return '{"truncated": ' if len(calls) == 1 else good
+
+    monkeypatch.setattr("adapt.llm_judge._call_openai", fake_call)
+
+    verdict = judge_objective_adaptation(ledger, gates, coverage, worksheets, evidence)
+
+    assert verdict is not None
+    assert len(calls) == 2
+    assert all(t >= 4096 for t in calls)
+
+
+def test_objective_judge_gives_up_after_second_parse_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from adapt.llm_judge import judge_objective_adaptation
+
+    monkeypatch.setenv("OPENAI_API_KEY", "fake")
+    skill = _obj_skill()
+    ledger = build_objective_ledger(skill, corpus_lookup=fixture_corpus_lookup)
+    decode = next(o for o in ledger.objectives if o.objective_id == "obj_decode")
+    worksheets = [_obj_worksheet(decode.target_words[:7])]
+    gates = run_blocking_gates(worksheets, ledger)
+    evidence = build_evidence_index(worksheets, ledger)
+    coverage = evaluate_objective_coverage(ledger, evidence, worksheets)
+
+    monkeypatch.setattr("adapt.llm_judge._call_openai", lambda *a, **k: '{"nope": ')
+
+    verdict = judge_objective_adaptation(ledger, gates, coverage, worksheets, evidence)
+
+    assert verdict is None

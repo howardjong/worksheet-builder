@@ -263,6 +263,13 @@ target-pattern objective's practice MUST use the pattern's own words; contrast, 
 review, and irregular words do not count toward it and must not pad it.
 
 {cell_blocks}
+
+Example of a compliant build/change-chain activity (adapt words to THIS lesson):
+  items like {{"content": "slow + -er → ______", "answer": "slower"}} for suffix
+  lessons, or {{"content": "Start with \\"dry\\". Change the \\"d\\" to \\"t\\". Write
+  the new word.", "answer": "try"}} for letter-pattern lessons.
+Your plan MUST include one such build/change chain activity, and the plan's
+total estimated minutes MUST fit the session budget stated above.
 """
 
 
