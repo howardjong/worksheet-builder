@@ -18,11 +18,16 @@ from render.design_spec import SectionSpec, WorksheetDesignSpec
 # invalidates the page cache so fixed prompts actually regenerate pages.
 # v3: goal ribbon replaces the skill-focus badge, typography rules constrain
 # text sizes, per-page buddy action, structured feedback strip + grown-up log.
-PROMPT_VERSION = "page_prompt_v3"
+# v4: circle-format fill-blanks, per-row match pictures, chunked passages,
+# quick-log-only feedback (spec 2026-07-13)
+PROMPT_VERSION = "page_prompt_v4"
 
 _FORMAT_AFFORDANCES: dict[str, str] = {
     "write": "a blank handwriting line wide enough for a child to print the answer",
-    "fill_blank": "the text with a clearly visible blank plus a handwriting line below",
+    "fill_blank": (
+        "the text with a clearly visible blank; print the option letters beside it "
+        "as large, well-spaced letters a child can circle — no handwriting line"
+    ),
     "trace": "the word in light dotted outline letters ready to trace",
     "circle": ("the option words spread out with space around each so a child can circle them"),
     "match": (

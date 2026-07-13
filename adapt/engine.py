@@ -989,7 +989,7 @@ def _build_builder_chunks(
                     micro_goal=f"Fill in {len(items)} missing letters",
                     instructions=[
                         Step(number=1, text="Look at the word with a missing letter."),
-                        Step(number=2, text="Write the missing letter on the line."),
+                        Step(number=2, text="Circle the missing letter."),
                     ],
                     worked_example=None,
                     items=items,

@@ -188,4 +188,46 @@ def test_feedback_strip_and_parent_log() -> None:
 def test_prompt_version_bumped() -> None:
     from render.image_prompt_builder import PROMPT_VERSION
 
-    assert PROMPT_VERSION == "page_prompt_v3"
+    assert PROMPT_VERSION == "page_prompt_v4"
+
+
+def _spec_with_fill_blank_options() -> WorksheetDesignSpec:
+    return _spec(
+        sections=[
+            SectionSpec(
+                chunk_id=1,
+                micro_goal="Fill in 1 missing letter",
+                instructions=[
+                    "Look at the word with a missing letter.",
+                    "Circle the missing letter.",
+                ],
+                worked_example_instruction=None,
+                worked_example_content=None,
+                time_estimate="About 2 minutes",
+                response_format="fill_blank",
+                items=[
+                    SectionItemSpec(
+                        item_id=1,
+                        content="c_t",
+                        response_format="fill_blank",
+                        answer="a",
+                        options=["a", "e", "i", "o", "u"],
+                    ),
+                ],
+            )
+        ],
+    )
+
+
+def test_fill_blank_with_options_renders_circle_affordance() -> None:
+    from render.image_prompt_builder import build_page_prompt
+
+    prompt = build_page_prompt(_spec_with_fill_blank_options())
+    assert "circle" in prompt.lower()
+    assert "handwriting line below" not in prompt
+
+
+def test_prompt_version_bumped_for_uat_fixes() -> None:
+    from render.image_prompt_builder import PROMPT_VERSION
+
+    assert PROMPT_VERSION == "page_prompt_v4"

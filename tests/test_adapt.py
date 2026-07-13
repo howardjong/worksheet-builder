@@ -545,6 +545,16 @@ class TestAdaptLesson:
         assert "grade" not in distractors
         assert "chase" not in distractors
 
+    def test_fill_blank_instructions_say_circle(self) -> None:
+        """Fill-blank items present options to circle, not a handwriting line (D2)."""
+        worksheets = adapt_lesson(_ufli_59_skill(), _grade_1_profile())
+        chunks = [c for ws in worksheets for c in ws.chunks]
+        fill_chunks = [c for c in chunks if c.response_format == "fill_blank"]
+        assert fill_chunks
+        texts = " ".join(s.text for s in fill_chunks[0].instructions)
+        assert "Circle the missing letter" in texts
+        assert "Write the missing letter" not in texts
+
     def test_backward_compat_adapt_activity(self) -> None:
         """adapt_activity() still works unchanged after adding adapt_lesson()."""
         model = adapt_activity(_ufli_59_skill(), _grade_1_profile())
