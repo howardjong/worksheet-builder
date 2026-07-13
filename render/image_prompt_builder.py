@@ -36,7 +36,11 @@ _FORMAT_AFFORDANCES: dict[str, str] = {
         "exactly one picture per row, never two pictures adjacent to each other, "
         "with open white space between the columns to draw connecting lines"
     ),
-    "read_aloud": "the text inside a soft reading box with a small read-aloud icon",
+    "read_aloud": (
+        "the passage inside a soft reading box with a small read-aloud icon; each "
+        "paragraph is its own visually separated block with a blank line between "
+        "paragraphs and a small dot marker at each paragraph start"
+    ),
     "sound_box": "one empty square box per sound (Elkonin boxes) under the word",
     "verbal": "a small speech icon next to the prompt",
 }
@@ -150,7 +154,9 @@ def build_page_prompt(
         "height.\n"
         "- Use one plain, evenly spaced font family throughout, like a "
         "children's school workbook; no decorative or stylized lettering "
-        "outside the title banner."
+        "outside the title banner.\n"
+        "- Story and passage sentences use size (2), the practice-word size "
+        "— never the smaller instruction size."
     )
 
     parts.append("## Calm-focus rules (required)")

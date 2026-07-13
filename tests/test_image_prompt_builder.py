@@ -231,3 +231,37 @@ def test_prompt_version_bumped_for_uat_fixes() -> None:
     from render.image_prompt_builder import PROMPT_VERSION
 
     assert PROMPT_VERSION == "page_prompt_v4"
+
+
+def _spec_with_read_aloud_passage() -> WorksheetDesignSpec:
+    return _spec(
+        sections=[
+            SectionSpec(
+                chunk_id=1,
+                micro_goal="Read the story",
+                instructions=[
+                    "Read the story out loud.",
+                    "Point to each word as you read.",
+                ],
+                worked_example_instruction=None,
+                worked_example_content=None,
+                time_estimate="About 3 minutes",
+                response_format="read_aloud",
+                items=[
+                    SectionItemSpec(
+                        item_id=1,
+                        content="First paragraph here.\n\nSecond paragraph here.",
+                        response_format="read_aloud",
+                    ),
+                ],
+            )
+        ],
+    )
+
+
+def test_read_aloud_affordance_demands_paragraph_blocks_and_large_text() -> None:
+    from render.image_prompt_builder import build_page_prompt
+
+    prompt = build_page_prompt(_spec_with_read_aloud_passage())
+    assert "paragraph" in prompt.lower()
+    assert "practice-word size" in prompt or "size (2)" in prompt

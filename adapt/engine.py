@@ -1247,6 +1247,31 @@ def _build_roll_and_read_chunk(
     )
 
 
+def _format_passage(text: str) -> str:
+    """Break a passage into short paragraphs (<=3 sentences) separated by
+    blank lines — ADHD stopping points (spec 2026-07-13 D8)."""
+    raw_lines = text.splitlines()
+    title_line = ""
+    body = text
+    if raw_lines:
+        first_line = raw_lines[0].strip()
+        if first_line and not re.search(r"[.!?]\s*$", first_line):
+            title_line = first_line
+            body = "\n".join(raw_lines[1:])
+
+    normalized = re.sub(r"\s+", " ", body.replace("\n", " ")).strip()
+    sentences = [s.strip() for s in re.findall(r"[^.!?]+[.!?]", normalized) if s.strip()]
+    if not sentences:
+        formatted = body.strip()
+    else:
+        paragraphs = [" ".join(sentences[i : i + 3]) for i in range(0, len(sentences), 3)]
+        formatted = "\n\n".join(paragraphs)
+
+    if title_line:
+        return f"{title_line}\n\n{formatted}" if formatted else title_line
+    return formatted
+
+
 def _build_story_chunks(
     sentences: list[str],
     passages: list[str],
@@ -1302,6 +1327,24 @@ def _build_story_chunks(
         if items:
             for batch_start in range(0, len(items), max_items):
                 batch = items[batch_start : batch_start + max_items]
+                worked_example = None
+                fill_blank_indices = [
+                    i for i, item in enumerate(batch) if item.response_format == "fill_blank"
+                ]
+                if fill_blank_indices:
+                    # Pop the FIRST converted item — it becomes the worked
+                    # example instead of an independent-practice item, so
+                    # the child sees a completed model before attempting
+                    # the rest (D8).
+                    example_item = batch.pop(fill_blank_indices[0])
+                    blank_sent = example_item.content
+                    removed_word = example_item.answer or ""
+                    worked_example = Example(
+                        instruction="Watch me do the first one:",
+                        content=f"{blank_sent} → {removed_word}",
+                    )
+                if not batch:
+                    continue
                 chunks.append(
                     ActivityChunk(
                         chunk_id=len(chunks) + 1,
@@ -1310,7 +1353,7 @@ def _build_story_chunks(
                             Step(number=1, text="Read the sentence."),
                             Step(number=2, text="Fill in the missing word."),
                         ],
-                        worked_example=None,
+                        worked_example=worked_example,
                         items=batch,
                         response_format=(
                             "fill_blank"
@@ -1331,7 +1374,7 @@ def _build_story_chunks(
                 items.append(
                     ActivityItem(
                         item_id=item_id,
-                        content=passage,
+                        content=_format_passage(passage),
                         response_format="read_aloud",
                     )
                 )
