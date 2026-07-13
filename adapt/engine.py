@@ -786,52 +786,43 @@ def _build_builder_chunks(
 
     # Chunk 1: Word chains — interactive letter-change steps
     if chains:
-        chain_steps = _parse_chain_steps(chains)
-        # Deduplicate steps (source PDFs sometimes repeat chains)
-        seen_steps: set[tuple[str, str]] = set()
-        unique_steps: list[dict[str, str]] = []
-        for step in chain_steps:
-            key = (step["from_word"], step["to_word"])
-            if key not in seen_steps:
-                seen_steps.add(key)
-                unique_steps.append(step)
-        chain_steps = unique_steps
+        # Deduplicate chain inputs (source PDFs sometimes repeat chains verbatim)
+        seen_chains: set[str] = set()
+        deduped: list[str] = []
+        for chain in chains:
+            key = re.sub(r"\s+", " ", chain.lower())
+            if key not in seen_chains:
+                seen_chains.add(key)
+                deduped.append(chain)
+        chains = deduped
 
-        if chain_steps:
-            # Worked example uses the first step; activity uses the rest
-            ex_step = chain_steps[0]
-            example = Example(
-                instruction="Watch how the letters change:",
-                content=(
-                    f"{ex_step['from_word']} → {ex_step['to_word']}  "
-                    f'(change the "{ex_step["old_letter"]}" '
-                    f'to "{ex_step["new_letter"]}")'
-                ),
+        from skill.taxonomy import is_suffix_skill, suffixes_for_skill
+
+        if is_suffix_skill(skill.specific_skill):
+            suffix_steps = _parse_suffix_chain_steps(
+                chains, suffixes_for_skill(skill.specific_skill)
             )
-            activity_steps = chain_steps[1:]
         else:
-            # Fallback if parsing fails — show chain read-only
-            example = Example(
-                instruction="Watch how the letters change:",
-                content=f'In "{chains[0]}" — one letter changes each time!',
-            )
-            activity_steps = []
+            suffix_steps = []
 
-        if activity_steps:
-            for batch_start in range(0, len(activity_steps), max_items):
-                batch = activity_steps[batch_start : batch_start + max_items]
+        if suffix_steps:
+            # Worked example uses the first step; activity uses the rest
+            ex_step = suffix_steps[0]
+            example = Example(
+                instruction="Watch how to add the ending:",
+                content=f"{ex_step['from_word']} + -{ex_step['suffix']} → {ex_step['to_word']}",
+            )
+            activity_suffix_steps = suffix_steps[1:]
+
+            for batch_start in range(0, len(activity_suffix_steps), max_items):
+                batch = activity_suffix_steps[batch_start : batch_start + max_items]
                 items: list[ActivityItem] = []
                 for step in batch:
                     item_id += 1
                     items.append(
                         ActivityItem(
                             item_id=item_id,
-                            content=(
-                                f'Start with "{step["from_word"]}". '
-                                f'Change the "{step["old_letter"]}" '
-                                f'to "{step["new_letter"]}". '
-                                f"Write the new word."
-                            ),
+                            content=f"{step['from_word']} + -{step['suffix']} → ______",
                             response_format="write",
                             metadata={"display": "chain_step"},
                             answer=step["to_word"],
@@ -842,9 +833,9 @@ def _build_builder_chunks(
                         chunk_id=len(chunks) + 1,
                         micro_goal=f"Build {len(items)} new words",
                         instructions=[
-                            Step(number=1, text="Read the starting word."),
-                            Step(number=2, text="Change the letter shown."),
-                            Step(number=3, text="Write the new word on the line."),
+                            Step(number=1, text="Read the word."),
+                            Step(number=2, text="Add the ending."),
+                            Step(number=3, text="Write the new word."),
                         ],
                         worked_example=example if batch_start == 0 else None,
                         items=items,
@@ -853,35 +844,106 @@ def _build_builder_chunks(
                     )
                 )
         else:
-            # Fallback: plain chain items (skip first chain used in example)
-            for batch_start in range(0, len(chains), max_items):
-                chain_batch = chains[batch_start : batch_start + max_items]
-                items = []
-                for chain in chain_batch:
-                    item_id += 1
-                    items.append(
-                        ActivityItem(
-                            item_id=item_id,
-                            content=chain,
+            chain_steps = _parse_chain_steps(chains)
+            # Deduplicate steps (source PDFs sometimes repeat chains)
+            seen_steps: set[tuple[str, str]] = set()
+            unique_steps: list[dict[str, str]] = []
+            for step in chain_steps:
+                key = (step["from_word"], step["to_word"])
+                if key not in seen_steps:
+                    seen_steps.add(key)
+                    unique_steps.append(step)
+            chain_steps = unique_steps
+
+            if chain_steps:
+                # Worked example uses the first step; activity uses the rest
+                ex_step = chain_steps[0]
+                example = Example(
+                    instruction="Watch how the letters change:",
+                    content=(
+                        f"{ex_step['from_word']} → {ex_step['to_word']}  "
+                        f'(change the "{ex_step["old_letter"]}" '
+                        f'to "{ex_step["new_letter"]}")'
+                    ),
+                )
+                activity_steps = chain_steps[1:]
+            else:
+                # Fallback if parsing fails — show chain read-only
+                example = Example(
+                    instruction="Watch how the letters change:",
+                    content=f'In "{chains[0]}" — one letter changes each time!',
+                )
+                activity_steps = []
+
+            if activity_steps:
+                for batch_start in range(0, len(activity_steps), max_items):
+                    batch = activity_steps[batch_start : batch_start + max_items]
+                    items = []
+                    for step in batch:
+                        item_id += 1
+                        items.append(
+                            ActivityItem(
+                                item_id=item_id,
+                                content=(
+                                    f'Start with "{step["from_word"]}". '
+                                    f'Change the "{step["old_letter"]}" '
+                                    f'to "{step["new_letter"]}". '
+                                    f"Write the new word."
+                                ),
+                                response_format="write",
+                                metadata={"display": "chain_step"},
+                                answer=step["to_word"],
+                            )
+                        )
+                    chunks.append(
+                        ActivityChunk(
+                            chunk_id=len(chunks) + 1,
+                            micro_goal=f"Build {len(items)} new words",
+                            instructions=[
+                                Step(number=1, text="Read the starting word."),
+                                Step(number=2, text="Change the letter shown."),
+                                Step(number=3, text="Write the new word on the line."),
+                            ],
+                            worked_example=example if batch_start == 0 else None,
+                            items=items,
                             response_format="write",
-                            metadata={"display": "chain"},
+                            time_estimate="About 1 minute",
                         )
                     )
-                chunks.append(
-                    ActivityChunk(
-                        chunk_id=len(chunks) + 1,
-                        micro_goal=f"Build {len(items)} new words",
-                        instructions=[
-                            Step(number=1, text="Read the starting word."),
-                            Step(number=2, text="Change the letter shown."),
-                            Step(number=3, text="Write the new word on the line."),
-                        ],
-                        worked_example=example if batch_start == 0 else None,
-                        items=items,
-                        response_format="write",
-                        time_estimate="About 1 minute",
+            else:
+                # Fallback: plain chain items (skip chains[0], already in worked example)
+                remaining_chains = chains[1:]
+                for batch_start in range(0, len(remaining_chains), max_items):
+                    chain_batch = remaining_chains[batch_start : batch_start + max_items]
+                    items = []
+                    for chain in chain_batch:
+                        item_id += 1
+                        parts = [w.strip() for w in re.split(r"\s*(?:->|→)\s*", chain) if w.strip()]
+                        content = parts[0] + "".join(" → ______" for _ in parts[1:])
+                        items.append(
+                            ActivityItem(
+                                item_id=item_id,
+                                content=content,
+                                response_format="write",
+                                metadata={"display": "chain"},
+                                answer=", ".join(parts[1:]),
+                            )
+                        )
+                    chunks.append(
+                        ActivityChunk(
+                            chunk_id=len(chunks) + 1,
+                            micro_goal=f"Build {len(items)} new words",
+                            instructions=[
+                                Step(number=1, text="Read the starting word."),
+                                Step(number=2, text="Change the letter shown."),
+                                Step(number=3, text="Write the new word on the line."),
+                            ],
+                            worked_example=example if batch_start == 0 else None,
+                            items=items,
+                            response_format="write",
+                            time_estimate="About 1 minute",
+                        )
                     )
-                )
 
     # Chunk 2: Fill in the missing letter
     # Word-list-only lessons rely on these chunks for full target coverage, so
@@ -1929,6 +1991,26 @@ def _parse_chain_steps(chains: list[str]) -> list[dict[str, str]]:
                         "new_letter": new_letter,
                     }
                 )
+    return steps
+
+
+def _parse_suffix_chain_steps(chains: list[str], suffixes: list[str]) -> list[dict[str, str]]:
+    """Parse suffix chains ('slow → slower → slowest') into add-the-ending
+    hops measured from the chain BASE word: (slow, slower, er), (slow, slowest, est)."""
+    steps: list[dict[str, str]] = []
+    for chain in chains:
+        words = [w.strip().lower() for w in re.split(r"\s*(?:->|→)\s*", chain) if w.strip()]
+        if len(words) < 2:
+            continue
+        base = words[0]
+        for derived in words[1:]:
+            suffix = next(
+                (s for s in suffixes if derived.endswith(s) and len(derived) > len(s) + 1),
+                None,
+            )
+            if suffix is None:
+                continue
+            steps.append({"from_word": base, "to_word": derived, "suffix": suffix})
     return steps
 
 
