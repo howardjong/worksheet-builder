@@ -849,9 +849,9 @@ def _build_builder_chunks(
             seen_steps: set[tuple[str, str]] = set()
             unique_steps: list[dict[str, str]] = []
             for step in chain_steps:
-                key = (step["from_word"], step["to_word"])
-                if key not in seen_steps:
-                    seen_steps.add(key)
+                step_key = (step["from_word"], step["to_word"])
+                if step_key not in seen_steps:
+                    seen_steps.add(step_key)
                     unique_steps.append(step)
             chain_steps = unique_steps
 
