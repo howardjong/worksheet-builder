@@ -1328,9 +1328,15 @@ def _build_story_chunks(
             for batch_start in range(0, len(items), max_items):
                 batch = items[batch_start : batch_start + max_items]
                 worked_example = None
-                fill_blank_indices = [
-                    i for i, item in enumerate(batch) if item.response_format == "fill_blank"
-                ]
+                # Worked example only in the first batch (scaffolding fade —
+                # matches the batch_start == 0 idiom used by the builder chains;
+                # per-batch examples would repeat the model and cost page space,
+                # the exact D8/D3 concern).
+                fill_blank_indices = (
+                    [i for i, item in enumerate(batch) if item.response_format == "fill_blank"]
+                    if batch_start == 0
+                    else []
+                )
                 if fill_blank_indices:
                     # Pop the FIRST converted item — it becomes the worked
                     # example instead of an independent-practice item, so

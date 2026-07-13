@@ -92,3 +92,39 @@ def test_story_chunks_use_formatted_passage_and_worked_example() -> None:
         sentence_chunks[0].worked_example.content.split(" → ")[0] != i.content
         for i in sentence_chunks[0].items
     )
+
+
+def test_worked_example_only_on_first_sentence_batch() -> None:
+    """Scaffolding fade: only the FIRST sentence-completion batch shows a worked
+    example; later batches keep all their items (house convention, batch_start
+    == 0 idiom — Task 5 review)."""
+    skill = _fluency_skill_for_story()
+    rules = build_rules(_grade_1_profile())
+    assert rules.max_items_per_chunk == 4, "repro assumes grade-1 medium chunk cap of 4"
+    # 8 convertible sentences (each carries a target word) -> 2 batches of 4.
+    sentences = [
+        "June has a flute.",
+        "Luke likes the tune.",
+        "The dune is by June.",
+        "Luke plays a flute.",
+        "June found a tune.",
+        "The dune has Luke.",
+        "June has a tune.",
+        "Luke sees the dune.",
+    ]
+    chunks = _build_story_chunks(
+        sentences=sentences,
+        passages=[],
+        target_words=skill.target_words,
+        skill=skill,
+        rules=rules,
+    )
+
+    sentence_chunks = [c for c in chunks if "sentence" in c.micro_goal.lower()]
+    assert len(sentence_chunks) >= 2, "repro must produce at least two sentence batches"
+    # Batch 1 has the worked example.
+    assert sentence_chunks[0].worked_example is not None
+    # Every later batch has none — and none of them lost an item to a pop.
+    for chunk in sentence_chunks[1:]:
+        assert chunk.worked_example is None
+        assert len(chunk.items) == rules.max_items_per_chunk
