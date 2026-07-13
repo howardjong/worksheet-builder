@@ -1,6 +1,6 @@
 """Suffix-aware word chains + chain hygiene (spec 2026-07-13, defects D1/D13)."""
 
-from adapt.engine import _build_builder_chunks, _parse_suffix_chain_steps
+from adapt.engine import _build_builder_chunks, _build_discovery_chunks, _parse_suffix_chain_steps
 from adapt.objective_ledger import ClassifiedSourceItem, ObjectiveCell, ObjectiveLedger
 from adapt.rules import AccommodationRules
 from adapt.schema import AdaptedActivityModel, ScaffoldConfig
@@ -173,3 +173,64 @@ def test_engine_suffix_chunks_satisfy_manipulation_cell_end_to_end() -> None:
 
     assert manip_res.required_forms_present is True
     assert manip_res.status == "pass"
+
+
+# --------------------------------------------------------------------------- #
+# Defect D5: lesson-100's PDF had three IDENTICAL "Write 5 words" sections.
+# Suffix lessons must cycle three distinct encode-practice forms across write
+# batches; non-suffix lessons (e.g. lesson 74 "y") keep today's uniform
+# "Write N words" batches byte-identical.
+# --------------------------------------------------------------------------- #
+
+SUFFIX_WORDS = [
+    "taller",
+    "tallest",
+    "shorter",
+    "shortest",
+    "faster",
+    "fastest",
+    "slower",
+    "slowest",
+    "harder",
+    "hardest",
+    "softer",
+    "softest",
+]
+
+
+def test_suffix_write_batches_use_three_distinct_forms() -> None:
+    chunks = _build_discovery_chunks(
+        SUFFIX_WORDS,
+        _skill("suffix_er_est"),
+        _rules(),
+        format_order=["write"],
+        preserve_all_words=True,
+    )
+    write_like = [c for c in chunks if c.micro_goal.startswith(("Write", "Add", "Choose"))]
+    goals = {c.micro_goal.split()[0] for c in write_like}
+    assert {"Write", "Add", "Choose"} <= goals, "three distinct encode forms required"
+
+    add_chunk = next(c for c in write_like if c.micro_goal.startswith("Add"))
+    for item in add_chunk.items:
+        assert "+ -" in item.content and "______" in item.content
+        assert item.answer and item.answer not in item.content
+
+    choose_chunk = next(c for c in write_like if c.micro_goal.startswith("Choose"))
+    for item in choose_chunk.items:
+        assert item.response_format == "circle"
+        assert item.options and item.answer in item.options
+
+
+def test_non_suffix_write_batches_unchanged() -> None:
+    # Same construction with specific_skill="y": all write batches keep
+    # today's "Write N words" shape (lesson-74 regression bar).
+    chunks = _build_discovery_chunks(
+        SUFFIX_WORDS,
+        _skill("y"),
+        _rules(),
+        format_order=["write"],
+        preserve_all_words=True,
+    )
+    write_like = [c for c in chunks if c.micro_goal.startswith(("Write", "Add", "Choose"))]
+    assert write_like, "must produce write batches to exercise the regression bar"
+    assert all(c.micro_goal.startswith("Write") for c in write_like)

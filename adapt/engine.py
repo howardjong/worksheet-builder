@@ -581,6 +581,139 @@ def adapt_lesson(
     return _finalize_lesson_package(worksheets, rules, skill, package_cap)
 
 
+def _decompose_suffix_word(word: str, suffixes: list[str]) -> tuple[str, str] | None:
+    """Split a word into (base, suffix) if it cleanly decomposes for one of
+    the skill's suffixes — base must retain at least 3 letters."""
+    for sfx in suffixes:
+        if word.endswith(sfx):
+            base = word.removesuffix(sfx)
+            if len(base) >= 3:
+                return base, sfx
+    return None
+
+
+def _build_add_ending_chunk(
+    words: list[str],
+    suffixes: list[str],
+    chunk_id: int,
+    item_id_start: int,
+) -> ActivityChunk:
+    """Encode-practice form 1 (D5): add-the-ending transforms, e.g.
+    'tall + -er → ______' with answer 'taller'. Words that don't cleanly
+    decompose fall back to a plain say-and-write item."""
+    items: list[ActivityItem] = []
+    item_id = item_id_start
+    for word in words:
+        item_id += 1
+        decomposed = _decompose_suffix_word(word, suffixes)
+        if decomposed:
+            base, sfx = decomposed
+            items.append(
+                ActivityItem(
+                    item_id=item_id,
+                    content=f"{base} + -{sfx} → ______",
+                    response_format="write",
+                    answer=word,
+                )
+            )
+        else:
+            items.append(
+                ActivityItem(
+                    item_id=item_id,
+                    content=word,
+                    response_format="write",
+                )
+            )
+    return ActivityChunk(
+        chunk_id=chunk_id,
+        micro_goal=f"Add the ending to {len(items)} words",
+        instructions=[
+            Step(number=1, text="Read the word part."),
+            Step(number=2, text="Add the ending."),
+            Step(number=3, text="Write the whole word."),
+        ],
+        worked_example=None,
+        items=items,
+        response_format="write",
+        time_estimate="About 1 minute",
+    )
+
+
+def _build_choose_form_chunk(
+    words: list[str],
+    suffixes: list[str],
+    chunk_id: int,
+    item_id_start: int,
+) -> ActivityChunk:
+    """Encode-practice form 2 (D5): choose-the-form circle pairs, e.g.
+    taller/tallest — 'Which word means "the most"?' Unpaired words fall back
+    to a plain say-and-write item."""
+    by_base: dict[str, dict[str, str]] = {}
+    unpaired: list[str] = []
+    for word in words:
+        decomposed = _decompose_suffix_word(word, suffixes)
+        if decomposed and decomposed[1] in ("er", "est"):
+            base, sfx = decomposed
+            by_base.setdefault(base, {})[sfx] = word
+        else:
+            unpaired.append(word)
+
+    items: list[ActivityItem] = []
+    item_id = item_id_start
+    pair_index = 0
+    for base, forms in by_base.items():
+        er_word = forms.get("er")
+        est_word = forms.get("est")
+        if not (er_word and est_word):
+            unpaired.extend(forms.values())
+            continue
+        item_id += 1
+        if pair_index % 2 == 0:
+            items.append(
+                ActivityItem(
+                    item_id=item_id,
+                    content='Which word means "the most"?',
+                    response_format="circle",
+                    options=[er_word, est_word],
+                    answer=est_word,
+                )
+            )
+        else:
+            items.append(
+                ActivityItem(
+                    item_id=item_id,
+                    content="Which word compares two things?",
+                    response_format="circle",
+                    options=[er_word, est_word],
+                    answer=er_word,
+                )
+            )
+        pair_index += 1
+
+    for word in unpaired:
+        item_id += 1
+        items.append(
+            ActivityItem(
+                item_id=item_id,
+                content=word,
+                response_format="write",
+            )
+        )
+
+    return ActivityChunk(
+        chunk_id=chunk_id,
+        micro_goal=f"Choose the right word {len(items)} times",
+        instructions=[
+            Step(number=1, text="Read the question."),
+            Step(number=2, text="Circle the right word."),
+        ],
+        worked_example=None,
+        items=items,
+        response_format="circle",
+        time_estimate="About 1 minute",
+    )
+
+
 def _build_discovery_chunks(
     words: list[str],
     skill: LiteracySkillModel,
@@ -701,9 +834,43 @@ def _build_discovery_chunks(
                 if preserve_all_words
                 else [words[:max_items]]
             )
+
+            from skill.taxonomy import is_suffix_skill, suffixes_for_skill
+
+            skill_suffixes = (
+                suffixes_for_skill(skill.specific_skill)
+                if is_suffix_skill(skill.specific_skill)
+                else []
+            )
+            cycle_forms = skill_suffixes and len(write_batches) >= 2
+
             for batch_index, write_words in enumerate(write_batches):
                 if not write_words:
                     continue
+                form = batch_index % 3 if cycle_forms else 0
+
+                if form == 1:
+                    chunk = _build_add_ending_chunk(
+                        write_words,
+                        skill_suffixes,
+                        chunk_id=len(chunks) + 1,
+                        item_id_start=item_id,
+                    )
+                    item_id += len(chunk.items)
+                    chunks.append(chunk)
+                    continue
+
+                if form == 2:
+                    chunk = _build_choose_form_chunk(
+                        write_words,
+                        skill_suffixes,
+                        chunk_id=len(chunks) + 1,
+                        item_id_start=item_id,
+                    )
+                    item_id += len(chunk.items)
+                    chunks.append(chunk)
+                    continue
+
                 items = []
                 for word in write_words:
                     item_id += 1
