@@ -112,13 +112,6 @@ def build_page_prompt(
 
     if spec.feedback:
         fb = spec.feedback
-        section_rows = ", ".join(f"Part {s.chunk_id}" for s in spec.sections)
-        parts.append(
-            f'Final section: a compact feedback strip titled with exact text: "{fb.child_prompt}" '
-            f"with one row per activity section ({section_rows}); each row shows the part "
-            "number and three small circles colored green, yellow, and red for the child "
-            "to circle one."
-        )
         log_lines = "\n".join(
             f'Log row exact text: "Part {s.chunk_id}: ___ of {len(s.items)} correct   '
             'smooth / choppy   help: none / some / lots"'
@@ -130,7 +123,7 @@ def build_page_prompt(
             else ""
         )
         parts.append(
-            "Below the feedback strip, a thin outlined box titled with exact text: "
+            "Final section: a thin outlined box titled with exact text: "
             f'"{fb.parent_log_title}" containing one log row per section:\n{log_lines}{hint}'
         )
     if spec.break_prompt:

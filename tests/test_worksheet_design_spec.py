@@ -87,7 +87,7 @@ def test_spec_carries_learning_goal_and_feedback() -> None:
     assert spec.learning_goal.startswith("I can ")
     assert spec.feedback is not None
     assert spec.learning_goal in spec.required_text
-    assert spec.feedback.child_prompt in spec.required_text
+    assert spec.feedback.parent_log_title in spec.required_text
     assert "Grown-up quick log" in spec.required_text
 
 

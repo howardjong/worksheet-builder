@@ -53,15 +53,15 @@ class ScaffoldConfig(BaseModel):
 
 
 class FeedbackPanel(BaseModel):
-    """Print-only feedback capture (spec 2026-07-10).
+    """Print-only feedback capture (spec 2026-07-10; quick-log-only per D3, 2026-07-13).
 
-    Child traffic-light strip + grown-up log rows render on every sheet; the
-    decision hint renders only where show_decision_hint is True (last sheet).
+    Grown-up quick log rows render on every sheet; the decision hint renders
+    only where show_decision_hint is True (last sheet). No child-facing
+    traffic-light strip — owner decision D3: grown-up quick log only.
     Field shape deliberately matches a future --record-results ingestion loop.
     """
 
     goal_statement: str  # child-friendly "I can..." goal; also the page banner ribbon
-    child_prompt: str = "How did it go? Circle one for each part."
     parent_log_title: str = "Grown-up quick log"
     show_decision_hint: bool = False
 

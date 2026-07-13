@@ -58,8 +58,6 @@ AVATAR_CLEARANCE = 90
 
 PAGE_BREAK_BUFFER = 20
 
-_TRAFFIC_LIGHT_COLORS = ("#2E9E44", "#E5B800", "#D64545")  # green / yellow / red
-
 _fonts_registered = False
 
 
@@ -473,17 +471,16 @@ def _estimate_break_prompt_height(sizes: dict[str, int]) -> float:
 
 
 def _estimate_feedback_panel_height(adapted: AdaptedActivityModel, sizes: dict[str, int]) -> float:
-    """Estimate the feedback panel block height (child strip + grown-up log)."""
+    """Estimate the feedback panel block height (grown-up quick log only, D3)."""
     body = sizes["body"]
     small = sizes["small"]
     rows = len(adapted.chunks)
-    child = body + 10 + rows * (body + 6)
     parent = body + 10 + rows * (small + 6)
     hint = 0.0
     if adapted.feedback and adapted.feedback.show_decision_hint:
         max_chars = max(1, int((CONTENT_WIDTH - 10) / (small * 0.5)))
         hint = len(_wrap_text(DECISION_HINT, max_chars)) * (small + 6)
-    return child + parent + hint + 20
+    return parent + hint + 20
 
 
 def _draw_header(
@@ -1339,7 +1336,7 @@ def _draw_feedback_panel(
     y: float,
     effective_bottom: float = CONTENT_BOTTOM,
 ) -> float:
-    """Child traffic-light strip + grown-up quick log (spec 2026-07-10)."""
+    """Grown-up quick log only — no child traffic-light strip (D3, owner decision)."""
     panel = adapted.feedback
     if panel is None:
         return y
@@ -1348,21 +1345,6 @@ def _draw_feedback_panel(
     if y - _estimate_feedback_panel_height(adapted, sizes) < effective_bottom:
         c.showPage()
         y = CONTENT_TOP
-
-    c.setFont(theme.fonts.heading, body)
-    c.setFillColor(HexColor(theme.colors.rewards))
-    c.drawString(MARGIN, y - body, panel.child_prompt)
-    y -= body + 10
-    for chunk in adapted.chunks:
-        c.setFont(theme.fonts.primary, body)
-        c.setFillColor(HexColor(theme.colors.text))
-        c.drawString(MARGIN + 10, y - body + 2, f"Part {chunk.chunk_id}")
-        x = MARGIN + 90
-        for color in _TRAFFIC_LIGHT_COLORS:
-            c.setStrokeColor(HexColor(color))
-            c.circle(x, y - body / 2, body / 2.5, fill=0, stroke=1)
-            x += body + 12
-        y -= body + 6
 
     c.setFont(theme.fonts.heading, body)
     c.setFillColor(HexColor(theme.colors.directions))

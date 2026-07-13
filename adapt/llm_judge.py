@@ -88,7 +88,7 @@ def _build_judge_prompt(
             ws_lines.append(f"    Brain break: {ws.break_prompt}")
         if ws.feedback:
             ws_lines.append(f"    Feedback panel: {ws.feedback.goal_statement}")
-            ws_lines.append(f"      {ws.feedback.child_prompt}")
+            ws_lines.append(f"      {ws.feedback.parent_log_title}")
         ws_sections.append("\n".join(ws_lines))
     adapted_text = "\n\n".join(ws_sections)
 

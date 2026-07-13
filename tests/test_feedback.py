@@ -93,10 +93,15 @@ def test_goal_statement_phonics_keeps_split_vowel_notation_verbatim() -> None:
 def test_build_feedback_panel_defaults() -> None:
     panel = build_feedback_panel("phonics", "a_e")
     assert panel.goal_statement == "I can read words with the a_e pattern"
-    assert panel.child_prompt == "How did it go? Circle one for each part."
     assert panel.parent_log_title == "Grown-up quick log"
     assert panel.show_decision_hint is False
     assert "move on" in DECISION_HINT
+
+
+def test_feedback_panel_has_no_child_strip() -> None:
+    # D3 (owner decision): the child traffic-light strip is gone. Grown-up
+    # quick log + decision hint stay.
+    assert "child_prompt" not in FeedbackPanel.model_fields
 
 
 def test_section_cap_keeps_feedback_on_every_part_hint_on_last() -> None:

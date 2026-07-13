@@ -179,10 +179,19 @@ def test_feedback_strip_and_parent_log() -> None:
     from render.image_prompt_builder import build_page_prompt
 
     prompt = build_page_prompt(_spec())
-    assert 'exact text: "How did it go? Circle one for each part."' in prompt
     assert 'titled with exact text: "Grown-up quick log"' in prompt
     assert "smooth / choppy" in prompt
     assert "step back one lesson" in prompt  # hint present when show_decision_hint=True
+
+
+def test_page_prompt_renders_quick_log_without_traffic_strip() -> None:
+    # D3 (owner decision): grown-up quick log only, no child traffic-light strip.
+    from render.image_prompt_builder import build_page_prompt
+
+    prompt = build_page_prompt(_spec())
+    assert "Grown-up quick log" in prompt
+    assert "Circle one for each part" not in prompt
+    assert "green, yellow, and red" not in prompt
 
 
 def test_prompt_version_bumped() -> None:

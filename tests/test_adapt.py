@@ -361,7 +361,7 @@ class TestAdaptActivity:
         model = adapt_activity(_phonics_skill(), _grade_1_profile())
         assert model.feedback is not None
         assert model.feedback.goal_statement == "I can read words with the cvc blending pattern"
-        assert model.feedback.child_prompt == "How did it go? Circle one for each part."
+        assert model.feedback.parent_log_title == "Grown-up quick log"
 
     def test_decoration_zones_defined(self) -> None:
         model = adapt_activity(_phonics_skill(), _grade_1_profile())

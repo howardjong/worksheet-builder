@@ -183,7 +183,6 @@ def _variant_result(variant: str, case_dir: Path) -> dict[str, object]:
         "avatar_prompts": None,
         "feedback": {
             "goal_statement": "I can read CVCe words.",
-            "child_prompt": "How did it go? Circle one for each part.",
             "parent_log_title": "Grown-up quick log",
             "show_decision_hint": False,
         },

@@ -156,7 +156,7 @@ class TestRenderWorksheet:
         assert CONTENT_BOTTOM > 0
 
     def test_classic_pdf_renders_feedback_panel_and_goal(self) -> None:
-        """Feedback panel (child strip + grown-up log) and goal line should render."""
+        """Feedback panel (grown-up quick log only, D3) and goal line should render."""
         skill = _phonics_skill()
         adapted = adapt_activity(skill, _profile())
         adapted.feedback = FeedbackPanel(
@@ -177,9 +177,9 @@ class TestRenderWorksheet:
         flat_text = " ".join(text.split())
 
         assert "I can read words with the y pattern" in flat_text
-        assert "How did it go? Circle one for each part." in flat_text
         assert "Grown-up quick log" in flat_text
         assert "step back one lesson" in flat_text
+        assert "Circle one for each part" not in flat_text
 
 
 class TestPrintQuality:

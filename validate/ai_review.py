@@ -132,7 +132,7 @@ def _build_review_prompt(adapted: AdaptedActivityModel) -> str:
     if adapted.feedback:
         worksheet_text += "\nFeedback panel:\n"
         worksheet_text += f"  - Goal: {adapted.feedback.goal_statement}\n"
-        worksheet_text += f"  - {adapted.feedback.child_prompt}"
+        worksheet_text += f"  - {adapted.feedback.parent_log_title}"
 
     criteria_text = "\n".join(f"- {c}" for c in QUALITY_CRITERIA)
 

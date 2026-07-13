@@ -132,7 +132,7 @@ def _adapted_text(adapted: AdaptedActivityModel) -> str:
         parts.append(adapted.worksheet_title)
     if adapted.feedback:
         parts.append(adapted.feedback.goal_statement)
-        parts.append(adapted.feedback.child_prompt)
+        parts.append(adapted.feedback.parent_log_title)
 
     for chunk in adapted.chunks:
         parts.append(chunk.micro_goal)
