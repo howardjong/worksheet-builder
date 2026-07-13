@@ -9,11 +9,6 @@ import fitz  # PyMuPDF
 
 logger = logging.getLogger(__name__)
 
-# Footer positioning: matches render/pdf.py constants
-_MARGIN = 54  # 0.75 * inch
-_PAGE_WIDTH = 612  # letter width
-_FOOTER_Y = _MARGIN / 2
-
 
 def merge_worksheet_package(
     worksheet_paths: list[str],
@@ -22,7 +17,13 @@ def merge_worksheet_package(
     cleanup: bool = True,
 ) -> str:
     """Merge worksheet PDFs into a single lesson package (no cover page —
-    owner decision 2026-07-10). Stamps "Page X of Y" on every page.
+    owner decision 2026-07-10).
+
+    No footer page stamp: a prior "Page X of Y" stamp at a fixed
+    bottom-right rect was removed (D10, spec 2026-07-13) — it collided
+    with full-bleed page art (print-check true positive at (517,760)) and
+    was redundant, since page identity already lives in the page header
+    via the prompt ("This is worksheet N of M").
     """
     Path(output_path).parent.mkdir(parents=True, exist_ok=True)
     merged = fitz.open()
@@ -32,24 +33,6 @@ def merge_worksheet_package(
         ws_doc.close()
 
     total_pages = merged.page_count
-    for page_idx in range(total_pages):
-        page = merged.load_page(page_idx)
-        stamp_text = f"Page {page_idx + 1} of {total_pages}"
-        rect = fitz.Rect(
-            _PAGE_WIDTH / 2,
-            page.rect.height - _FOOTER_Y - 4,
-            _PAGE_WIDTH - _MARGIN,
-            page.rect.height - _FOOTER_Y + 10,
-        )
-        page.insert_textbox(
-            rect,
-            stamp_text,
-            fontname="helv",
-            fontsize=8,
-            color=(0.78, 0.8, 0.82),
-            align=fitz.TEXT_ALIGN_RIGHT,
-        )
-
     merged.save(output_path)
     merged.close()
     if cleanup:

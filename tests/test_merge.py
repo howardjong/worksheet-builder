@@ -36,23 +36,25 @@ class TestMerge:
             assert doc.page_count == 3  # 2 + 1, no cover
             doc.close()
 
-    def test_merge_stamps_page_numbers(self) -> None:
+    def test_merged_package_has_no_footer_page_stamp(self) -> None:
+        # D10: fixed-coordinate "Page X of Y" stamp collided with full-bleed
+        # page art (print-check true positive at (517,760)). Page identity
+        # already lives in the page header via the prompt
+        # ("This is worksheet N of M"), so the stamp is redundant. Inverted
+        # from test_merge_stamps_page_numbers, which asserted the stamp
+        # existed (spec 2026-07-13 D10).
         with tempfile.TemporaryDirectory() as tmpdir:
-            ws1 = _make_pdf(str(Path(tmpdir) / "ws1.pdf"), "WS1", pages=2)
+            ws1 = _make_pdf(str(Path(tmpdir) / "ws1.pdf"), "WS1", pages=1)
             ws2 = _make_pdf(str(Path(tmpdir) / "ws2.pdf"), "WS2", pages=1)
             out = str(Path(tmpdir) / "merged.pdf")
 
             merge_worksheet_package([ws1, ws2], out, cleanup=False)
 
             doc = fitz.open(out)
-            # Every page — including page 1 — is stamped.
-            total = doc.page_count  # 3 content pages
-            for page_idx in range(doc.page_count):
-                text = doc.load_page(page_idx).get_text()
-                expected = f"Page {page_idx + 1} of {total}"
-                assert expected in text, (
-                    f"Page {page_idx + 1} missing stamp '{expected}', got: {text!r}"
-                )
+            for page in doc:
+                text = page.get_text()
+                assert "Page 1 of" not in text
+                assert "Page 2 of" not in text
             doc.close()
 
     def test_merge_cleanup_deletes_inputs(self) -> None:
