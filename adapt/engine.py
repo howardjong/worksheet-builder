@@ -648,7 +648,7 @@ def _build_discovery_chunks(
                     ],
                     worked_example=Example(
                         instruction="Watch how I do the first one:",
-                        content=_match_example_content(match_words[0]),
+                        content=_match_example_content(shuffled_pictures[0]),
                     ),
                     items=items,
                     response_format="match",
@@ -1644,9 +1644,11 @@ def _generate_comprehension_questions(
     return questions[:3]  # Max 3 questions
 
 
-def _match_example_content(word: str) -> str:
-    pic = _word_to_picture_prompt(word).split(",")[0].replace("a ", "")
-    return f'The picture of a {pic} matches "{word}"!'
+def _match_example_content(picture_word: str) -> str:
+    return (
+        f'The first picture shows "{picture_word}". '
+        f'Draw a line from it to the word "{picture_word}".'
+    )
 
 
 def _word_to_picture_prompt(word: str) -> str:

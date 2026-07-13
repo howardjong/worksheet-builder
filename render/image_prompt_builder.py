@@ -29,7 +29,10 @@ _FORMAT_AFFORDANCES: dict[str, str] = {
         "as large, well-spaced letters a child can circle — no handwriting line"
     ),
     "trace": "the word in light dotted outline letters ready to trace",
-    "circle": ("the option words spread out with space around each so a child can circle them"),
+    "circle": (
+        "the answer choices printed on the SAME row as their question, to the "
+        "right, evenly spaced with room around each so a child can circle one"
+    ),
     "match": (
         "two columns with clear horizontal separation: words in a single column "
         "on the left, small simple pictures in a single column on the right — "
@@ -167,6 +170,8 @@ def build_page_prompt(
 
 def _section_text(section: SectionSpec) -> str:
     lines: list[str] = [f'Section {section.chunk_id} banner text: "{section.micro_goal}"']
+    if section.response_format == "match":
+        lines.append(f"Layout: {_FORMAT_AFFORDANCES['match']}.")
     if section.time_estimate:
         lines.append(f'Small time cue next to the banner: "{section.time_estimate}"')
     for number, instruction in enumerate(section.instructions, start=1):
@@ -178,6 +183,14 @@ def _section_text(section: SectionSpec) -> str:
             f'"{section.worked_example_content}"'
         )
     for item in section.items:
+        if item.response_format == "match" and item.picture_prompt:
+            lines.append(
+                f'Item {item.item_id}: word "{item.content}" in the left column. '
+                f"The picture on THIS row shows {item.picture_prompt} — deliberately "
+                f'NOT the word on this row. Never draw a picture of "{item.content}" '
+                "on this row."
+            )
+            continue
         affordance = _FORMAT_AFFORDANCES.get(
             item.response_format, "clear space for the child's answer"
         )

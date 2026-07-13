@@ -617,6 +617,23 @@ class TestAdaptLesson:
                     if item.response_format == "match":
                         assert item.picture_prompt is not None
 
+    def test_match_worked_example_uses_shuffled_picture_no_prompt_leak(self) -> None:
+        """Worked example must describe row 1's actual (shuffled) picture, not
+        leak raw picture_prompt text, and must not assert the wrong pairing
+        (D4)."""
+        worksheets = adapt_lesson(_ufli_59_skill(), _grade_1_profile())
+        match_chunk = next(
+            chunk for ws in worksheets for chunk in ws.chunks if chunk.response_format == "match"
+        )
+        we = match_chunk.worked_example
+        assert we is not None
+        assert "simple cartoon" not in we.content  # no raw picture_prompt leak
+        assert "representing" not in we.content
+        # It must reference the row-1 PICTURE's word (the shuffled one), which by
+        # derangement is never the row-1 word itself:
+        assert match_chunk.items[0].options[0] in we.content
+        assert match_chunk.items[0].content not in we.content.split('"')[1::2]
+
     def test_single_worksheet_fallback(self) -> None:
         """Skills with only word lists should still produce at least 1 worksheet."""
         minimal = LiteracySkillModel(

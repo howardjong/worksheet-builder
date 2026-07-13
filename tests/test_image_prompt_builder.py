@@ -233,6 +233,87 @@ def test_prompt_version_bumped_for_uat_fixes() -> None:
     assert PROMPT_VERSION == "page_prompt_v4"
 
 
+def _spec_with_match_rows() -> WorksheetDesignSpec:
+    return _spec(
+        sections=[
+            SectionSpec(
+                chunk_id=1,
+                micro_goal="Match 2 words to their pictures",
+                instructions=[
+                    "Look at each picture.",
+                    "Draw a line to the matching word.",
+                ],
+                worked_example_instruction="Watch how I do the first one:",
+                worked_example_content=(
+                    'The first picture shows "newer". Draw a line from it to the word "newer".'
+                ),
+                time_estimate="About 2 minutes",
+                response_format="match",
+                items=[
+                    SectionItemSpec(
+                        item_id=1,
+                        content="higher",
+                        response_format="match",
+                        options=["newer"],
+                        answer="higher",
+                        picture_prompt="a simple cartoon representing newer",
+                    ),
+                    SectionItemSpec(
+                        item_id=2,
+                        content="newer",
+                        response_format="match",
+                        options=["higher"],
+                        answer="newer",
+                        picture_prompt="a simple cartoon representing higher",
+                    ),
+                ],
+            )
+        ],
+    )
+
+
+def _spec_with_circle_question() -> WorksheetDesignSpec:
+    return _spec(
+        sections=[
+            SectionSpec(
+                chunk_id=1,
+                micro_goal="Circle the missing letter",
+                instructions=["Look at the word.", "Circle the correct choice."],
+                worked_example_instruction=None,
+                worked_example_content=None,
+                time_estimate="About 2 minutes",
+                response_format="circle",
+                items=[
+                    SectionItemSpec(
+                        item_id=1,
+                        content="c_t",
+                        response_format="circle",
+                        answer="a",
+                        options=["a", "e", "i"],
+                    ),
+                ],
+            )
+        ],
+    )
+
+
+def test_match_items_carry_shuffled_picture_and_mismatch_constraint() -> None:
+    from render.image_prompt_builder import build_page_prompt
+
+    # Spec with match items: word "higher" whose picture_prompt describes "newer"
+    prompt = build_page_prompt(_spec_with_match_rows())
+    assert "NOT the word on this row" in prompt
+    # The row's picture description (the shuffled word's picture) must be present:
+    assert "newer" in prompt.split('word "higher"')[1].split("Item")[0]
+
+
+def test_circle_options_pinned_to_question_row() -> None:
+    from render.image_prompt_builder import build_page_prompt
+
+    prompt = build_page_prompt(_spec_with_circle_question())
+    assert "same row" in prompt.lower()
+
+
 def _spec_with_read_aloud_passage() -> WorksheetDesignSpec:
     return _spec(
         sections=[

@@ -134,3 +134,54 @@ def test_evaluate_page_fails_when_character_judge_rejects(
 
     assert report.passed is False
     assert report.character.issues == ["wrong hair"]
+
+
+def test_evaluate_page_rejects_when_match_row_picture_aligns_with_its_word(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """D9: a match-row picture that depicts its own row's word must reject the
+    page attempt (the picture must depict the shuffled neighbor, never the
+    row's own word)."""
+    import render.page_gates as page_gates
+
+    monkeypatch.setattr(page_gates, "evaluate_page_text", lambda png, req: _text_report())
+    monkeypatch.setattr(
+        page_gates,
+        "judge_character_consistency",
+        lambda ref, gen, criteria: CharacterJudgeResult(available=True, approved=True, score=9),
+    )
+    monkeypatch.setattr(
+        page_gates,
+        "_evaluate_match_alignment",
+        lambda png, match_rows: page_gates.MatchAlignmentReport(
+            available=True, aligned_rows=["grade"]
+        ),
+    )
+
+    report = page_gates.evaluate_page(b"png", ["rain"], b"ref", [], match_rows=["grade", "chase"])
+
+    assert report.passed is False
+    assert report.match_alignment.aligned_rows == ["grade"]
+
+
+def test_evaluate_page_passes_when_no_match_rows_aligned(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import render.page_gates as page_gates
+
+    monkeypatch.setattr(page_gates, "evaluate_page_text", lambda png, req: _text_report())
+    monkeypatch.setattr(
+        page_gates,
+        "judge_character_consistency",
+        lambda ref, gen, criteria: CharacterJudgeResult(available=True, approved=True, score=9),
+    )
+    monkeypatch.setattr(
+        page_gates,
+        "_evaluate_match_alignment",
+        lambda png, match_rows: page_gates.MatchAlignmentReport(available=True, aligned_rows=[]),
+    )
+
+    report = page_gates.evaluate_page(b"png", ["rain"], b"ref", [], match_rows=["grade", "chase"])
+
+    assert report.passed is True
+    assert report.match_alignment.aligned_rows == []

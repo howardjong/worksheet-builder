@@ -23,7 +23,7 @@ import fitz  # PyMuPDF
 from render.design_spec import WorksheetDesignSpec
 from render.image_prompt_builder import PROMPT_VERSION, build_page_prompt
 from render.image_providers import ImageProvider, resolve_provider_chain
-from render.page_gates import PageGateReport, evaluate_page
+from render.page_gates import PageGateReport, evaluate_page, match_rows_from_spec
 from render.pose_planner import page_pose
 from render.strategies import PdfClassicRenderer, RenderContext, RenderResult
 
@@ -129,7 +129,9 @@ class ImageGenRenderer:
                     )
                     break
 
-                report = evaluate_page(png, spec.required_text, ref_bytes, criteria)
+                report = evaluate_page(
+                    png, spec.required_text, ref_bytes, criteria, match_rows_from_spec(spec)
+                )
                 report.provider_id = provider.provider_id
                 report.attempt = attempt
                 self._write_attempt_diagnostics(
@@ -145,12 +147,13 @@ class ImageGenRenderer:
 
                 logger.warning(
                     "  Page rejected (provider=%s attempt=%d): missing=%s "
-                    "misspelled=%s character_issues=%s",
+                    "misspelled=%s character_issues=%s match_rows_aligned=%s",
                     provider.provider_id,
                     attempt,
                     report.text.missing_text,
                     report.text.misspelled_text,
                     report.character.issues,
+                    report.match_alignment.aligned_rows,
                 )
 
         return self._fallback(context, reason="all providers exhausted without a gate-passing page")

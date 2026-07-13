@@ -125,6 +125,9 @@ class SectionItemSpec(BaseModel):
     response_format: str = Field(description="Expected response format.")
     options: list[str] = Field(default_factory=list)
     answer: str | None = Field(default=None, description="Answer when known.")
+    picture_prompt: str | None = Field(
+        default=None, description="Description for AI to generate a matching illustration."
+    )
 
 
 class SectionSpec(BaseModel):
@@ -337,6 +340,7 @@ def _sections(adapted: AdaptedActivityModel) -> list[SectionSpec]:
                         response_format=item.response_format,
                         options=list(item.options or []),
                         answer=item.answer,
+                        picture_prompt=item.picture_prompt,
                     )
                     for item in chunk.items
                 ],
