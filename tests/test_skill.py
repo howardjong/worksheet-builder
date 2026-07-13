@@ -349,15 +349,15 @@ class TestExtractWordWork:
         garbage_markers = ("check out", "today", "learning", "were")
         skill_lower = model.specific_skill.lower()
         for marker in garbage_markers:
-            assert (
-                marker not in skill_lower
-            ), f"garbled concept leaked into specific_skill: {model.specific_skill!r}"
+            assert marker not in skill_lower, (
+                f"garbled concept leaked into specific_skill: {model.specific_skill!r}"
+            )
         for objective in model.learning_objectives:
             obj_lower = objective.lower()
             for marker in garbage_markers:
-                assert (
-                    marker not in obj_lower
-                ), f"garbled concept leaked into objective: {objective!r}"
+                assert marker not in obj_lower, (
+                    f"garbled concept leaked into objective: {objective!r}"
+                )
         # Still a phonics model; garbage falls back to the safe generic skill.
         assert model.domain == "phonics"
 
@@ -886,3 +886,31 @@ class TestSourceNotationStripping:
         # Content should have no doubled commas
         assert ", ," not in item.content
         assert item.content == "who, cat"
+
+
+def test_suffix_concept_maps_to_morphology_not_r_controlled() -> None:
+    from skill.taxonomy import match_phonics_pattern
+
+    assert match_phonics_pattern("-er, -est") == "suffix_er_est"
+
+
+def test_morphology_helpers() -> None:
+    from skill.taxonomy import is_suffix_skill, match_morphology_pattern, suffixes_for_skill
+
+    assert match_morphology_pattern("-er, -est") == "suffix_er_est"
+    assert match_morphology_pattern("-ed") == "suffix_ed"
+    # Rime-family lessons stay phonics: any non-suffix hyphen token vetoes.
+    assert match_morphology_pattern("-ing, -ang, -ong, -ung") is None
+    assert match_morphology_pattern("ai/ay") is None
+    assert is_suffix_skill("suffix_er_est") is True
+    assert is_suffix_skill("r_controlled") is False
+    assert suffixes_for_skill("suffix_er_est") == ["er", "est"]
+    assert suffixes_for_skill("cvce") == []
+
+
+def test_existing_patterns_unchanged() -> None:
+    from skill.taxonomy import match_phonics_pattern
+
+    assert match_phonics_pattern("-ing, -ang, -ong, -ung") == "cvc_blending"
+    assert match_phonics_pattern("ai/ay") == "vowel_teams"
+    assert match_phonics_pattern("er") == "r_controlled"  # bare grapheme, no hyphen

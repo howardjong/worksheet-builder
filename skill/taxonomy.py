@@ -170,6 +170,36 @@ PHONICS_PATTERNS: dict[str, str] = {
     "-ung": "cvc_blending",
 }
 
+# Morphological suffixes UFLI teaches as morphology, not rime families.
+# A concept is a suffix lesson ONLY when every hyphen-prefixed token is in
+# this set — "-ing, -ang, -ong" is a rime-family lesson ("ang" vetoes),
+# "-er, -est" is morphology. "-ing" alone stays a family (PHONICS_PATTERNS)
+# until UFLI suffix--ing lessons are wired; extending = add the token here.
+MORPHOLOGY_SUFFIXES = frozenset({"er", "est", "ed", "ly", "es"})
+
+
+def match_morphology_pattern(concept_text: str) -> str | None:
+    """Match a concept label to a morphology (suffix) skill, e.g.
+    '-er, -est' -> 'suffix_er_est'. None when any hyphen token is not a
+    known suffix (rime families) or no hyphen tokens exist."""
+    import re
+
+    tokens = re.findall(r"-([a-z]+)", concept_text.lower())
+    if tokens and all(t in MORPHOLOGY_SUFFIXES for t in tokens):
+        ordered = sorted(set(tokens), key=tokens.index)
+        return "suffix_" + "_".join(ordered)
+    return None
+
+
+def is_suffix_skill(specific_skill: str) -> bool:
+    return specific_skill.startswith("suffix_")
+
+
+def suffixes_for_skill(specific_skill: str) -> list[str]:
+    if not is_suffix_skill(specific_skill):
+        return []
+    return specific_skill.removeprefix("suffix_").split("_")
+
 
 def match_phonics_pattern(concept_text: str) -> str | None:
     """Match a concept label to a specific phonics skill.
@@ -179,6 +209,10 @@ def match_phonics_pattern(concept_text: str) -> str | None:
     to avoid false positives (e.g., "st" in "just").
     """
     import re
+
+    morphology = match_morphology_pattern(concept_text)
+    if morphology:
+        return morphology
 
     text_lower = concept_text.lower()
 

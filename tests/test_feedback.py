@@ -121,3 +121,13 @@ def test_package_cap_backfills_feedback_and_hint() -> None:
     assert len(capped) == 2
     assert all(w.feedback is not None for w in capped)
     assert [_feedback(w).show_decision_hint for w in capped] == [False, True]
+
+
+def test_suffix_learning_goal() -> None:
+    from adapt.feedback import learning_goal_statement
+
+    assert (
+        learning_goal_statement("phonics", "suffix_er_est")
+        == "I can add -er and -est to compare things"
+    )
+    assert learning_goal_statement("phonics", "suffix_ed") == "I can add -ed to words"

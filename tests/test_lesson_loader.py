@@ -250,3 +250,9 @@ class TestWordPoolHygiene:
         assert "la" not in tokens
         assert "twen" not in tokens
         assert "fluffy" in tokens
+
+
+def test_lesson_100_classified_as_suffix_lesson() -> None:
+    skill = skill_model_from_lesson(100)
+    assert skill.specific_skill == "suffix_er_est"
+    assert "r controlled" not in skill.specific_skill

@@ -25,6 +25,12 @@ def _display_skill(specific_skill: str) -> str:
 
 def learning_goal_statement(domain: str, specific_skill: str) -> str:
     """Child-friendly 'I can...' goal shown in page banners and feedback strips."""
+    if specific_skill.startswith("suffix_"):
+        endings = specific_skill.removeprefix("suffix_").split("_")
+        if endings == ["er", "est"]:
+            return "I can add -er and -est to compare things"
+        joined = " and ".join(f"-{e}" for e in endings)
+        return f"I can add {joined} to words"
     if domain == "phonics":
         return f"I can read words with the {_display_skill(specific_skill)} pattern"
     if domain == "fluency":
