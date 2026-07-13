@@ -269,7 +269,7 @@ Example of a compliant build/change-chain activity (adapt words to THIS lesson):
   lessons, or {{"content": "Start with \\"dry\\". Change the \\"d\\" to \\"t\\". Write
   the new word.", "answer": "try"}} for letter-pattern lessons.
 Your plan MUST include one such build/change chain activity, and the plan's
-total estimated minutes MUST fit the session budget stated above.
+total estimated minutes MUST fit the session budget stated below.
 """
 
 
