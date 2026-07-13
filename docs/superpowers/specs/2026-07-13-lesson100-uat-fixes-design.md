@@ -141,13 +141,28 @@ upstream bug (skill misclassification) amplifies several others.
     `role_counts.student_practice=56` — reconcile what counts as an
     item) and re-verify the 40-item bound on both lessons.
 
-## Exit criteria
+## Exit criteria (goal contract)
 
-1. Every implementation task's report carries RED and GREEN TDD evidence;
+1. **Per-defect red/green traceability.** Every ledger defect #1-13 maps
+   to at least one NAMED test that (a) failed before its fix — RED
+   command + output captured in the task report — and (b) passes after —
+   GREEN command + output. Tasks may bundle defects, but the mapping is
+   per-defect: the final review receives a 13-row defect→test table and
+   Fable 5's audit verifies every row has both pieces of evidence.
+   Missing evidence for any row is a blocking finding.
+   Scope note: for render-fidelity defects (#4, #9, #10, #12) the
+   deterministic red/green test asserts the *controllable* layer — page
+   prompt text, gate logic, stamp placement code — since final pixels
+   belong to the image model; pixel-level confirmation is criterion 3's
+   job. Example: defect #4's RED test asserts the page prompt currently
+   lacks per-row picture descriptions; GREEN asserts they're present
+   with the not-own-word constraint, plus a gate unit test that a
+   semantically-aligned page is rejected.
+2. Every implementation task's report carries RED and GREEN TDD evidence;
    Fable 5 final review = READY TO MERGE with per-task TDD-evidence audit.
-2. `make test`, `make lint`, `make typecheck` green (mypy verified under
+3. `make test`, `make lint`, `make typecheck` green (mypy verified under
    CI's 3.11 semantics).
-3. Live acceptance runs of BOTH lesson 74 and lesson 100 (no override):
+4. Live acceptance runs of BOTH lesson 74 and lesson 100 (no override):
    each either ships judge-approved, or fails pre-render for a reason the
    owner accepts. Neither PDF (when shipped) may show any of the 13
    ledger defects: correct "I can" goal per lesson type, chains with
@@ -157,7 +172,7 @@ upstream bug (skill misclassification) amplifies several others.
    word banks, chunked passage at practice-word size with worked example,
    row-aligned comprehension options, quick-log-only feedback block, no
    footer/illustration overlap.
-4. Photo path untouched and regression-free (all changes are lesson-mode
+5. Photo path untouched and regression-free (all changes are lesson-mode
    or shared-template scoped; existing photo tests unchanged and green).
 
 ## Out of scope
