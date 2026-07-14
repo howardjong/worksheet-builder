@@ -8,6 +8,54 @@
 
 ## Current State
 
+### Session 61b — 2026-07-14 (CI pipeline fixed on main + branch cleanup)
+
+**Status:** Immediate post-merge follow-up. `main` was red after the Session 61 merge —
+diagnosed and fixed same-day, confirmed green via the live GitHub Actions API. **1 commit
+(`4015da3`)** on top of the merge, fast-forwarded onto `main` and pushed.
+
+**Root cause:** `requirements.txt` had unbounded floors (`mypy>=1.5`, `mutagen>=1.47`).
+A fresh CI `pip install` picked up `mypy` 2.3.0 (a major-version jump) and a `mutagen`
+release that newly ships `py.typed` stubs — together producing 3 real mypy errors in the
+frozen `experiments/corpus_ufli/audio_companion.py` (`MP3(...)` call now resolved as a
+typed-but-unannotated constructor; `FileType.info = None` with no type widening made
+`audio.info.length` type as accessing an attribute on `None`). No application code changed
+to cause this; the divergence was purely dependency drift between what CI installs and
+what the local `.venv` has pinned.
+
+**Fix (D47):** pinned `mutagen>=1.47,<1.48` and `mypy>=1.5,<2` — NOT a code-level
+`# type: ignore`. A `# type: ignore[no-untyped-call]`/`[attr-defined]` fix was tried first
+and verified clean under a fresh CI-matching Python 3.11 venv, but then re-verified DIRTY
+under the local `.venv`'s older mypy/mutagen combo — `strict = true` in pyproject.toml
+enables `warn_unused_ignores`, so an ignore comment needed under the new toolchain becomes
+an "Unused type: ignore" ERROR under the old one. This is a real environment-flip-flop
+trap (G20): fixing CI's symptom with an ignore comment would have simply broken local
+`make typecheck` instead. Version pinning collapses the divergence at the source so both
+environments install identical, tested packages.
+
+**Verification method:** the repo has no `gh` CLI; used unauthenticated `curl` against
+`api.github.com` (repo is public, so read access works without a token; job LOG downloads
+still require admin auth and returned 403 — status/conclusion fields were sufficient).
+Reproduced the failure and the fix in a from-scratch `python3.11 -m venv` built the way CI
+builds it (not the `.venv`, which is Python 3.13 with already-installed older deps) —
+this is a stronger verification than trusting pyproject's `python_version = "3.11"` mypy
+config alone, which only targets syntax-version checking, not installed-package drift.
+
+**Branch cleanup:** fetched all remote branches, cross-checked against open PRs (zero) and
+`git merge-base --is-ancestor` against `main`. Deleted 3 branches with zero risk (fully
+merged, no worktree attached): `feature/objective-sufficiency-coverage`,
+`refactor/separate-experiments` (both local + remote), `claude/peaceful-bun-269719`
+(local only, no remote copy existed). Left `claude/epic-morse-385825` and
+`claude/festive-dirac-9dcb4c` alone — also fully merged with clean working trees, but each
+lives in its own active worktree; auto-mode's classifier correctly blocked worktree
+removal even after conditional owner authorization ("as long as you're confident nothing
+critical is lost"), since worktree teardown risks more than git history (in-progress
+editor state, uncommitted-but-gitignored artifacts) that merge-ancestry checks can't see.
+Remote branches are down to just `main` + the active working branch.
+
+**Next:** owner to confirm whether the two remaining worktrees/branches are dead sessions
+(if so, `git worktree remove` + branch delete closes them out); otherwise no action needed.
+
 ### Session 61 — 2026-07-13 (lesson-100 UAT fixes SHIPPED: all 13 defects closed with red/green traceability; suffix lessons are first-class)
 
 **Status:** Third owner-directed subagent plan (spec
@@ -1754,6 +1802,7 @@ All 344 tests pass. PDF validation (skill parity, age band, ADHD compliance, pri
 | D44 | Feedback panel is grown-up quick log ONLY — child traffic-light strip removed everywhere (model field deleted, not flagged off) | Owner decision: the log carries the adaptation data; age-6 self-ratings are unreliable; page space was ⅓ consumed. Amends D35's two-block design; log rows + decision hint unchanged | 2026-07-13 |
 | D45 | Page gates fail CLOSED when content-to-verify exists but verification is unavailable; vacuous pass only when there is nothing to check (and the judge isn't called at all) | The new match-alignment vision gate initially passed pages open when both providers failed — exactly the unverified-defect risk D9 exists to catch. Matches the text gate's precedent; character-gate vacuous pass (no reference image) is the "nothing to check" case, not the "check failed" case | 2026-07-13 |
 | D46 | Advisory-judge veto on passage density stands (owner-accepted): fixed-length UFLI decodable passages (~150 words) stay under the connected-text bar even chunked; remedy is passage splitting, not a rubric override | Both acceptance runs abort pre-render on this single criterion after all 13 UAT defects were fixed; D40's cost logic makes the veto cheap (no render spend). Follow-up queued: split the story into 2-3 checkpointed read_aloud segments; also consider 2-of-3 sampling (single-sample scores ranged 0.52-0.68 on identical content) | 2026-07-13 |
+| D47 | CI toolchain drift is fixed by pinning dependency versions, not by adding code-level `# type: ignore` comments | `requirements.txt`'s unbounded `mypy>=1.5`/`mutagen>=1.47` let CI install a newer mypy + a newly-typed mutagen than the local `.venv` has, producing real mypy errors with zero app-code change. An ignore-comment fix verified clean under the new toolchain but broke `warn_unused_ignores` (from `strict = true`) under the OLD toolchain — a genuine environment-flip-flop, not a false alarm. Pinned `mutagen>=1.47,<1.48`, `mypy>=1.5,<2` so CI and local install identical packages | 2026-07-14 |
 
 ---
 
@@ -1880,6 +1929,7 @@ Note: index step requires GOOGLE_CLOUD_PROJECT=ws-builder-rag env var.
 | G17 | Per-file mypy runs pass while whole-repo `make typecheck` fails | Two task reviews certified "mypy clean" from per-file invocations while 7 errors (Optional narrowing, missing annotation) sat in test files; the gate was red for two tasks before anyone noticed. Also: mypy's pyproject pins `python_version = "3.11"`, so a full local run DOES target CI semantics — the historical 3.11/3.13 divergence fear applies to typeshed differences, not target-version config | Session 61: reviewers now mandated to run full `make typecheck`; fixed in `825d2f4` |
 | G18 | A "cosmetic" chunk-label/content mismatch is judge-fatal in production | Choose-form batches whose er/est pairs were scattered across batch boundaries degraded every item to say-and-write under a "Choose the right word / circle" label; two reviews rated it Minor; the advisory judge rejected the live package for exactly this (`misleading_or_wrong_instruction` on decode AND encode) | FIXED session 61 (`b18137c`+`e85b5e1`): pair from the FULL pool before batching; choose chunks are pure circle items; honest label downgrade as safety net. Rule: instruction-text/content mismatches are never cosmetic — the judge reads them literally |
 | G19 | Implementer subagents sometimes "defer" work to a nonexistent background process, or spawn child agents that race the same checkout | Two Task dispatches returned "running in the background" having done nothing; one spawned a child that raced the original in the same working tree (mid-session commits appearing "by tooling") | Session 61: dispatch prompts now state "work synchronously with your OWN tool calls; do NOT use the Agent tool; nothing runs in the background"; recovery = resume the agent with that correction |
+| G20 | Local `.venv` and CI can silently diverge when `requirements.txt` uses unbounded floors (`>=X`, no `<Y`) on dev-tool dependencies | Unpinned `mypy>=1.5`/`mutagen>=1.47` let a fresh CI install land on mypy 2.3.0 + a newly-`py.typed` mutagen release, producing 3 real mypy errors that no code change caused — `main` went red with zero app diffs. `pyproject.toml`'s `python_version = "3.11"` mypy config (G17) only targets syntax-version checking; it does NOT catch installed-PACKAGE-version drift like this | FIXED session 61b (`4015da3`) — pinned `mutagen>=1.47,<1.48`, `mypy>=1.5,<2`. Rule: reproduce CI failures in a from-scratch `python3.11 -m venv` + fresh `pip install -r requirements.txt`, never trust the long-lived local `.venv`'s already-resolved dependency versions as CI-equivalent |
 
 ---
 
@@ -3243,3 +3293,17 @@ Then evaluate honestly and record both scorecards. Do NOT touch parent-plan Task
 - Gotchas G17 (per-file mypy blind spot), G18 (label mismatch judge-fatal), G19 (subagent background-deferral/child-spawn race) recorded; decisions D42-D46 logged.
 
 **What's next:** passage split into checkpointed segments (sole judge blocker, chip queued); consider 2-of-3 judge sampling for connected text + judge visibility of render-layer facts (Q5); merge/push owner call; then `--record-results` ingestion. gpt-5.4 → gpt-5.6-terra swap still paused.
+
+### Session 61b — 2026-07-14 (CI pipeline fixed + branch cleanup)
+
+**Participants:** Claude (Sonnet 5, solo — no subagents this session), owner (scope + conditional destructive-action authorization)
+
+**What happened:**
+- Owner reported CI failing on `main` and asked for branch cleanup. No `gh` CLI available; used unauthenticated `curl` against the public GitHub API for read access (job log downloads need admin auth, returned 403 — status/conclusion fields were enough).
+- Root-caused the CI failure to `requirements.txt`'s unbounded `mypy>=1.5`/`mutagen>=1.47` floors: CI's fresh install landed on mypy 2.3.0 + a newly-`py.typed` mutagen release, producing 3 real type errors in the frozen `experiments/corpus_ufli/audio_companion.py` — zero app-code change caused this.
+- First attempt (code-level `# type: ignore` comments) verified clean under a fresh CI-matching Python 3.11 venv, but re-verification under the LOCAL `.venv`'s older toolchain showed it broke `make typecheck` there (`warn_unused_ignores` under `strict = true` flags now-unnecessary ignores as errors) — a genuine environment-flip-flop, caught before committing. Reverted; fixed via version pinning instead (`mutagen<1.48`, `mypy<2`), which makes CI and local install identical packages. Reran all 3 gates clean in a from-scratch venv, pushed (`4015da3`), fast-forwarded + pushed `main`, confirmed green via the live Actions API.
+- Branch cleanup: verified merge-ancestry + zero open PRs for every remote branch before deleting. Auto-mode's permission classifier blocked (a) fast-forwarding+pushing `main` without a fresh explicit instruction that turn, (b) deleting remote branches on a vague "clean up" ask without named targets, and (c) removing two merged-but-worktree-attached branches even after the owner's conditional go-ahead ("as long as you're confident nothing critical is lost") — each block was respected; asked the owner directly instead of working around any of them.
+- Deleted 3 zero-risk branches (fully merged, no worktree): `feature/objective-sufficiency-coverage`, `refactor/separate-experiments` (local+remote), `claude/peaceful-bun-269719` (local only). Left `claude/epic-morse-385825`/`claude/festive-dirac-9dcb4c` for the owner to confirm are dead sessions.
+- Gotcha G20 recorded (CI/local dependency-floor drift); decision D47 logged (pin, don't ignore-comment, toolchain drift).
+
+**What's next:** owner to confirm the two remaining worktrees/branches can be removed; otherwise the CI + branch-cleanup ask is fully closed. Worksheet-pipeline queue (passage split, D46/Q5, `--record-results`) unchanged from the Session 61 entry above.
