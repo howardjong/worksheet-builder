@@ -616,9 +616,13 @@ def _allocate_suffix_write_batches(
     AFTER naive slicing, so pairs straddling batch boundaries were never
     found and choose batches degraded to write items under a "Choose" label.
     Pair first, batch second: reserve pairs for choose batches, fill every
-    other slot with the remaining words in original order. Batch sizes match
-    the naive slicing exactly — every word appears exactly once."""
-    sizes = [len(pool[start : start + max_items]) for start in range(0, len(pool), max_items)]
+    other slot with the remaining words in original order.
+
+    Review round 2, ruling (b): choose slots hold pair-multiples ONLY (pure
+    circle chunks — never a say-and-write filler under "Read the question. /
+    Circle the right word."). Odd leftovers route into the write/add batches;
+    any overflow appends extra batches. Every word appears exactly once."""
+    batch_count = len(range(0, len(pool), max_items))
 
     # Complete er/est pairs by base, in first-appearance order.
     by_base: dict[str, dict[str, str]] = {}
@@ -633,17 +637,20 @@ def _allocate_suffix_write_batches(
         if "er" in forms and "est" in forms
     ]
 
-    # Reserve pairs for the choose batches, in batch order.
+    # Reserve pair-multiples (even word counts, no filler) for the choose
+    # slots, in batch order. A choose slot with zero pairs stays unreserved
+    # and gets plain words below — the has-pair guard downgrades its label.
     reserved: dict[int, list[str]] = {}
     pair_cursor = 0
-    for batch_index, size in enumerate(sizes):
+    for batch_index in range(batch_count):
         if batch_index % 3 != 2:
             continue
         batch_words: list[str] = []
-        while len(batch_words) + 2 <= size and pair_cursor < len(pairs):
+        while len(batch_words) + 2 <= max_items and pair_cursor < len(pairs):
             batch_words.extend(pairs[pair_cursor])
             pair_cursor += 1
-        reserved[batch_index] = batch_words
+        if batch_words:
+            reserved[batch_index] = batch_words
 
     # Everything not reserved keeps its original order (multiset-safe).
     to_remove = Counter(w for batch in reserved.values() for w in batch)
@@ -656,12 +663,17 @@ def _allocate_suffix_write_batches(
 
     batches: list[list[str]] = []
     cursor = 0
-    for batch_index, size in enumerate(sizes):
-        batch = list(reserved.get(batch_index, []))
-        need = size - len(batch)
-        batch.extend(remaining[cursor : cursor + need])
-        cursor += need
-        batches.append(batch)
+    for batch_index in range(batch_count):
+        if batch_index in reserved:
+            batches.append(reserved[batch_index])
+            continue
+        batches.append(remaining[cursor : cursor + max_items])
+        cursor += max_items
+    # Words displaced by pure-pair choose slots overflow into extra batches
+    # (form cycle continues at consumption; pairless choose indices downgrade).
+    while cursor < len(remaining):
+        batches.append(remaining[cursor : cursor + max_items])
+        cursor += max_items
     return batches
 
 

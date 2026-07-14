@@ -279,6 +279,43 @@ def test_choose_chunks_have_real_pairs_when_pairs_straddle_batches() -> None:
     assert sorted(seen_words) == sorted(LESSON_100_WORD_ORDER)
 
 
+def test_choose_chunks_are_pure_circle_with_accurate_count() -> None:
+    # Review round 2 ruling (b): a "Choose" chunk must contain ONLY circle
+    # items — its instructions ("Read the question. / Circle the right
+    # word.") are wrong for a bare say-and-write filler word, the same
+    # misleading_or_wrong_instruction class the judge rejected. The 15-word
+    # lesson-100 pool forces an odd leftover into the choose slot under
+    # fill-to-size allocation (2 pairs = 4 words + 1 filler in a 5-word slot).
+    chunks = _build_discovery_chunks(
+        LESSON_100_WORD_ORDER,
+        _skill("suffix_er_est"),
+        _rules(),
+        format_order=["write"],
+        preserve_all_words=True,
+    )
+    write_like = [c for c in chunks if c.micro_goal.startswith(("Write", "Add", "Choose"))]
+    choose_chunks = [c for c in write_like if c.micro_goal.startswith("Choose")]
+    assert choose_chunks, "pool has complete er/est pairs — a Choose chunk must exist"
+    for chunk in choose_chunks:
+        assert all(item.response_format == "circle" for item in chunk.items), (
+            "no say-and-write filler under a Choose label"
+        )
+        # "Choose the right word N times" — N must equal the circle-item count.
+        count = int(chunk.micro_goal.split()[4])
+        assert count == len(chunk.items)
+    # Word conservation: fillers must be rerouted, never dropped.
+    seen_words: list[str] = []
+    for chunk in write_like:
+        for item in chunk.items:
+            if item.response_format == "circle" and item.options:
+                seen_words.extend(item.options)
+            elif item.answer:
+                seen_words.append(item.answer)
+            else:
+                seen_words.append(item.content)
+    assert sorted(seen_words) == sorted(LESSON_100_WORD_ORDER)
+
+
 def test_non_suffix_write_batches_unchanged() -> None:
     # Same construction with specific_skill="y": all write batches keep
     # today's "Write N words" shape (lesson-74 regression bar).
