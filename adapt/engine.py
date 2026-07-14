@@ -6,6 +6,7 @@ import hashlib
 import logging
 import os
 import re
+from collections import Counter
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -592,6 +593,78 @@ def _decompose_suffix_word(word: str, suffixes: list[str]) -> tuple[str, str] | 
     return None
 
 
+def _batch_has_er_est_pair(words: list[str], suffixes: list[str]) -> bool:
+    """True if the batch contains at least one complete er/est pair
+    sharing a base — the precondition for an honest choose-form chunk."""
+    seen: dict[str, set[str]] = {}
+    for word in words:
+        decomposed = _decompose_suffix_word(word, suffixes)
+        if decomposed and decomposed[1] in ("er", "est"):
+            seen.setdefault(decomposed[0], set()).add(decomposed[1])
+    return any({"er", "est"} <= forms for forms in seen.values())
+
+
+def _allocate_suffix_write_batches(
+    pool: list[str],
+    max_items: int,
+    suffixes: list[str],
+) -> list[list[str]]:
+    """Distribute the write-word pool so complete er/est pairs land INSIDE
+    the choose-form batches (batch_index % 3 == 2).
+
+    Live-run defect (D5 fix round 1): pairing used to run within each batch
+    AFTER naive slicing, so pairs straddling batch boundaries were never
+    found and choose batches degraded to write items under a "Choose" label.
+    Pair first, batch second: reserve pairs for choose batches, fill every
+    other slot with the remaining words in original order. Batch sizes match
+    the naive slicing exactly — every word appears exactly once."""
+    sizes = [len(pool[start : start + max_items]) for start in range(0, len(pool), max_items)]
+
+    # Complete er/est pairs by base, in first-appearance order.
+    by_base: dict[str, dict[str, str]] = {}
+    for word in pool:
+        decomposed = _decompose_suffix_word(word, suffixes)
+        if decomposed and decomposed[1] in ("er", "est"):
+            base, sfx = decomposed
+            by_base.setdefault(base, {}).setdefault(sfx, word)
+    pairs = [
+        (forms["er"], forms["est"])
+        for forms in by_base.values()
+        if "er" in forms and "est" in forms
+    ]
+
+    # Reserve pairs for the choose batches, in batch order.
+    reserved: dict[int, list[str]] = {}
+    pair_cursor = 0
+    for batch_index, size in enumerate(sizes):
+        if batch_index % 3 != 2:
+            continue
+        batch_words: list[str] = []
+        while len(batch_words) + 2 <= size and pair_cursor < len(pairs):
+            batch_words.extend(pairs[pair_cursor])
+            pair_cursor += 1
+        reserved[batch_index] = batch_words
+
+    # Everything not reserved keeps its original order (multiset-safe).
+    to_remove = Counter(w for batch in reserved.values() for w in batch)
+    remaining: list[str] = []
+    for word in pool:
+        if to_remove[word] > 0:
+            to_remove[word] -= 1
+        else:
+            remaining.append(word)
+
+    batches: list[list[str]] = []
+    cursor = 0
+    for batch_index, size in enumerate(sizes):
+        batch = list(reserved.get(batch_index, []))
+        need = size - len(batch)
+        batch.extend(remaining[cursor : cursor + need])
+        cursor += need
+        batches.append(batch)
+    return batches
+
+
 def _build_add_ending_chunk(
     words: list[str],
     suffixes: list[str],
@@ -843,11 +916,21 @@ def _build_discovery_chunks(
                 else []
             )
             cycle_forms = skill_suffixes and len(write_batches) >= 2
+            if cycle_forms:
+                # Pair FIRST, batch SECOND (D5 live-run fix): steer complete
+                # er/est pairs into the choose-form batches so pairing never
+                # depends on where the naive slicing happened to cut.
+                write_batches = _allocate_suffix_write_batches(words, max_items, skill_suffixes)
 
             for batch_index, write_words in enumerate(write_batches):
                 if not write_words:
                     continue
                 form = batch_index % 3 if cycle_forms else 0
+                if form == 2 and not _batch_has_er_est_pair(write_words, skill_suffixes):
+                    # Honest label: a choose batch with zero real pairs is a
+                    # plain "Write N words" chunk, never a "Choose" label
+                    # over write items (advisory-judge rejection, fix round 1).
+                    form = 0
 
                 if form == 1:
                     chunk = _build_add_ending_chunk(

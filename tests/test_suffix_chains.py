@@ -221,6 +221,64 @@ def test_suffix_write_batches_use_three_distinct_forms() -> None:
         assert item.options and item.answer in item.options
 
 
+# Lesson-100 acceptance-run word order: er/est pairs straddle batch
+# boundaries (taller lands in batch 0, tallest in batch 2, ...). Naive
+# within-batch pairing finds ZERO pairs and emits circle-labeled chunks
+# of pure write items — the live-run defect the advisory judge rejected
+# as misleading_or_wrong_instruction.
+LESSON_100_WORD_ORDER = [
+    "taller",
+    "shortest",
+    "faster",
+    "smallest",
+    "quicker",
+    "higher",
+    "lower",
+    "older",
+    "newer",
+    "louder",
+    "smaller",
+    "quickest",
+    "tallest",
+    "shorter",
+    "fastest",
+]
+
+
+def test_choose_chunks_have_real_pairs_when_pairs_straddle_batches() -> None:
+    chunks = _build_discovery_chunks(
+        LESSON_100_WORD_ORDER,
+        _skill("suffix_er_est"),
+        _rules(),
+        format_order=["write"],
+        preserve_all_words=True,
+    )
+    write_like = [c for c in chunks if c.micro_goal.startswith(("Write", "Add", "Choose"))]
+    choose_chunks = [c for c in write_like if c.micro_goal.startswith("Choose")]
+    assert choose_chunks, "pool has complete er/est pairs — a Choose chunk must exist"
+    for chunk in choose_chunks:
+        circle_items = [i for i in chunk.items if i.response_format == "circle"]
+        assert circle_items, "Choose-labeled chunk must contain real circle pairs"
+        assert chunk.response_format == "circle"
+    # Honest labels: no circle-labeled chunk of pure write items anywhere.
+    for chunk in write_like:
+        if chunk.response_format == "circle":
+            assert any(i.response_format == "circle" for i in chunk.items)
+        else:
+            assert not chunk.micro_goal.startswith("Choose")
+    # Word conservation: every word appears exactly once across write batches.
+    seen_words: list[str] = []
+    for chunk in write_like:
+        for item in chunk.items:
+            if item.response_format == "circle" and item.options:
+                seen_words.extend(item.options)
+            elif item.answer:
+                seen_words.append(item.answer)
+            else:
+                seen_words.append(item.content)
+    assert sorted(seen_words) == sorted(LESSON_100_WORD_ORDER)
+
+
 def test_non_suffix_write_batches_unchanged() -> None:
     # Same construction with specific_skill="y": all write batches keep
     # today's "Write N words" shape (lesson-74 regression bar).
