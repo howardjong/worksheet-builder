@@ -53,8 +53,17 @@ critical is lost"), since worktree teardown risks more than git history (in-prog
 editor state, uncommitted-but-gitignored artifacts) that merge-ancestry checks can't see.
 Remote branches are down to just `main` + the active working branch.
 
-**Next:** owner to confirm whether the two remaining worktrees/branches are dead sessions
-(if so, `git worktree remove` + branch delete closes them out); otherwise no action needed.
+**Closeout (same day):** owner confirmed both remaining worktrees were dead —
+`epic-morse-385825` and `festive-dirac-9dcb4c` removed (`git worktree remove` + branch
+delete each). The third worktree (`peaceful-bun-269719`, running this very session on
+`claude/cranky-goldberg-283627`) was intentionally left alone at that point — an agent
+can't safely tear down the worktree it's actively executing in. It was removed afterward
+from outside the session once vacated; the branch is gone too. **Repo is now down to a
+single worktree** (the main checkout, on `claude/review-recent-refactoring-rma786`,
+0 commits ahead of `main`) **+ exactly 2 remote branches** (`main`,
+`claude/review-recent-refactoring-rma786`) — the full multi-worktree scaffolding from
+the Session 56 experiments-refactor era and earlier is gone. CI, branch cleanup, and
+worktree cleanup are all fully closed; no follow-up action needed on any of this.
 
 ### Session 61 — 2026-07-13 (lesson-100 UAT fixes SHIPPED: all 13 defects closed with red/green traceability; suffix lessons are first-class)
 
@@ -1711,7 +1720,7 @@ All 344 tests pass. PDF validation (skill parity, age band, ADHD compliance, pri
 - `tests/test_corpus_audio_judge.py` — judge response parsing + artifact generation
 
 ### What's Next
-**See the Session 61 entry at the top of Current State for the live worksheet-pipeline queue (passage split → judge sampling → judge-visibility gaps → merge/push). The audio-companion "Handoff Start Here" below is frozen (D28) and predates the worksheet quality push.**
+**See the Session 61/61b entries at the top of Current State for the live queue: passage split (sole live-run judge blocker, chip queued) → judge sampling/visibility (Q5) → `--record-results`. Merge/push and repo/branch cleanup are DONE as of Session 61b — main is green, only 2 remote branches and 1 worktree remain. The audio-companion "Handoff Start Here" below is frozen (D28) and predates the worksheet quality push.**
 **All original milestones remain complete. UFLI crawl/acquire/extract/index are done. Active remaining work is now experiment-harness consolidation/docs and broader production hardening.**
 
 ### Handoff Start Here
@@ -3305,5 +3314,6 @@ Then evaluate honestly and record both scorecards. Do NOT touch parent-plan Task
 - Branch cleanup: verified merge-ancestry + zero open PRs for every remote branch before deleting. Auto-mode's permission classifier blocked (a) fast-forwarding+pushing `main` without a fresh explicit instruction that turn, (b) deleting remote branches on a vague "clean up" ask without named targets, and (c) removing two merged-but-worktree-attached branches even after the owner's conditional go-ahead ("as long as you're confident nothing critical is lost") — each block was respected; asked the owner directly instead of working around any of them.
 - Deleted 3 zero-risk branches (fully merged, no worktree): `feature/objective-sufficiency-coverage`, `refactor/separate-experiments` (local+remote), `claude/peaceful-bun-269719` (local only). Left `claude/epic-morse-385825`/`claude/festive-dirac-9dcb4c` for the owner to confirm are dead sessions.
 - Gotcha G20 recorded (CI/local dependency-floor drift); decision D47 logged (pin, don't ignore-comment, toolchain drift).
+- **Closeout (same day):** owner confirmed `claude/epic-morse-385825` and `claude/festive-dirac-9dcb4c` were dead — both removed (`git worktree remove` + branch delete). The session's own worktree (`peaceful-bun-269719` / `claude/cranky-goldberg-283627`) was flagged as un-removable mid-session (can't tear down the worktree you're running in) and removed afterward once vacated. Repo is now down to one worktree (main checkout) + 2 remote branches (`main`, the active working branch).
 
-**What's next:** owner to confirm the two remaining worktrees/branches can be removed; otherwise the CI + branch-cleanup ask is fully closed. Worksheet-pipeline queue (passage split, D46/Q5, `--record-results`) unchanged from the Session 61 entry above.
+**What's next:** CI + branch/worktree cleanup is fully closed, no follow-up. Worksheet-pipeline queue unchanged from the Session 61 entry above: passage split into checkpointed segments (sole live-run judge blocker, chip task_202def01 queued); 2-of-3 judge sampling + judge visibility of render-layer facts (Q5); then `--record-results` ingestion. gpt-5.4 → gpt-5.6-terra swap still paused.
