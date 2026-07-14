@@ -21,11 +21,11 @@ chromadb>=0.5
 # Corpus ingestion (optional — for UFLI curriculum indexing)
 python-pptx>=0.6.21
 playwright>=1.40
-mutagen>=1.47
+mutagen>=1.47,<1.48
 
 # Dev / CI
 pytest>=7.0
-mypy>=1.5
+mypy>=1.5,<2
 ruff>=0.4
 types-PyYAML>=6.0
 types-Pillow>=10.0
