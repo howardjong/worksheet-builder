@@ -8,6 +8,71 @@
 
 ## Current State
 
+### Session 61 — 2026-07-13 (lesson-100 UAT fixes SHIPPED: all 13 defects closed with red/green traceability; suffix lessons are first-class)
+
+**Status:** Third owner-directed subagent plan (spec
+`docs/superpowers/specs/2026-07-13-lesson100-uat-fixes-design.md`, plan
+`docs/superpowers/plans/2026-07-13-lesson100-uat-fixes.md`). **19 commits
+(`2a6cfbd..e85b5e1`)**, 10 tasks + 6 review-driven fix rounds; Fable 5 final review
+**READY TO MERGE** (0 Critical/Important; 14 Minors accepted with notes) including a
+row-by-row audit of the 13-defect traceability table
+(`.superpowers/sdd/uat-fix-traceability.md`). Gates green: **857 tests**, lint, mypy
+0 issues/188 files (pyproject pins `python_version = "3.11"` → local runs target CI
+semantics).
+
+**What shipped (defect → mechanism):**
+1. **D13 root fix — morphology taxonomy tier** (`skill/taxonomy.py`): `MORPHOLOGY_SUFFIXES`
+   + `match_morphology_pattern` checked BEFORE grapheme patterns, with the veto rule (every
+   hyphen token must be a known suffix, so "-ing, -ang…" rime families stay cvc_blending).
+   "-er, -est" → `suffix_er_est`; goal text "I can add -er and -est to compare things".
+2. **D1 — suffix-aware chains** (`adapt/engine.py` + `validate/objective_coverage.py`):
+   chains render as `base + -sfx → ______` hops (answers never printed), chain inputs
+   deduped; the evidence stitcher gained ADDITIVE recognition (`_SUFFIX_CHAIN_STEP_RE`,
+   `_SUFFIX_EXAMPLE_RE`, base-anchored worked-example splice) so suffix lessons don't
+   false-fail manipulation cells (2 fix rounds — the task reviewer caught both stitcher
+   gaps by end-to-end reproduction).
+3. **D2 — circle-the-letter fill-blanks** + the cycle's single PROMPT_VERSION bump (v4).
+4. **D6/D7** — "make the word" dictation stem filtered; word banks = answer + ≤2
+   distractors; ai_review gained `remove_option` ambiguity pruning with guardrails.
+5. **D8 — passage chunking** (`_format_passage`: ≤3-sentence paragraphs, title-line
+   preservation, size (2) typography, first-batch-only worked example). Judge
+   connected-text quality moved 0.58 → 0.67.
+6. **D4/D9 — match shuffle survives to pixels**: per-row `picture_prompt` + NOT-this-row
+   constraint in the page prompt (design_spec passthrough was genuinely dropped); new
+   match-alignment vision gate (fail-closed on provider failure) wired into image_gen;
+   circle options row-pinned.
+7. **D3 — quick-log-only feedback panel** (owner decision): `child_prompt`/traffic-light
+   strip removed model→gate→prompt→classic renderer→tests, repo-wide zero refs.
+8. **D10 — merge footer stamp deleted** (was overlapping page art at (517,760)).
+9. **D11/D12 — judge 4096 tokens + one parse retry; planner authoring block got a concrete
+   chain example + budget line.** Planner now AUTHORS chain plans (0/4 record closed).
+10. **D5 — varied encode forms**: suffix write batches cycle say-and-write / add-the-ending
+    / choose-the-form; after live-run evidence, pairs are allocated from the FULL pool
+    before batching and choose chunks are PURE circle items (2 fix rounds).
+
+**Live acceptance (no override), owner-adjudicated:** both lessons abort pre-render on
+exactly ONE criterion — the advisory judge holds the ~149-word UFLI decodable passage
+under its ADHD-density bar even chunked (L74 overall 0.79, quality 0.67; L100 run 2
+overall 0.74, quality 0.52; note single-sample score noise 0.52-0.68 on identical
+content). Everything else went clean in run 2: decode 0.82 / encode 0.88, zero
+instruction defects, no truncation/unavailable path. **Owner ACCEPTED the failure reason
+(exit criterion 4 branch b)** and queued the passage-split follow-up (chip task_202def01:
+split the story into 2-3 checkpointed segments). Run 1 earned its cost: it exposed the
+choose-chunk zero-pair bug the test suite and two reviews had rated cosmetic.
+
+**Process catches worth keeping:** (a) per-file mypy runs let 7 whole-repo errors through
+two task reviews — full `make typecheck` is now the mandated reviewer gate (G17); (b) a
+"cosmetic" label/content mismatch was judge-fatal in production (G18); (c) implementer
+subagents sometimes spawned their own children ("running in background") causing a
+same-checkout race — dispatches now forbid child agents explicitly.
+
+**Next (ordered):** (1) passage-split follow-up (chip task_202def01) — the sole remaining
+judge blocker; (2) consider 2-of-3 sampling for the connected-text criterion (score noise);
+(3) judge-visibility gaps: match pictures exist only at render (judge sees word options),
+and the rubric doesn't recognize owner-approved add-the-ending items as chain manipulation
+(obj_manipulation 0.46 with no defect); (4) merge to main + push (owner call); (5)
+`--record-results` ingestion; gpt-5.4 → gpt-5.6-terra swap still PAUSED.
+
 ### Session 60b — 2026-07-10 (adaptive dosage SHIPPED: profile facts drive length/pages; P4 closed; Story Time restored)
 
 **Status:** Second subagent-driven plan of the session, executed same-day on owner approval
@@ -1598,6 +1663,7 @@ All 344 tests pass. PDF validation (skill parity, age band, ADHD compliance, pri
 - `tests/test_corpus_audio_judge.py` — judge response parsing + artifact generation
 
 ### What's Next
+**See the Session 61 entry at the top of Current State for the live worksheet-pipeline queue (passage split → judge sampling → judge-visibility gaps → merge/push). The audio-companion "Handoff Start Here" below is frozen (D28) and predates the worksheet quality push.**
 **All original milestones remain complete. UFLI crawl/acquire/extract/index are done. Active remaining work is now experiment-harness consolidation/docs and broader production hardening.**
 
 ### Handoff Start Here
@@ -1683,6 +1749,11 @@ All 344 tests pass. PDF validation (skill parity, age band, ADHD compliance, pri
 | D39 | Pages escalate on MINUTES, not just section count: sheets_needed = max(section demand, ceil(essential_minutes / segment)); attention ceiling rounds half-up | Pages are not the scarce resource — minutes are; a 3rd page at constant minutes is LOWER per-page density (ADHD-friendlier), and the old section-only demand left 60% of the session budget unused while trimming the reading sheet. OBJECTIVE_MINUTES: decode/encode/manip 4, connected_text 8 (its sufficiency rule says "1 page chunk"), irregular 3. Applies to all profiles, legacy included. Live result: lesson 74 → 3 sheets, Story Time ships. | 2026-07-10 |
 | D40 | Cost circuit-breaker: an advisory-judge REJECT on a fallback package aborts the run BEFORE rendering (UnapprovedPackageError); abstain/unavailable ship with a loud warning; override WORKSHEET_SHIP_UNAPPROVED=1 | Owner cost logic: the expensive spend (image gen, gate judges, ai_review) all happens after the adapt-stage verdict, so failing at the verdict saves nearly the whole run cost on a bad package, while infra failures and epistemic abstains must never cost the child a worksheet. Only affirmative negatives are fatal — mirrored across all three tri-states (validator needs_verification = pass-with-note; judge abstain = ship-with-warning; retry fires only on coverage FAIL). Lesson mode only; photo path untouched. | 2026-07-10 |
 | D41 | Objective-evidence semantics: deterministic chain steps stitch into one chain unit (worked-example first hop may join, chains only); connected-text evidence is a POSITIVE allowlist (read_aloud items, or production-format sentence-shaped content) — never a blocklist | Post-hoc evaluation of deterministic packages exposed three stacked gaps: chain items were invisible (response_format "write"), then chain prose and circle chrome both diluted connected-text via the blanket len(words)>=2 rule — blocklisting sources is whack-a-mole; allowlisting what reading material IS ends the class. Same layer serves validator, advisory judge, and trim-guard carriers, so they can never disagree. Known trade-off: chrome-verb-initial legitimate sentences ("Find the huge cake.") are excluded — bounded by first-match aggregation across the package. | 2026-07-10 |
+| D42 | Morphology is a taxonomy tier matched BEFORE grapheme patterns, with a veto rule: a concept is a suffix lesson only when EVERY hyphen-prefixed token is a known suffix | "-er, -est" was classified r_controlled (grapheme "er"), corrupting the goal banner and chain semantics on lesson 100; the veto keeps rime families ("-ing, -ang, -ong, -ung") in phonics. Suffix skills are string-prefixed (`suffix_er_est`) — no schema change; helpers `is_suffix_skill`/`suffixes_for_skill` in skill/taxonomy.py | 2026-07-13 |
+| D43 | Suffix chains are base-anchored add-the-ending hops (`slow + -er → ______`), and the evidence stitcher recognizes that content form ADDITIVELY (letter-chain parsing byte-identical) | Reuses the chain_step item shape so the evidence machinery keeps working; two stitcher gaps (item recognition, worked-example hop recovery) were found by end-to-end reproduction and closed additively. Known coupling: coverage regexes mirror the engine templates — the e2e test is the tripwire for template drift | 2026-07-13 |
+| D44 | Feedback panel is grown-up quick log ONLY — child traffic-light strip removed everywhere (model field deleted, not flagged off) | Owner decision: the log carries the adaptation data; age-6 self-ratings are unreliable; page space was ⅓ consumed. Amends D35's two-block design; log rows + decision hint unchanged | 2026-07-13 |
+| D45 | Page gates fail CLOSED when content-to-verify exists but verification is unavailable; vacuous pass only when there is nothing to check (and the judge isn't called at all) | The new match-alignment vision gate initially passed pages open when both providers failed — exactly the unverified-defect risk D9 exists to catch. Matches the text gate's precedent; character-gate vacuous pass (no reference image) is the "nothing to check" case, not the "check failed" case | 2026-07-13 |
+| D46 | Advisory-judge veto on passage density stands (owner-accepted): fixed-length UFLI decodable passages (~150 words) stay under the connected-text bar even chunked; remedy is passage splitting, not a rubric override | Both acceptance runs abort pre-render on this single criterion after all 13 UAT defects were fixed; D40's cost logic makes the veto cheap (no render spend). Follow-up queued: split the story into 2-3 checkpointed read_aloud segments; also consider 2-of-3 sampling (single-sample scores ranged 0.52-0.68 on identical content) | 2026-07-13 |
 
 ---
 
@@ -1779,6 +1850,7 @@ Note: index step requires GOOGLE_CLOUD_PROJECT=ws-builder-rag env var.
 | Q1 | PaddleOCR vs Tesseract cross-platform install | PaddleOCR has heavier dependencies; may affect dev setup | Open |
 | Q2 | Nunito font licensing for embedded PDF | Listed as primary theme font | Open |
 | Q3 | How to create synthetic golden test images | Need to mimic UFLI layout without using UFLI content | Open — solve during Checkpoint 1.3 |
+| Q5 | Should the connected-text criterion use 2-of-3 judge sampling, and should the judge see render-layer facts (match picture_prompts, suffix-chain design intent)? | Session 61: single-sample scores ranged 0.52-0.68 on identical chunked passages; the judge flags match sections as "words not pictures" (pictures exist only at render) and scores add-the-ending chains 0.46 manipulation "wrong cognitive task" (it can't know the owner-approved suffix-chain form). Cost-sensitive: extra samples multiply judge spend | Open — decide alongside the passage-split follow-up (chip task_202def01) |
 | Q4 | Should the ADVISORY judge + package coverage validator use objective-sufficiency in lesson mode? | Session 58c fixed the PLANNER judge rubric, but the transform-level advisory judge (coverage=0.08) and validate/ content-coverage (11/36 ERROR) still measure exhaustive coverage against packages the workload budget deliberately capped — every capped lesson run ERRORs by design | RESOLVED Session 60c (finish-line plan, commits fb40807-region..f1a9d03): lesson-mode package validator now runs objective sufficiency post-hoc (validate/objective_package.py); advisory verdict = the objective judge, fallback-only, with owner cost policy (reject → UnapprovedPackageError BEFORE render spend; abstain/unavailable → ship + loud warning; override WORKSHEET_SHIP_UNAPPROVED=1); coverage-rejected plans get ONE retry with per-cell feedback. Photo path untouched (exhaustive validator + old judge, flag-gated). Note: `objective_approved` still requires the LLM to author compliant plans — live run showed plans failing on missing word_chain + 60-min bounds overshoot twice; next lever is planner plan-quality, not validators |
 
 ---
@@ -1805,6 +1877,9 @@ Note: index step requires GOOGLE_CLOUD_PROJECT=ws-builder-rag env var.
 | G14 | Capitalization blocking gate treats title-case passage-title words as proper nouns | "Lily's Puppy" title → gate demands "Puppy" capitalized mid-sentence, blocks valid items like "Write puppy."; likely fires for ANY lesson whose passage title contains a target word — #1 suspected blocker for objective_approved | FIXED session 60, 2026-07-10 — `_known_proper_nouns` in validate/blocking_gates.py now excludes title-case heading segments and exonerates tokens seen lowercase anywhere in source |
 | G15 | Deterministic-fallback masking: a planner-path bug can pass every test AND a live run | `llm_adapt._translate_plan` kept the old last-sheet-only feedback conditional after the FeedbackPanel migration; suite stayed green (deterministic fixtures) and the live run looked perfect (planner was rejected → deterministic engine rendered). Only the final whole-branch review caught it | FIXED session 60 (`c994ed3`) — every translated worksheet gets a panel. Pattern lesson: when the smart path is routinely rejected, its output is untested by live runs; verify planner-path behavior with unit tests on `_translate_plan`, not renders |
 | G16 | Wall-clock-dependent tests are a 12-month time bomb | Tests exercising birthdate→grade derivation without pinning `today` pass until the next July-1 rollover, then fail with zero code change (Ian's derived grade reads "2" only 2026-07-01..2027-06-30) | FIXED session 60b (`322dddb`) — `_FrozenDate(date)` subclass monkeypatched over `companion.dosage.date`, bite-proofed by temporarily freezing to 2027-08-01 and watching the tests fail. Rule: any test touching `current_grade`/dosage derivations must freeze the clock |
+| G17 | Per-file mypy runs pass while whole-repo `make typecheck` fails | Two task reviews certified "mypy clean" from per-file invocations while 7 errors (Optional narrowing, missing annotation) sat in test files; the gate was red for two tasks before anyone noticed. Also: mypy's pyproject pins `python_version = "3.11"`, so a full local run DOES target CI semantics — the historical 3.11/3.13 divergence fear applies to typeshed differences, not target-version config | Session 61: reviewers now mandated to run full `make typecheck`; fixed in `825d2f4` |
+| G18 | A "cosmetic" chunk-label/content mismatch is judge-fatal in production | Choose-form batches whose er/est pairs were scattered across batch boundaries degraded every item to say-and-write under a "Choose the right word / circle" label; two reviews rated it Minor; the advisory judge rejected the live package for exactly this (`misleading_or_wrong_instruction` on decode AND encode) | FIXED session 61 (`b18137c`+`e85b5e1`): pair from the FULL pool before batching; choose chunks are pure circle items; honest label downgrade as safety net. Rule: instruction-text/content mismatches are never cosmetic — the judge reads them literally |
+| G19 | Implementer subagents sometimes "defer" work to a nonexistent background process, or spawn child agents that race the same checkout | Two Task dispatches returned "running in the background" having done nothing; one spawned a child that raced the original in the same working tree (mid-session commits appearing "by tooling") | Session 61: dispatch prompts now state "work synchronously with your OWN tool calls; do NOT use the Agent tool; nothing runs in the background"; recovery = resume the agent with that correction |
 
 ---
 
@@ -3154,3 +3229,17 @@ Then evaluate honestly and record both scorecards. Do NOT touch parent-plan Task
 **Gotchas discovered:** planner plans overshoot the session budget (60 est. min vs 20) and keep omitting the word_chain form even with feedback retry — planner plan-quality is now the sole `objective_approved` lever. Judge scored deterministic Story Time 0.58 connected-text with an ADHD-load defect — possibly real template feedback.
 
 **What's next:** (1) planner plan-quality (author required forms reliably; respect time bounds — consider bounds in the prompt's budget line); (2) product call on the 8pt footer-over-image warnings; (3) accepted-minor housekeeping pass (dead arrow check, splice guard comment, WORKSHEET_SHIP_UNAPPROVED=0 truthiness normalize, ai_review redundancy on fallback runs); (4) `--record-results`. Owner to decide push.
+
+### Session 61 — 2026-07-13 (lesson-100 UAT fixes: 13 defects closed, suffix lessons first-class; judge density veto owner-accepted)
+
+**Participants:** Claude controller (Fable 5) + Sonnet 5 implementers/task-reviewers + Fable 5 final review (owner-directed model split), owner (UAT findings, 2 design decisions, live-run adjudication)
+
+**What happened:**
+- Owner UAT of the lesson-100 PDF yielded 9 findings → 13-defect ledger (D1-D13) with root causes; spec + 11-task plan committed (`8b41dca`, `a6d35ff`, `2a6cfbd`); owner decisions: quick-log-only feedback, varied encode forms; /goal set with per-defect red/green traceability as the exit contract.
+- 19 commits shipped (`2a6cfbd..e85b5e1`): morphology taxonomy tier (D13 root), suffix-aware chains + evidence-stitcher recognition (D1, 2 fix rounds), circle fill-blanks + PROMPT_VERSION v4 (D2), dictation-stem filter + 3-option banks + remove_option pruning (D6/D7), passage chunking at practice-word size with first-batch worked example (D8), match-shuffle-to-pixels + fail-closed match-alignment gate (D4/D9), quick-log-only panel (D3), merge stamp deleted (D10), judge 4096+retry / planner chain example (D11/D12), varied encode forms with pair-first allocation and pure-circle choose chunks (D5, 2 live-run-driven fix rounds).
+- Fable 5 final review: 13/13 traceability rows COMPLETE (it re-reproduced D1's RED itself), per-task TDD audit PASS across all 6 fix rounds, 0 Critical/Important, READY TO MERGE. Gates: 857 tests / lint / mypy 0 of 188.
+- Live acceptance (no override): both lessons abort pre-render on the connected-text density criterion ONLY; run 2 lesson-100 showed decode 0.82 / encode 0.88 with zero instruction defects (run 1 had exposed the real choose-chunk bug). Owner accepted the failure reason (criterion 4 branch b); passage-split follow-up chip queued (task_202def01).
+- Bound-accounting question resolved as correct-by-definition (physical items vs evidence records — different units for workload bound vs judge transparency).
+- Gotchas G17 (per-file mypy blind spot), G18 (label mismatch judge-fatal), G19 (subagent background-deferral/child-spawn race) recorded; decisions D42-D46 logged.
+
+**What's next:** passage split into checkpointed segments (sole judge blocker, chip queued); consider 2-of-3 judge sampling for connected text + judge visibility of render-layer facts (Q5); merge/push owner call; then `--record-results` ingestion. gpt-5.4 → gpt-5.6-terra swap still paused.
