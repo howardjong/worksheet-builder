@@ -275,12 +275,50 @@ def _build_objective_prompt() -> str:
     return _build_objective_judge_prompt(ledger, gates, coverage, package, evidence)
 
 
+def _build_objective_prompt_with_manip_rule(rule: str) -> str:
+    skill = _obj_skill()
+    ledger = build_objective_ledger(skill, corpus_lookup=fixture_corpus_lookup)
+    objectives = [
+        o.model_copy(update={"sufficiency_rule": rule})
+        if o.objective_id == "obj_manipulation"
+        else o
+        for o in ledger.objectives
+    ]
+    ledger = ledger.model_copy(update={"objectives": objectives})
+    decode = next(o for o in ledger.objectives if o.objective_id == "obj_decode")
+    package = [_obj_worksheet(decode.target_words[:7])]
+    gates = run_blocking_gates(package, ledger)
+    evidence = build_evidence_index(package, ledger)
+    coverage = evaluate_objective_coverage(ledger, evidence, package)
+    return _build_objective_judge_prompt(ledger, gates, coverage, package, evidence)
+
+
 def test_objective_prompt_contains_every_objective_id() -> None:
     skill = _obj_skill()
     ledger = build_objective_ledger(skill, corpus_lookup=fixture_corpus_lookup)
     prompt = _build_objective_prompt()
     for cell in ledger.objectives:
         assert cell.objective_id in prompt
+
+
+def test_objective_prompt_carries_single_hop_manipulation_rule() -> None:
+    """D49: the judge's handed facts must state the single-hop form. The cell's
+    sufficiency_rule flows through _render_objectives verbatim — assert the
+    distinctive fragment lands in the final prompt."""
+    prompt = _build_objective_prompt_with_manip_rule(
+        "≥2 add-the-ending transformations (base + suffix → new word); this "
+        "suffix forms no multi-step chain, so independent pairs ARE this "
+        "lesson's manipulation form"
+    )
+    assert "independent pairs ARE this lesson's manipulation form" in prompt
+
+
+def test_wrong_cognitive_task_gloss_defers_to_sufficiency_rule() -> None:
+    """D49: the rubric guard — the judge must not veto the form the handed
+    facts declare correct."""
+    prompt = _build_objective_prompt()
+    assert "Do NOT vote this defect when the package exercises the cognitive task" in prompt
+    assert "sufficiency_rule" in prompt
 
 
 def test_objective_prompt_does_not_require_full_pools() -> None:

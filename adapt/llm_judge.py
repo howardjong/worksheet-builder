@@ -344,7 +344,9 @@ _SEVERE_DEFECT_GLOSS: dict[str, str] = {
     "wrong_cognitive_task": (
         "the activity makes the child do a different cognitive task than the "
         "objective names (e.g. a copying/tracing task where the objective is "
-        "decoding)"
+        "decoding). Do NOT vote this defect when the package exercises the cognitive task "
+        "named in that cell's sufficiency_rule — the sufficiency_rule states the "
+        "approved form for THIS lesson"
     ),
     "misleading_or_wrong_instruction": (
         "the instruction is wrong, contradictory, or would mislead the child"

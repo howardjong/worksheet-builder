@@ -503,7 +503,7 @@ def build_objective_ledger(
 
     manip_cell: ObjectiveCell | None = None
     if _has_item(skill, ("word_chain", "chain_script")):
-        manip_cell = _make_manipulation_cell(pattern_ctx)
+        manip_cell = _make_manipulation_cell(skill, pattern_ctx)
         objectives.append(manip_cell)
 
     irregular_cell: ObjectiveCell | None = None
@@ -776,7 +776,35 @@ def _make_encode_cell(skill: LiteracySkillModel, ctx: PatternContext) -> Objecti
     )
 
 
-def _make_manipulation_cell(ctx: PatternContext) -> ObjectiveCell:
+def _chain_shape(skill: LiteracySkillModel) -> str:
+    """ "single_hop" iff this is a suffix lesson whose chain source items are
+    ALL 2-word pairs (no chain has a second hop to build through) — e.g.
+    lesson 101's "quick → quickly". Any 3+-word chain, or any non-suffix
+    lesson, is "multi_hop" (the classic build/change chain shape). Descriptive
+    only: consumed by the sufficiency_rule text the judge reads, never by the
+    deterministic evaluator."""
+    from skill.taxonomy import is_suffix_skill
+
+    if not is_suffix_skill(skill.specific_skill):
+        return "multi_hop"
+    longest = 0
+    for item in skill.source_items:
+        if item.item_type not in ("word_chain", "chain_script"):
+            continue
+        words = [w for w in _ARROW_RE.split(item.content) if w.strip()]
+        longest = max(longest, len(words))
+    return "single_hop" if 0 < longest <= 2 else "multi_hop"
+
+
+def _make_manipulation_cell(skill: LiteracySkillModel, ctx: PatternContext) -> ObjectiveCell:
+    if _chain_shape(skill) == "single_hop":
+        rule = (
+            "≥2 add-the-ending transformations (base + suffix → new word); this "
+            "suffix forms no multi-step chain, so independent pairs ARE this "
+            "lesson's manipulation form"
+        )
+    else:
+        rule = "≥1 coherent build/change chain (count steps, not words)"
     return ObjectiveCell(
         objective_id="obj_manipulation",
         objective_type="phoneme_grapheme_manipulation",
@@ -788,7 +816,7 @@ def _make_manipulation_cell(ctx: PatternContext) -> ObjectiveCell:
         min_practice_count=_MANIP_MIN,
         max_recommended_count=_MANIP_MAX,
         acceptable_response_formats=list(_MANIP_FORMATS),
-        sufficiency_rule="≥1 coherent build/change chain (count steps, not words)",
+        sufficiency_rule=rule,
     )
 
 
@@ -821,8 +849,7 @@ def _make_irregular_cell(ctx: PatternContext) -> ObjectiveCell:
         max_recommended_count=_IRREGULAR_MAX,
         acceptable_response_formats=list(_IRREGULAR_FORMATS),
         sufficiency_rule=(
-            f"≥{_IRREGULAR_MIN} irregular/heart words read "
-            f"(comfort upper bound {_IRREGULAR_MAX})"
+            f"≥{_IRREGULAR_MIN} irregular/heart words read (comfort upper bound {_IRREGULAR_MAX})"
         ),
     )
 

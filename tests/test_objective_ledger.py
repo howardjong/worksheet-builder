@@ -19,7 +19,7 @@ from adapt.objective_ledger import (
     build_objective_ledger,
     classify_word_role,
 )
-from skill.schema import LiteracySkillModel
+from skill.schema import LiteracySkillModel, SourceItem
 from tests.objective_corpus_fixture import fixture_corpus_lookup
 
 _FIX = Path(__file__).parent / "fixtures" / "objective_ledger"
@@ -675,3 +675,62 @@ class TestBuildObjectiveLedgerGracefulDegrade:
         a = build_objective_ledger(skill, corpus_lookup=lambda n: None).model_dump_json()
         b = build_objective_ledger(skill, corpus_lookup=lambda n: None).model_dump_json()
         assert a == b
+
+
+def _chain_skill(specific_skill: str, chain_contents: list[str]) -> LiteracySkillModel:
+    return LiteracySkillModel(
+        grade_level="1",
+        domain="phonics",
+        specific_skill=specific_skill,
+        learning_objectives=["objective"],
+        target_words=["quickly"],
+        response_types=["write"],
+        source_items=[
+            SourceItem(item_type="word_chain", content=c, source_region_index=i)
+            for i, c in enumerate(chain_contents)
+        ],
+        extraction_confidence=0.95,
+        template_type="ufli_word_work",
+    )
+
+
+def _manip_rule(skill: LiteracySkillModel) -> str:
+    ledger = build_objective_ledger(skill, corpus_lookup=lambda n: None)
+    cell = next(c for c in ledger.objectives if c.objective_id == "obj_manipulation")
+    return cell.sufficiency_rule
+
+
+def test_single_hop_suffix_lesson_gets_pair_sufficiency_rule() -> None:
+    """D49 RED: lesson-101-shaped facts (single suffix, 2-word chains only)
+    currently hand the judge a multi-hop rule the lesson cannot satisfy."""
+    rule = _manip_rule(
+        _chain_skill("suffix_ly", ["quick → quickly", "light → lightly", "deep → deeply"])
+    )
+    assert rule == (
+        "≥2 add-the-ending transformations (base + suffix → new word); this "
+        "suffix forms no multi-step chain, so independent pairs ARE this "
+        "lesson's manipulation form"
+    )
+
+
+def test_multi_hop_suffix_lesson_keeps_chain_rule_byte_identical() -> None:
+    """Lesson-100 regression bar: -er/-est (3-word chains) facts unchanged."""
+    rule = _manip_rule(
+        _chain_skill("suffix_er_est", ["slow → slower → slowest", "long → longer → longest"])
+    )
+    assert rule == "≥1 coherent build/change chain (count steps, not words)"
+
+
+def test_mixed_chain_suffix_lesson_counts_as_multi_hop() -> None:
+    """Any 3+-word chain anywhere → the lesson CAN form a real chain."""
+    rule = _manip_rule(
+        _chain_skill("suffix_er_est", ["quick → quickly", "slow → slower → slowest"])
+    )
+    assert rule == "≥1 coherent build/change chain (count steps, not words)"
+
+
+def test_non_suffix_lesson_keeps_chain_rule_even_with_pair_chains() -> None:
+    """Letter-chain lessons never get the add-the-ending wording, even when a
+    source chain happens to be a 2-word pair."""
+    rule = _manip_rule(_chain_skill("cvce_pattern", ["mule → mute"]))
+    assert rule == "≥1 coherent build/change chain (count steps, not words)"
