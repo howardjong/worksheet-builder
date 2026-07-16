@@ -265,9 +265,12 @@ review, and irregular words do not count toward it and must not pad it.
 {cell_blocks}
 
 Example of a compliant build/change-chain activity (adapt words to THIS lesson):
-  items like {{"content": "slow + -er → ______", "answer": "slower"}} for suffix
-  lessons, or {{"content": "Start with \\"dry\\". Change the \\"d\\" to \\"t\\". Write
-  the new word.", "answer": "try"}} for letter-pattern lessons.
+  {{"activity_type": "word_chain", "words": ["quick → quickly", "light → lightly"], "items": []}}
+  for suffix lessons, or
+  {{"activity_type": "word_chain", "words": ["cry → try → dry"], "items": []}}
+  for letter-pattern lessons. The rendering system builds the student-facing
+  steps mechanically from these arrow strings — do NOT author word_chain
+  "items"; they are ignored.
 Your plan MUST include one such build/change chain activity, and the plan's
 total estimated minutes MUST fit the session budget stated below.
 """
@@ -364,8 +367,11 @@ CRITICAL RULES:
    break "-le" units apart with sound boxes; word chains from the source are
    PRIMARY activities).
 4. Order worksheets so the most concept-focused activity comes FIRST.
-5. For "match" and "sound_box" activities, list the words in "words" and leave
-   "items" empty — the rendering system constructs those mechanically.
+5. For "match", "sound_box", and "word_chain" activities, list the words in
+   "words" and leave "items" empty — the rendering system constructs those
+   mechanically. word_chain "words" are arrow strings: one pair per string
+   for suffix lessons ("quick → quickly"), the full chain for letter-pattern
+   lessons ("cry → try → dry").
 6. Each activity needs a rationale for WHY it teaches this concept.
 
 ## Output Format
@@ -561,10 +567,18 @@ def _coverage_feedback_block(coverage: ObjectiveCoverageResult) -> str:
         if cell.status != "fail":
             continue
         missing = ", ".join(cell.missing_required_forms) or "insufficient distinct practice"
-        lines.append(
+        line = (
             f"- {cell.objective_id}: REJECTED — missing/insufficient: {missing}. "
             f"Your revised plan MUST satisfy this objective IN its required form."
         )
+        if "word_chain" in cell.missing_required_forms:
+            line += (
+                ' Provide the chain as arrow strings in the activity\'s "words" '
+                '(suffix lessons: one pair per string, e.g. "quick → quickly"; '
+                'letter lessons: the full chain, e.g. "cry → try → dry") with '
+                '"items" empty — authored word_chain items are ignored.'
+            )
+        lines.append(line)
     for breach in coverage.package_bounds.breaches:
         lines.append(f"- PACKAGE BOUND BREACH: {breach}")
     return "\n".join(lines)

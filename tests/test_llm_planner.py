@@ -11,6 +11,7 @@ from adapt.llm_judge import JudgeVerdict
 from adapt.llm_planner import (
     _build_planner_prompt,
     _corpus_block,
+    _coverage_feedback_block,
     _objective_authoring_block,
 )
 from adapt.rules import build_rules
@@ -450,7 +451,7 @@ def test_authoring_block_contains_concrete_chain_example_and_budget_line(
 ) -> None:
     monkeypatch.setenv("WORKSHEET_OBJECTIVE_COVERAGE", "1")
     block = _objective_authoring_block(_skill())
-    assert "→ ______" in block
+    assert '"words": ["quick → quickly"' in block
     assert "MUST include" in block
     assert "minutes" in block.lower()
 
@@ -491,6 +492,55 @@ def test_prompt_authors_chain_in_required_form_when_flag_on(
     # 3. Do NOT dilute target-pattern cells with contrast/review/irregular words.
     assert "contrast" in lowered
     assert "must not pad" in lowered
+
+
+def test_prompt_rule5_and_chain_example_use_words_format(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """D48: after Task 1, authored word_chain items are discarded — the prompt
+    must direct chain content into "words" arrow strings for BOTH lesson types."""
+    monkeypatch.setenv("WORKSHEET_OBJECTIVE_COVERAGE", "1")
+    prompt = _build_planner_prompt(_skill(), _profile(), build_rules(_profile()), "default", None)
+
+    # Rule 5 covers word_chain alongside match/sound_box.
+    assert '"match", "sound_box", and "word_chain"' in prompt
+    # The chain example shows the words-format for suffix AND letter lessons.
+    assert '"words": ["quick → quickly", "light → lightly"]' in prompt
+    assert '"words": ["cry → try → dry"]' in prompt
+    # And explicitly warns authored word_chain items are ignored.
+    assert "do NOT author word_chain" in prompt
+
+
+def _failing_manip_coverage() -> ObjectiveCoverageResult:
+    return _coverage("fail").model_copy(
+        update={
+            "objective_results": [
+                ObjectiveCellResult(
+                    objective_id="obj_manipulation",
+                    importance="essential",
+                    status="fail",
+                    distinct_high_confidence_count=0,
+                    min_practice_count=4,
+                    advisory_low_confidence_count=0,
+                    required_forms_present=False,
+                    missing_required_forms=["word_chain"],
+                    notes=["no word_chain activity present"],
+                )
+            ]
+        }
+    )
+
+
+def test_coverage_feedback_names_word_chain_words_format() -> None:
+    """D48: the ONE coverage retry must tell the model the structural fix,
+    not just restate the miss."""
+    coverage = _failing_manip_coverage()
+    block = _coverage_feedback_block(coverage)
+
+    assert "obj_manipulation" in block
+    assert '"words"' in block
+    assert "quick → quickly" in block
+    assert "cry → try → dry" in block
 
 
 # --- T9: objective-sufficiency coverage path in plan_lesson_llm (flagged) ------
