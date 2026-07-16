@@ -188,6 +188,164 @@ def test_match_activities_use_mechanical_builder_even_with_items() -> None:
     assert all(i.options for i in items)
 
 
+def _suffix_skill() -> LiteracySkillModel:
+    return LiteracySkillModel(
+        grade_level="1",
+        domain="phonics",
+        specific_skill="suffix_ly",
+        learning_objectives=["Add -ly to base words"],
+        target_words=["quickly", "lightly", "deeply"],
+        response_types=["write"],
+        source_items=[
+            SourceItem(
+                item_type="word_chain",
+                content="quick → quickly",
+                source_region_index=0,
+            )
+        ],
+        extraction_confidence=0.95,
+        template_type="ufli_word_work",
+    )
+
+
+def _word_chain_plan(words: list[str], items: list[PlannedItem]) -> LessonPlan:
+    return LessonPlan(
+        worksheets=[
+            WorksheetPlan(
+                title="Word Builder",
+                activities=[
+                    ActivityPlan(
+                        activity_type="word_chain",
+                        micro_goal="Build new words",
+                        words=words,
+                        items=items,
+                        instructions=["Read the word.", "Add the ending."],
+                        response_format="write",
+                    )
+                ],
+            )
+        ]
+    )
+
+
+def test_suffix_word_chain_uses_mechanical_builder_even_with_items() -> None:
+    """D48 RED (suffix): authored word_chain items today bypass the stamped
+    deterministic parser, so no item can ever count as chain evidence."""
+    plan = _word_chain_plan(
+        words=["quick → quickly", "light → lightly", "deep → deeply"],
+        items=[
+            PlannedItem(content="Make quick. Add -ly. Write the new word.", answer="quickly"),
+        ],
+    )
+    worksheets = _translate_plan(
+        plan, _suffix_skill(), _profile(), "default", build_rules(_profile())
+    )
+
+    items = worksheets[0].chunks[0].items
+    assert items, "word_chain activity must not vanish"
+    assert all(i.metadata.get("display") == "chain_step" for i in items)
+    # Deterministic suffix template, not the model's prose.
+    assert items[0].content == "quick + -ly → ______"
+    assert items[0].answer == "quickly"
+    assert [i.answer for i in items] == ["quickly", "lightly", "deeply"]
+
+
+def test_letter_word_chain_uses_mechanical_builder_even_with_items() -> None:
+    """D48 RED (letter chain): same stamp bypass on non-suffix lessons."""
+    plan = _word_chain_plan(
+        words=["mule → mute"],
+        items=[
+            PlannedItem(
+                content='Start with "mule". Change the "l" to "t". Write the new word.',
+                answer="mute",
+            ),
+        ],
+    )
+    worksheets = _translate_plan(plan, _skill(), _profile(), "default", build_rules(_profile()))
+
+    items = worksheets[0].chunks[0].items
+    assert items, "word_chain activity must not vanish"
+    assert all(i.metadata.get("display") == "chain_step" for i in items)
+    assert items[0].answer == "mute"
+
+
+def test_suffix_word_chain_words_parse_to_items() -> None:
+    """D48 RED (WS1.2 parser parity): suffix-pair words currently parse to 0
+    items — _build_items_from_activity only knows letter-substitution chains."""
+    plan = _word_chain_plan(
+        words=["quick → quickly", "light → lightly", "deep → deeply"],
+        items=[],
+    )
+    worksheets = _translate_plan(
+        plan, _suffix_skill(), _profile(), "default", build_rules(_profile())
+    )
+
+    assert worksheets, "suffix chain worksheet must survive translation"
+    items = worksheets[0].chunks[0].items
+    assert [i.content for i in items] == [
+        "quick + -ly → ______",
+        "light + -ly → ______",
+        "deep + -ly → ______",
+    ]
+
+
+def test_translated_suffix_chain_passes_manipulation_coverage() -> None:
+    """D48 GREEN acceptance: translated stamped items satisfy the manipulation
+    cell through the real evidence layer (spec exit criterion 1)."""
+    from adapt.objective_ledger import ClassifiedSourceItem, ObjectiveCell, ObjectiveLedger
+    from validate.objective_coverage import build_evidence_index, evaluate_objective_coverage
+
+    plan = _word_chain_plan(
+        words=["quick → quickly", "light → lightly", "deep → deeply"],
+        items=[],
+    )
+    worksheets = _translate_plan(
+        plan, _suffix_skill(), _profile(), "default", build_rules(_profile())
+    )
+
+    ledger = ObjectiveLedger(
+        source_skill_hash="hash",
+        lesson_number=101,
+        corpus_status="matched",
+        corpus_version="v1",
+        corpus_lesson_id="ufli_101",
+        primary_pattern=None,
+        objectives=[
+            ObjectiveCell(
+                objective_id="obj_manipulation",
+                objective_type="phoneme_grapheme_manipulation",
+                display_name="Build and change words",
+                concept="manipulation",
+                target_pattern=None,
+                importance="essential",
+                required_forms=["word_chain", "chain_script"],
+                min_practice_count=1,
+                max_recommended_count=1,
+                acceptable_response_formats=["word_chain"],
+                sufficiency_rule="one coherent chain",
+            )
+        ],
+        source_items=[
+            ClassifiedSourceItem(
+                source_item_id="src_chain",
+                item_type="word_chain",
+                content="quick → quickly",
+                normalized_content="quick → quickly",
+                coverage_class="required_form",
+                required_form="word_chain",
+                objective_ids=["obj_manipulation"],
+                mandatory=True,
+            )
+        ],
+    )
+    evidence = build_evidence_index(worksheets, ledger)
+    result = evaluate_objective_coverage(ledger, evidence)
+    manip = next(r for r in result.objective_results if r.objective_id == "obj_manipulation")
+
+    assert manip.required_forms_present is True
+    assert manip.status == "pass"
+
+
 def test_translate_drops_self_negating_worked_example() -> None:
     """A worked example that models a WRONG answer (e.g. "Write cate? No.")
     confuses the child and must never be printed."""
@@ -197,12 +355,9 @@ def test_translate_drops_self_negating_worked_example() -> None:
                 title="Magic E",
                 activities=[
                     ActivityPlan(
-                        activity_type="word_chain",
+                        activity_type="write",
                         micro_goal="Change one letter",
-                        items=[
-                            PlannedItem(content="cute"),
-                            PlannedItem(content="cake"),
-                        ],
+                        words=["cute", "cake"],
                         instructions=["Change one letter to make a new word."],
                         worked_example="make cute. Change u to a. Write cate? No.",
                         response_format="write",

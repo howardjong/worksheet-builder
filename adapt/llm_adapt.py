@@ -369,9 +369,13 @@ _BRAIN_BREAKS = [
 ]
 
 
-# Formats whose renderer contracts (shuffled picture options, phoneme boxes)
-# must stay mechanically constructed even when the model authors items.
-_MECHANICAL_FORMATS = {"match", "sound_box"}
+# Formats whose renderer/evidence contracts (shuffled picture options, phoneme
+# boxes, stamped chain steps) must stay mechanically constructed even when the
+# model authors items. word_chain is here because the coverage evaluator's
+# chain-evidence discriminator counts ONLY parser-stamped items
+# (validate/objective_coverage.py::_CHAIN_DISPLAYS) — authored chain items can
+# never count, by anti-gaming design, so they must not be preferred (D48).
+_MECHANICAL_FORMATS = {"match", "sound_box", "word_chain"}
 
 
 def _items_for_activity(
@@ -443,26 +447,45 @@ def _build_items_from_activity(
     max_items = rules.max_items_per_chunk
 
     if activity.activity_type == "word_chain":
-        # Parse word chains into letter-change steps
-        from adapt.engine import _parse_chain_steps
+        # Parse chains into build/change steps. Suffix lessons take the
+        # add-the-ending parser (D1 parity with adapt/engine.py:1061-1068 —
+        # letter-substitution parsing yields 0 steps for length-changing
+        # pairs like "quick → quickly").
+        from adapt.engine import _parse_chain_steps, _parse_suffix_chain_steps
+        from skill.taxonomy import is_suffix_skill, suffixes_for_skill
 
-        chain_steps = _parse_chain_steps(activity.words)
-        for step in chain_steps[:max_items]:
-            item_id += 1
-            items.append(
-                ActivityItem(
-                    item_id=item_id,
-                    content=(
-                        f'Start with "{step["from_word"]}". '
-                        f'Change the "{step["old_letter"]}" '
-                        f'to "{step["new_letter"]}". '
-                        f"Write the new word."
-                    ),
-                    response_format="write",
-                    metadata={"display": "chain_step"},
-                    answer=step["to_word"],
+        if is_suffix_skill(skill.specific_skill):
+            for suffix_step in _parse_suffix_chain_steps(
+                activity.words, suffixes_for_skill(skill.specific_skill)
+            )[:max_items]:
+                item_id += 1
+                items.append(
+                    ActivityItem(
+                        item_id=item_id,
+                        content=(f"{suffix_step['from_word']} + -{suffix_step['suffix']} → ______"),
+                        response_format="write",
+                        metadata={"display": "chain_step"},
+                        answer=suffix_step["to_word"],
+                    )
                 )
-            )
+        else:
+            chain_steps = _parse_chain_steps(activity.words)
+            for step in chain_steps[:max_items]:
+                item_id += 1
+                items.append(
+                    ActivityItem(
+                        item_id=item_id,
+                        content=(
+                            f'Start with "{step["from_word"]}". '
+                            f'Change the "{step["old_letter"]}" '
+                            f'to "{step["new_letter"]}". '
+                            f"Write the new word."
+                        ),
+                        response_format="write",
+                        metadata={"display": "chain_step"},
+                        answer=step["to_word"],
+                    )
+                )
 
     elif activity.activity_type == "match":
         from adapt.engine import _shuffled_mismatch, _word_to_picture_prompt
