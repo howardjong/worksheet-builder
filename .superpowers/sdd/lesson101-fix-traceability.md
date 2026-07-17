@@ -48,3 +48,16 @@ Runs performed once each (no `WORKSHEET_SHIP_UNAPPROVED`, `.env` keys, single-sa
 ```
 
 Matches expected: lesson 101 gets the single-hop add-the-ending rule; lessons 74 and 100 keep the byte-identical multi-hop rule. Confirms `_chain_shape` classifies 101 as `single_hop` and 74/100 as `multi_hop` (D49).
+
+### Lesson 100 (r4) — owner-directed confirm re-run (noise-hypothesis test)
+
+r3's obj_manipulation veto (0.28, wrong_cognitive_task + generic_activity) did NOT
+reproduce: r4 scored obj_manipulation 0.42 with ZERO severe defects. Failing set =
+{obj_connected_text} (0.71, overwhelming_or_adhd_unsafe) — matches the session-61
+baseline exactly. Overall 0.72 reject on the known blocker only. Planner outcome:
+objective_rejected_gate. Adjudication: r3 was a single-sample judge swing; exit
+criterion 4 satisfied on the r4 run. OPEN FOLLOW-UP (Q5-adjacent): er/est manipulation
+quality sits in a weak 0.28-0.46 band across 3 runs because the multi-hop rule text
+never matches the base-anchored add-the-ending form suffix lessons actually render —
+extending the suffix-aware wording to multi-hop suffix lessons remains the
+mechanism-backed hardening, deferred by owner choice 2026-07-16.
