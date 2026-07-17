@@ -1081,15 +1081,7 @@ def _build_builder_chunks(
                 items: list[ActivityItem] = []
                 for step in batch:
                     item_id += 1
-                    items.append(
-                        ActivityItem(
-                            item_id=item_id,
-                            content=f"{step['from_word']} + -{step['suffix']} → ______",
-                            response_format="write",
-                            metadata={"display": "chain_step"},
-                            answer=step["to_word"],
-                        )
-                    )
+                    items.append(_suffix_step_item(item_id, step))
                 chunks.append(
                     ActivityChunk(
                         chunk_id=len(chunks) + 1,
@@ -1143,20 +1135,7 @@ def _build_builder_chunks(
                     items = []
                     for step in batch:
                         item_id += 1
-                        items.append(
-                            ActivityItem(
-                                item_id=item_id,
-                                content=(
-                                    f'Start with "{step["from_word"]}". '
-                                    f'Change the "{step["old_letter"]}" '
-                                    f'to "{step["new_letter"]}". '
-                                    f"Write the new word."
-                                ),
-                                response_format="write",
-                                metadata={"display": "chain_step"},
-                                answer=step["to_word"],
-                            )
-                        )
+                        items.append(_letter_step_item(item_id, step))
                     chunks.append(
                         ActivityChunk(
                             chunk_id=len(chunks) + 1,
@@ -2328,6 +2307,42 @@ def _parse_suffix_chain_steps(chains: list[str], suffixes: list[str]) -> list[di
                 continue
             steps.append({"from_word": base, "to_word": derived, "suffix": suffix})
     return steps
+
+
+def _suffix_step_item(item_id: int, step: dict[str, str]) -> ActivityItem:
+    """One add-the-ending chain-step item, stamped for coverage evidence.
+
+    Shared by the deterministic engine (`_build_builder_chunks`) and the
+    LLM-plan translation path (`adapt/llm_adapt.py::_build_items_from_activity`)
+    so both authoring paths render the identical student-facing form.
+    """
+    return ActivityItem(
+        item_id=item_id,
+        content=f"{step['from_word']} + -{step['suffix']} → ______",
+        response_format="write",
+        metadata={"display": "chain_step"},
+        answer=step["to_word"],
+    )
+
+
+def _letter_step_item(item_id: int, step: dict[str, str]) -> ActivityItem:
+    """One letter-substitution chain-step item, stamped for coverage evidence.
+
+    Shared by the deterministic engine and the LLM-plan translation path —
+    see `_suffix_step_item`.
+    """
+    return ActivityItem(
+        item_id=item_id,
+        content=(
+            f'Start with "{step["from_word"]}". '
+            f'Change the "{step["old_letter"]}" '
+            f'to "{step["new_letter"]}". '
+            f"Write the new word."
+        ),
+        response_format="write",
+        metadata={"display": "chain_step"},
+        answer=step["to_word"],
+    )
 
 
 def _shuffled_mismatch(words: list[str]) -> list[str]:

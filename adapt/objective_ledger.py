@@ -776,28 +776,36 @@ def _make_encode_cell(skill: LiteracySkillModel, ctx: PatternContext) -> Objecti
     )
 
 
-def _chain_shape(skill: LiteracySkillModel) -> str:
+def _manipulation_chain_shape(skill: LiteracySkillModel) -> str:
     """ "single_hop" iff this is a suffix lesson whose chain source items are
     ALL 2-word pairs (no chain has a second hop to build through) — e.g.
     lesson 101's "quick → quickly". Any 3+-word chain, or any non-suffix
     lesson, is "multi_hop" (the classic build/change chain shape). Descriptive
     only: consumed by the sufficiency_rule text the judge reads, never by the
-    deterministic evaluator."""
-    from skill.taxonomy import is_suffix_skill
+    deterministic evaluator.
+
+    Reuses the canonical suffix-chain parser (adapt/engine.py) rather than
+    re-deriving hop count from a raw arrow split, so this agrees with what
+    the deterministic engine actually renders (and doesn't miscount hyphens
+    inside a source item, e.g. a stray "-ly" in chain_script prose, as an
+    arrow — `_ARROW_RE` matches bare hyphens too)."""
+    from adapt.engine import _parse_suffix_chain_steps
+    from skill.taxonomy import is_suffix_skill, suffixes_for_skill
 
     if not is_suffix_skill(skill.specific_skill):
         return "multi_hop"
+    suffixes = suffixes_for_skill(skill.specific_skill)
     longest = 0
     for item in skill.source_items:
         if item.item_type not in ("word_chain", "chain_script"):
             continue
-        words = [w for w in _ARROW_RE.split(item.content) if w.strip()]
-        longest = max(longest, len(words))
-    return "single_hop" if 0 < longest <= 2 else "multi_hop"
+        steps = _parse_suffix_chain_steps([item.content], suffixes)
+        longest = max(longest, len(steps))
+    return "single_hop" if 0 < longest <= 1 else "multi_hop"
 
 
 def _make_manipulation_cell(skill: LiteracySkillModel, ctx: PatternContext) -> ObjectiveCell:
-    if _chain_shape(skill) == "single_hop":
+    if _manipulation_chain_shape(skill) == "single_hop":
         rule = (
             "≥2 add-the-ending transformations (base + suffix → new word); this "
             "suffix forms no multi-step chain, so independent pairs ARE this "

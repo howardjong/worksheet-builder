@@ -511,30 +511,10 @@ def test_prompt_rule5_and_chain_example_use_words_format(
     assert "do NOT author word_chain" in prompt
 
 
-def _failing_manip_coverage() -> ObjectiveCoverageResult:
-    return _coverage("fail").model_copy(
-        update={
-            "objective_results": [
-                ObjectiveCellResult(
-                    objective_id="obj_manipulation",
-                    importance="essential",
-                    status="fail",
-                    distinct_high_confidence_count=0,
-                    min_practice_count=4,
-                    advisory_low_confidence_count=0,
-                    required_forms_present=False,
-                    missing_required_forms=["word_chain"],
-                    notes=["no word_chain activity present"],
-                )
-            ]
-        }
-    )
-
-
 def test_coverage_feedback_names_word_chain_words_format() -> None:
     """D48: the ONE coverage retry must tell the model the structural fix,
     not just restate the miss."""
-    coverage = _failing_manip_coverage()
+    coverage = _manip_failing_coverage()
     block = _coverage_feedback_block(coverage)
 
     assert "obj_manipulation" in block

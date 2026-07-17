@@ -450,8 +450,15 @@ def _build_items_from_activity(
         # Parse chains into build/change steps. Suffix lessons take the
         # add-the-ending parser (D1 parity with adapt/engine.py:1061-1068 —
         # letter-substitution parsing yields 0 steps for length-changing
-        # pairs like "quick → quickly").
-        from adapt.engine import _parse_chain_steps, _parse_suffix_chain_steps
+        # pairs like "quick → quickly"). Item construction is shared with
+        # the deterministic engine's own chain builder so both authoring
+        # paths render the identical student-facing form.
+        from adapt.engine import (
+            _letter_step_item,
+            _parse_chain_steps,
+            _parse_suffix_chain_steps,
+            _suffix_step_item,
+        )
         from skill.taxonomy import is_suffix_skill, suffixes_for_skill
 
         if is_suffix_skill(skill.specific_skill):
@@ -459,33 +466,11 @@ def _build_items_from_activity(
                 activity.words, suffixes_for_skill(skill.specific_skill)
             )[:max_items]:
                 item_id += 1
-                items.append(
-                    ActivityItem(
-                        item_id=item_id,
-                        content=(f"{suffix_step['from_word']} + -{suffix_step['suffix']} → ______"),
-                        response_format="write",
-                        metadata={"display": "chain_step"},
-                        answer=suffix_step["to_word"],
-                    )
-                )
+                items.append(_suffix_step_item(item_id, suffix_step))
         else:
-            chain_steps = _parse_chain_steps(activity.words)
-            for step in chain_steps[:max_items]:
+            for step in _parse_chain_steps(activity.words)[:max_items]:
                 item_id += 1
-                items.append(
-                    ActivityItem(
-                        item_id=item_id,
-                        content=(
-                            f'Start with "{step["from_word"]}". '
-                            f'Change the "{step["old_letter"]}" '
-                            f'to "{step["new_letter"]}". '
-                            f"Write the new word."
-                        ),
-                        response_format="write",
-                        metadata={"display": "chain_step"},
-                        answer=step["to_word"],
-                    )
-                )
+                items.append(_letter_step_item(item_id, step))
 
     elif activity.activity_type == "match":
         from adapt.engine import _shuffled_mismatch, _word_to_picture_prompt
