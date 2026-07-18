@@ -47,6 +47,10 @@ SUFFIX_CONTRACTS: tuple[SuffixContract, ...] = (
     SuffixContract(suffixes=("ly",), goal_statement=_generic_goal("ly")),
     SuffixContract(suffixes=("ed",), goal_statement=_generic_goal("ed")),
     SuffixContract(suffixes=("es",), goal_statement=_generic_goal("es")),
+    # UFLI lesson 102 — first family added post-registry; the H1a proof.
+    SuffixContract(suffixes=("less", "ful"), goal_statement=_generic_goal("less", "ful")),
+    # UFLI lesson 124.
+    SuffixContract(suffixes=("ness",), goal_statement=_generic_goal("ness")),
 )
 
 
