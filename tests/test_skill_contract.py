@@ -50,3 +50,10 @@ def test_no_two_contracts_share_a_token_set() -> None:
     # order-of-registration dependent — a silent authoring hazard.
     seen = [frozenset(c.suffixes) for c in SUFFIX_CONTRACTS]
     assert len(seen) == len(set(seen))
+
+
+def test_taxonomy_token_set_is_derived_from_the_registry() -> None:
+    from skill.taxonomy import MORPHOLOGY_SUFFIXES
+
+    assert MORPHOLOGY_SUFFIXES == known_suffix_tokens()
+    assert MORPHOLOGY_SUFFIXES is not known_suffix_tokens()  # derived, not aliased per-call

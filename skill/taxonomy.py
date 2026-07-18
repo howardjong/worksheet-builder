@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from skill.contract import known_suffix_tokens
+
 LITERACY_DOMAINS: dict[str, dict[str, Any]] = {
     "phonemic_awareness": {
         "skills": [
@@ -174,8 +176,9 @@ PHONICS_PATTERNS: dict[str, str] = {
 # A concept is a suffix lesson ONLY when every hyphen-prefixed token is in
 # this set — "-ing, -ang, -ong" is a rime-family lesson ("ang" vetoes),
 # "-er, -est" is morphology. "-ing" alone stays a family (PHONICS_PATTERNS)
-# until UFLI suffix--ing lessons are wired; extending = add the token here.
-MORPHOLOGY_SUFFIXES = frozenset({"er", "est", "ed", "ly", "es"})
+# until UFLI suffix--ing lessons are wired. Extending = register a
+# SuffixContract in skill/contract.py; this set is derived from it.
+MORPHOLOGY_SUFFIXES = known_suffix_tokens()
 
 
 def match_morphology_pattern(concept_text: str) -> str | None:
