@@ -13,12 +13,16 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
-_SINGLE_HOP_RULE = (
+# Default judge sufficiency wording, the single source of these strings.
+# Suffix families inherit them via SuffixContract defaults; the objective
+# ledger's non-suffix / unregistered-slug fallback imports them too, so the
+# literals never get retyped elsewhere.
+DEFAULT_SINGLE_HOP_RULE = (
     "≥2 add-the-ending transformations (base + suffix → new word); this "
     "suffix forms no multi-step chain, so independent pairs ARE this "
     "lesson's manipulation form"
 )
-_MULTI_HOP_RULE = "≥1 coherent build/change chain (count steps, not words)"
+DEFAULT_MULTI_HOP_RULE = "≥1 coherent build/change chain (count steps, not words)"
 
 
 class SuffixContract(BaseModel):
@@ -26,8 +30,8 @@ class SuffixContract(BaseModel):
 
     suffixes: tuple[str, ...] = Field(min_length=1, description="Suffix tokens, no leading hyphen")
     goal_statement: str = Field(description="Child-facing 'I can...' banner text")
-    manipulation_rule_single_hop: str = Field(default=_SINGLE_HOP_RULE)
-    manipulation_rule_multi_hop: str = Field(default=_MULTI_HOP_RULE)
+    manipulation_rule_single_hop: str = Field(default=DEFAULT_SINGLE_HOP_RULE)
+    manipulation_rule_multi_hop: str = Field(default=DEFAULT_MULTI_HOP_RULE)
 
     @property
     def skill_slug(self) -> str:
