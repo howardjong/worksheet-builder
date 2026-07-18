@@ -1,0 +1,5 @@
+# theme/themes/roblox_obby/curated/manifest.yaml
+theme_id: roblox_obby
+slots:
+  - slot: mascot
+    path: mascot.png
