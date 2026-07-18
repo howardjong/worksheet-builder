@@ -70,18 +70,25 @@ class PdfClassicRenderer:
 
 
 class HybridShellRenderer:
-    """Experimental hybrid shell renderer using deterministic PDF text."""
+    """Deterministic composed renderer: classic layout + curated theme slots."""
 
     renderer_id = "hybrid_shell"
     produces_pdf = True
     experimental = True
 
     def render(self, context: RenderContext) -> RenderResult:
-        _render_pdf(context)
+        # Local import avoids a strategies -> composed -> strategies cycle.
+        from render.composed import compose_worksheet
+
+        manifest = compose_worksheet(context)
+        manifest_name = f"composed_manifest_{manifest['worksheet_number']}.json"
         return RenderResult(
             renderer_id=self.renderer_id,
             pdf_path=str(context.output_path),
-            artifact_paths=[str(context.output_path)],
+            artifact_paths=[
+                str(context.output_path),
+                str(context.artifacts_dir / manifest_name),
+            ],
             produces_pdf=self.produces_pdf,
             experimental=self.experimental,
         )
@@ -162,7 +169,7 @@ def _render_pdf(context: RenderContext) -> None:
 def _build_image_prompt(spec: WorksheetDesignSpec) -> str:
     required_text = "\n".join(f"- {text}" for text in spec.required_text)
     answer_zones = "\n".join(
-        (f"- item {zone.item_id} ({zone.response_format}): " f"{zone.prompt_text}")
+        (f"- item {zone.item_id} ({zone.response_format}): {zone.prompt_text}")
         for zone in spec.answer_zones
     )
     if not answer_zones:
