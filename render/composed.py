@@ -16,12 +16,21 @@ from render.pdf import render_worksheet
 from render.strategies import RenderContext
 from theme.curated import load_curated_assets
 from theme.schema import ThemeConfig
+from validate.composed_checks import check_composition
 
 # Fixed page-area fractions per slot — enforced by construction (the classic
 # renderer's avatar clearance floor), recorded for the fail-closed budget
 # check in validate/composed_checks.py. Sum must stay ≤ 0.15 (fresh-build
 # doc's measured decoration budget).
 SLOT_BUDGETS = {"mascot": 0.06, "header_banner": 0.07}
+
+
+class ComposedRenderError(RuntimeError):
+    """Composition violated a deterministic constraint — never ship."""
+
+    def __init__(self, violations: list[str]) -> None:
+        super().__init__("; ".join(violations))
+        self.violations = violations
 
 
 def compose_worksheet(context: RenderContext) -> dict[str, object]:
@@ -59,6 +68,11 @@ def compose_worksheet(context: RenderContext) -> dict[str, object]:
         "decoration_budget": {slot: SLOT_BUDGETS[slot] for slot in slots_used},
         "render_api_calls": 0,
     }
+
+    violations = check_composition(manifest, curated)
+    if violations:
+        raise ComposedRenderError(violations)
+
     context.artifacts_dir.mkdir(parents=True, exist_ok=True)
     manifest_path = context.artifacts_dir / f"composed_manifest_{worksheet_number}.json"
     manifest_path.write_text(json.dumps(manifest, indent=2))
