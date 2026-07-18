@@ -1,0 +1,60 @@
+[
+  {
+    "run_dir": "output/lesson74_acceptance",
+    "overall_score": 0.79,
+    "approved": false,
+    "objective_quality": {
+      "obj_decode": 0.76,
+      "obj_encode": 0.88,
+      "obj_manipulation": 0.83,
+      "obj_connected_text": 0.67
+    },
+    "severe_defect_counts": {
+      "obj_decode": 0,
+      "obj_encode": 0,
+      "obj_manipulation": 0,
+      "obj_connected_text": 1
+    },
+    "page_attempts": {}
+  },
+  {
+    "run_dir": "output/lesson100_uat_r4",
+    "overall_score": 0.72,
+    "approved": false,
+    "objective_quality": {
+      "obj_decode": 0.82,
+      "obj_encode": 0.86,
+      "obj_manipulation": 0.42,
+      "obj_connected_text": 0.71
+    },
+    "severe_defect_counts": {
+      "obj_decode": 0,
+      "obj_encode": 0,
+      "obj_manipulation": 0,
+      "obj_connected_text": 1
+    },
+    "page_attempts": {}
+  },
+  {
+    "run_dir": "output/lesson101_uat_confirm",
+    "overall_score": 0.62,
+    "approved": false,
+    "objective_quality": {
+      "obj_decode": 0.78,
+      "obj_encode": 0.87,
+      "obj_manipulation": 0.81,
+      "obj_connected_text": 0.38
+    },
+    "severe_defect_counts": {
+      "obj_decode": 0,
+      "obj_encode": 0,
+      "obj_manipulation": 0,
+      "obj_connected_text": 1
+    },
+    "page_attempts": {
+      "render_1": 1,
+      "render_2": 1,
+      "render_3": 1
+    }
+  }
+]
