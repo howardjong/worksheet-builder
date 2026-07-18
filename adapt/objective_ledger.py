@@ -18,7 +18,11 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 from corpus.ufli.lookup import CorpusLookupResult, lookup_lesson
-from skill.contract import contract_for_skill
+from skill.contract import (
+    DEFAULT_MULTI_HOP_RULE,
+    DEFAULT_SINGLE_HOP_RULE,
+    contract_for_skill,
+)
 from skill.schema import LiteracySkillModel, SourceItem
 from skill.taxonomy import match_phonics_pattern
 
@@ -815,13 +819,9 @@ def _make_manipulation_cell(skill: LiteracySkillModel, ctx: PatternContext) -> O
             else contract.manipulation_rule_multi_hop
         )
     elif shape == "single_hop":
-        rule = (
-            "≥2 add-the-ending transformations (base + suffix → new word); this "
-            "suffix forms no multi-step chain, so independent pairs ARE this "
-            "lesson's manipulation form"
-        )
+        rule = DEFAULT_SINGLE_HOP_RULE
     else:
-        rule = "≥1 coherent build/change chain (count steps, not words)"
+        rule = DEFAULT_MULTI_HOP_RULE
     return ObjectiveCell(
         objective_id="obj_manipulation",
         objective_type="phoneme_grapheme_manipulation",
