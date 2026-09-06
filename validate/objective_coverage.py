@@ -644,7 +644,32 @@ def _evidence_for_item(
         # it is realized as the correct-option practice above, so no extra key item.
         return out
 
-    # 3. Non-selection items: any answer field is a KEY (never practice).
+    # 3. Deterministically stamped chain steps are a narrow exception: their
+    # answer is the word the child must construct and WRITE, not a passive key
+    # surface. Credit that expected production to encoding while keeping it
+    # hidden from the worksheet's visible text. Arbitrary non-selection
+    # answers remain key-only below.
+    if (
+        item.metadata.get("display") == "chain_step"
+        and is_production
+        and item.answer
+        and item.answer.strip()
+    ):
+        answer_words = _words(item.answer)
+        out.append(
+            EvidenceItem(
+                visible_text=item.answer,
+                practice_role=PRACTICE_STUDENT,
+                answer_key_text=None,
+                response_format=fmt,
+                is_student_production=True,
+                objective_ids=_match_cells(answer_words, fmt, ledger, index, practice=True),
+                evidence_item_id=f"{base_id}_expected_production",
+            )
+        )
+        return out
+
+    # 4. Other non-selection items: any answer field is a KEY (never practice).
     if item.answer and item.answer.strip():
         out.append(
             EvidenceItem(

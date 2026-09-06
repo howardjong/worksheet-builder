@@ -21,6 +21,8 @@ from corpus.ufli.lookup import CorpusLookupResult, lookup_lesson
 from skill.contract import (
     DEFAULT_MULTI_HOP_RULE,
     DEFAULT_SINGLE_HOP_RULE,
+    DROP_E_RULE_MANIPULATION,
+    DROP_E_RULE_SKILL,
     contract_for_skill,
 )
 from skill.schema import LiteracySkillModel, SourceItem
@@ -677,6 +679,15 @@ def _build_pattern_context(skill: LiteracySkillModel, ctx: _CorpusContext) -> Pa
     # those words still classify correctly via the pattern rule (→ review/contrast).
     corpus_targets: set[str] = set(ctx.roll_and_read_words)
 
+    # Drop-E is an orthographic transformation contract rather than a single
+    # vowel/rime pattern.  Its extracted target_words are the derived words the
+    # learner is explicitly asked to build (smile -> smiling, close -> closed,
+    # etc.), so they are authoritative target evidence even when the optional
+    # corpus lookup is unavailable.  Keep the broader rule above unchanged for
+    # ordinary phonics lessons, where target_words may mix review/contrast words.
+    if skill.specific_skill == DROP_E_RULE_SKILL:
+        corpus_targets.update(_normalize_word(word) for word in skill.target_words)
+
     irregulars: set[str] = set()
     sight = _first_item(skill, "sight_words")
     if sight is not None:
@@ -812,7 +823,9 @@ def _manipulation_chain_shape(skill: LiteracySkillModel) -> str:
 def _make_manipulation_cell(skill: LiteracySkillModel, ctx: PatternContext) -> ObjectiveCell:
     shape = _manipulation_chain_shape(skill)
     contract = contract_for_skill(skill.specific_skill)
-    if contract is not None:
+    if skill.specific_skill == DROP_E_RULE_SKILL:
+        rule = DROP_E_RULE_MANIPULATION
+    elif contract is not None:
         rule = (
             contract.manipulation_rule_single_hop
             if shape == "single_hop"
@@ -822,11 +835,20 @@ def _make_manipulation_cell(skill: LiteracySkillModel, ctx: PatternContext) -> O
         rule = DEFAULT_SINGLE_HOP_RULE
     else:
         rule = DEFAULT_MULTI_HOP_RULE
+    is_drop_e = skill.specific_skill == DROP_E_RULE_SKILL
     return ObjectiveCell(
         objective_id="obj_manipulation",
         objective_type="phoneme_grapheme_manipulation",
-        display_name="Build and change words (word chain)",
-        concept="phoneme-grapheme manipulation",
+        display_name=(
+            "Apply the Drop E Rule to build words"
+            if is_drop_e
+            else "Build and change words (word chain)"
+        ),
+        concept=(
+            "orthographic spelling-rule manipulation"
+            if is_drop_e
+            else "phoneme-grapheme manipulation"
+        ),
         target_pattern=ctx.pattern_key or None,
         importance="essential",
         required_forms=["word_chain", "chain_script"],

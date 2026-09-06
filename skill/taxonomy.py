@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from skill.contract import known_suffix_tokens
+from skill.contract import DROP_E_RULE_SKILL, known_suffix_tokens
 
 LITERACY_DOMAINS: dict[str, dict[str, Any]] = {
     "phonemic_awareness": {
@@ -97,6 +97,11 @@ def all_domains() -> list[str]:
 
 # Common phonics patterns for UFLI concept label matching
 PHONICS_PATTERNS: dict[str, str] = {
+    # Orthographic spelling-change rules (must precede generic CVCe matches).
+    "drop -e rule": DROP_E_RULE_SKILL,
+    "drop e rule": DROP_E_RULE_SKILL,
+    "drop -e": DROP_E_RULE_SKILL,
+    "drop e": DROP_E_RULE_SKILL,
     # CVC
     "cvc": "cvc_blending",
     "short": "cvc_blending",

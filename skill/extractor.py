@@ -620,6 +620,7 @@ def _build_word_work_objectives(
         "r_controlled": "Read words with r-controlled vowels",
         "multisyllable": "Decode multisyllable words",
         "letter_sound": "Match letters to their sounds",
+        "drop_e_rule": "Drop final e before adding an ending",
     }
 
     label = skill_labels.get(specific_skill)
