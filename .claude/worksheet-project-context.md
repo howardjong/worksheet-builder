@@ -8,6 +8,41 @@
 
 ## Current State
 
+### Session 65 — 2026-09-06 (Lesson 109 checkpoint committed and review branch pushed)
+
+**Status:** The validated Lesson 109 Drop-E repair and the systemic spelling-rule
+engine plan are now committed and pushed to the review branch
+`refound/skill-contracts-composed-render`:
+
+- `af414cc` — `fix: preserve Lesson 109 Drop-E spelling rule`
+- `8200851` — `docs: record systemic spelling-rule engine plan`
+
+The remote branch is tracking `origin/refound/skill-contracts-composed-render`.
+Nothing has been merged into `main`. The current branch still includes the
+earlier refound experiment commits, including the owner-gated `hybrid_shell`
+work, so promotion to `main` must be selective rather than a wholesale merge.
+
+**Verification:** The same working tree passed the full suite with 917 tests
+passed and 7 warnings, Ruff clean, and mypy clean. After the pre-commit
+formatter hooks, the focused Lesson 109/story/render/validation selection passed
+103 tests with 5 warnings. No golden E2E tests are present, so
+`make test-golden` skipped. The commit hooks passed for both commits.
+
+**Branch cleanup:** Local `refound/track-a` and `refound/track-b` were deleted
+after verifying their commits remain reachable from the pushed review branch.
+There is one worktree. `main` remains at `fdb1995` and the older
+`claude/review-recent-refactoring-rma786` branch remains locally and remotely;
+it is an ancestor of `main` and a future cleanup candidate, but was not deleted
+in this checkpoint. The unrelated untracked historical plan
+`docs/superpowers/plans/2026-07-17-skill-contracts-composed-render.md` remains
+intentionally unstaged.
+
+**Next:** Review the pushed branch / open a PR, then create a clean promotion
+branch from `main` and selectively carry the contract and Drop-E changes after
+the owner reviews the experimental refound commits and any needed live visual
+acceptance. The systemic engine implementation plan itself has not been
+executed.
+
 ### Session 64 — 2026-08-27 (systemic spelling-rule repair planned; implementation deferred to a new session)
 
 **Status:** Planning-only follow-up to the Lesson 109 UAT/fix. The owner agreed
