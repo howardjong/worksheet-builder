@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from adapt.schema import FeedbackPanel
-from skill.contract import contract_for_skill
+from skill.contract import DROP_E_RULE_GOAL, DROP_E_RULE_SKILL, contract_for_skill
 
 # Next-step hint for the grown-up, printed on the package's last sheet.
 # Thresholds: Betts reading levels + UFLI-aligned practice (spec 2026-07-10).
@@ -26,6 +26,8 @@ def _display_skill(specific_skill: str) -> str:
 
 def learning_goal_statement(domain: str, specific_skill: str) -> str:
     """Child-friendly 'I can...' goal shown in page banners and feedback strips."""
+    if specific_skill == DROP_E_RULE_SKILL:
+        return DROP_E_RULE_GOAL
     if specific_skill.startswith("suffix_"):
         contract = contract_for_skill(specific_skill)
         if contract is not None:

@@ -28,6 +28,7 @@ from adapt.schema import (
 )
 from adapt.section_cap import enforce_package_cap, enforce_section_cap
 from companion.schema import LearnerProfile
+from skill.contract import DROP_E_RULE_SKILL, DROP_E_RULE_SUFFIXES
 from skill.lesson_loader import EXTRACTION_ARTIFACTS
 from skill.schema import LiteracySkillModel
 from validate.objective_coverage import build_evidence_index, evaluate_objective_coverage
@@ -334,6 +335,10 @@ def adapt_lesson(
     discovery_default = ["match", "trace", "circle"]
     if "trace" not in rules.allowed_response_formats:
         discovery_default = ["write" if f == "trace" else f for f in discovery_default]
+    if os.environ.get("WORKSHEET_SKIP_ASSET_GEN") == "1":
+        # Put the asset-free recognition task before repeated production so
+        # the first retained Word Practice page mixes response modes.
+        discovery_default = ["circle", "write"]
     discovery_formats = _suggest_format_mix(prior_adaptations, discovery_default)
     curriculum = _build_curriculum_word_bank(rag_curriculum_references)
     if prior_adaptations:
@@ -404,7 +409,12 @@ def adapt_lesson(
     profile_hash = _hash_str(profile.model_dump_json())
 
     # Worksheet 1: Word Discovery (if we have word items or target words)
-    discovery_words = word_items or prioritized_targets[:6]
+    # Drop-E already gets explicit spelling transformations plus a short oral
+    # reading list in Word Work. A generic discovery/copy family adds pages and
+    # fatigue without exercising the spelling operation itself.
+    discovery_words = (
+        [] if skill.specific_skill == DROP_E_RULE_SKILL else word_items or prioritized_targets[:6]
+    )
     if discovery_words:
         chunks = _build_discovery_chunks(
             discovery_words,
@@ -489,7 +499,9 @@ def adapt_lesson(
                 decoration_zones=_define_decoration_zones(),
                 feedback=build_feedback_panel(skill.domain, skill.specific_skill),
                 worksheet_number=len(worksheets) + 1,
-                worksheet_title="Word Builder",
+                worksheet_title=(
+                    "Word Work" if skill.specific_skill == DROP_E_RULE_SKILL else "Word Builder"
+                ),
                 break_prompt=BRAIN_BREAK_PROMPTS[1 % len(BRAIN_BREAK_PROMPTS)],
             )
         )
@@ -832,6 +844,12 @@ def _build_discovery_chunks(
     for fmt in ordered_formats:
         chunk_id = len(chunks) + 1
         if fmt == "match":
+            if os.environ.get("WORKSHEET_SKIP_ASSET_GEN") == "1":
+                # A picture-matching task without pictures is impossible. The
+                # black-ink/offline path deliberately removes raster assets,
+                # so omit this form and let the text-based write/circle forms
+                # below carry the same target-word practice.
+                continue
             # The match renderer lays out two columns cleanly up to four rows.
             match_words = words[: min(max_items, 4)]
             if not match_words:
@@ -1060,7 +1078,10 @@ def _build_builder_chunks(
 
         from skill.taxonomy import is_suffix_skill, suffixes_for_skill
 
-        if is_suffix_skill(skill.specific_skill):
+        is_drop_e = skill.specific_skill == DROP_E_RULE_SKILL
+        if is_drop_e:
+            suffix_steps = _parse_drop_e_chain_steps(chains)
+        elif is_suffix_skill(skill.specific_skill):
             suffix_steps = _parse_suffix_chain_steps(
                 chains, suffixes_for_skill(skill.specific_skill)
             )
@@ -1070,27 +1091,59 @@ def _build_builder_chunks(
         if suffix_steps:
             # Worked example uses the first step; activity uses the rest
             ex_step = suffix_steps[0]
-            example = Example(
-                instruction="Watch how to add the ending:",
-                content=f"{ex_step['from_word']} + -{ex_step['suffix']} → {ex_step['to_word']}",
-            )
+            if is_drop_e:
+                example = Example(
+                    instruction="Watch the Drop E Rule:",
+                    content=(
+                        f"{ex_step['from_word']} → {ex_step['to_word']} "
+                        f"(drop final e, then add -{ex_step['suffix']})"
+                    ),
+                )
+            else:
+                example = Example(
+                    instruction="Watch how to add the ending:",
+                    content=(
+                        f"{ex_step['from_word']} + -{ex_step['suffix']} → {ex_step['to_word']}"
+                    ),
+                )
             activity_suffix_steps = suffix_steps[1:]
+            if is_drop_e:
+                # Objective-sufficiency dosage: the worked example plus one
+                # calm chunk is enough to teach and practice the rule. Keep a
+                # representative sequence across endings instead of spilling
+                # morphology practice onto a second section/page.
+                activity_suffix_steps = activity_suffix_steps[:max_items]
 
             for batch_start in range(0, len(activity_suffix_steps), max_items):
                 batch = activity_suffix_steps[batch_start : batch_start + max_items]
                 items: list[ActivityItem] = []
                 for step in batch:
                     item_id += 1
-                    items.append(_suffix_step_item(item_id, step))
+                    if is_drop_e:
+                        items.append(_drop_e_step_item(item_id, step))
+                    else:
+                        items.append(_suffix_step_item(item_id, step))
                 chunks.append(
                     ActivityChunk(
                         chunk_id=len(chunks) + 1,
-                        micro_goal=f"Build {len(items)} new words",
-                        instructions=[
-                            Step(number=1, text="Read the word."),
-                            Step(number=2, text="Add the ending."),
-                            Step(number=3, text="Write the new word."),
-                        ],
+                        micro_goal=(
+                            f"Use Drop E for {len(items)} new words"
+                            if is_drop_e
+                            else f"Build {len(items)} new words"
+                        ),
+                        instructions=(
+                            [
+                                Step(number=1, text="Read the base word."),
+                                Step(number=2, text="Drop the final e."),
+                                Step(number=3, text="Add the ending and write."),
+                            ]
+                            if is_drop_e
+                            else [
+                                Step(number=1, text="Read the word."),
+                                Step(number=2, text="Add the ending."),
+                                Step(number=3, text="Write the new word."),
+                            ]
+                        ),
                         worked_example=example if batch_start == 0 else None,
                         items=items,
                         response_format="write",
@@ -1197,6 +1250,11 @@ def _build_builder_chunks(
         if not chains
         else [words[:max_items]]
     )
+    if skill.specific_skill == DROP_E_RULE_SKILL:
+        # Missing-vowel completion tests a generic cue, not the Drop-E rule.
+        # The explicit transformation chunk already provides sufficient
+        # spelling production for this lesson.
+        fill_word_batches = []
     for fill_words in fill_word_batches:
         if not fill_words:
             continue
@@ -1513,6 +1571,52 @@ def _format_passage(text: str) -> str:
     return formatted
 
 
+def _passage_excerpt(
+    text: str,
+    *,
+    max_sentences: int = 4,
+    max_words: int = 50,
+) -> str:
+    """Return a brief, coherent source excerpt for one ADHD-safe reading chunk.
+
+    UFLI lesson passages can run 100+ words. A worksheet package is practice,
+    not a page-faithful reproduction of the curriculum PDF, so use the story's
+    opening 2-4 sentences as a bounded connected-text checkpoint. Keeping the
+    opening preserves narrative coherence (names are introduced before pronouns)
+    and avoids brittle sentence synthesis. The full source remains in the
+    persisted skill artifact for auditability.
+    """
+    raw_lines = text.splitlines()
+    title_line = ""
+    body = text
+    if raw_lines:
+        first_line = raw_lines[0].strip()
+        if first_line and not re.search(r"[.!?]\s*$", first_line):
+            title_line = first_line
+            body = "\n".join(raw_lines[1:])
+
+    normalized = re.sub(r"\s+", " ", body.replace("\n", " ")).strip()
+    sentences = [s.strip() for s in re.findall(r"[^.!?]+[.!?]", normalized) if s.strip()]
+    if len(sentences) < 2:
+        return _format_passage(text)
+
+    selected: list[str] = []
+    word_count = 0
+    for sentence in sentences[: max(2, max_sentences)]:
+        sentence_words = len(re.findall(r"[A-Za-z]+(?:'[A-Za-z]+)?", sentence))
+        if len(selected) >= 2 and word_count + sentence_words > max_words:
+            break
+        selected.append(sentence)
+        word_count += sentence_words
+        if len(selected) >= max_sentences:
+            break
+
+    excerpt = " ".join(selected)
+    if title_line:
+        excerpt = f"{title_line}\n\n{excerpt}"
+    return _format_passage(excerpt)
+
+
 def _build_story_chunks(
     sentences: list[str],
     passages: list[str],
@@ -1526,9 +1630,17 @@ def _build_story_chunks(
     chunks: list[ActivityChunk] = []
     item_id = 0
     max_items = rules.max_items_per_chunk
+    visible_passages = [
+        (
+            _passage_excerpt(passage)
+            if skill.template_type == "ufli_word_work"
+            else _format_passage(passage)
+        )
+        for passage in passages
+    ]
 
     # Chunk 1: Sentence completion with word bank
-    if sentences:
+    if sentences and skill.specific_skill != DROP_E_RULE_SKILL:
         items: list[ActivityItem] = []
         for sent in sentences:
             item_id += 1
@@ -1612,26 +1724,36 @@ def _build_story_chunks(
                 )
 
     # Chunk 2: Read the story (passage)
-    if passages:
-        for batch_start in range(0, len(passages), max_items):
-            passage_batch = passages[batch_start : batch_start + max_items]
+    if visible_passages:
+        for batch_start in range(0, len(visible_passages), max_items):
+            passage_batch = visible_passages[batch_start : batch_start + max_items]
             items = []
-            for passage in passage_batch:
+            for passage_text in passage_batch:
                 item_id += 1
                 items.append(
                     ActivityItem(
                         item_id=item_id,
-                        content=_format_passage(passage),
+                        content=passage_text,
                         response_format="read_aloud",
+                        metadata={"source_excerpt": skill.template_type == "ufli_word_work"},
                     )
                 )
+            passage_text = " ".join(passage_batch)
+            visible_targets = [
+                word for word in target_words if _text_contains_word(passage_text.lower(), word)
+            ]
+            if visible_targets:
+                target_cue = "Underline: " + ", ".join(visible_targets[:max_items]) + "."
+            else:
+                target_cue = "Point to each word as you read."
             chunks.append(
                 ActivityChunk(
                     chunk_id=len(chunks) + 1,
                     micro_goal="Read the story",
                     instructions=[
                         Step(number=1, text="Read the story out loud."),
-                        Step(number=2, text="Point to each word as you read."),
+                        Step(number=2, text=target_cue),
+                        Step(number=3, text="Read those words again."),
                     ],
                     worked_example=None,
                     items=items,
@@ -1641,8 +1763,10 @@ def _build_story_chunks(
             )
 
     # Chunk 3: Story comprehension (circle format)
-    if passages:
-        comp_questions = _generate_comprehension_questions(passages, target_words)
+    if visible_passages:
+        # Questions must be answerable from the exact excerpt printed above,
+        # never from source sentences removed by the ADHD dosage step.
+        comp_questions = _generate_comprehension_questions(visible_passages, target_words)
         if comp_questions:
             items = []
             for q, opts, ans in comp_questions:
@@ -2309,6 +2433,33 @@ def _parse_suffix_chain_steps(chains: list[str], suffixes: list[str]) -> list[di
     return steps
 
 
+def _parse_drop_e_chain_steps(chains: list[str]) -> list[dict[str, str]]:
+    """Parse Drop-E morphology chains into base-anchored spelling steps.
+
+    ``smile → smiled → smiling`` represents two applications of the same
+    orthographic rule: ``smile - e + ed`` and ``smile - e + ing``. It is not a
+    consecutive one-letter substitution chain, so every derived form is
+    checked against the original silent-e base.
+    """
+    steps: list[dict[str, str]] = []
+    for chain in chains:
+        words = [w.strip().lower() for w in re.split(r"\s*(?:->|→)\s*", chain) if w.strip()]
+        if len(words) < 2:
+            continue
+        base = words[0]
+        if not base.endswith("e") or len(base) < 3:
+            continue
+        stem = base[:-1]
+        for derived in words[1:]:
+            suffix = next(
+                (ending for ending in DROP_E_RULE_SUFFIXES if derived == f"{stem}{ending}"),
+                None,
+            )
+            if suffix is not None:
+                steps.append({"from_word": base, "to_word": derived, "suffix": suffix})
+    return steps
+
+
 def _suffix_step_item(item_id: int, step: dict[str, str]) -> ActivityItem:
     """One add-the-ending chain-step item, stamped for coverage evidence.
 
@@ -2321,6 +2472,20 @@ def _suffix_step_item(item_id: int, step: dict[str, str]) -> ActivityItem:
         content=f"{step['from_word']} + -{step['suffix']} → ______",
         response_format="write",
         metadata={"display": "chain_step"},
+        answer=step["to_word"],
+    )
+
+
+def _drop_e_step_item(item_id: int, step: dict[str, str]) -> ActivityItem:
+    """One truthful Drop-E spelling step, stamped as manipulation evidence."""
+    return ActivityItem(
+        item_id=item_id,
+        content=(
+            f'Start with "{step["from_word"]}". Drop the final e. '
+            f"Add -{step['suffix']}. Write: ______"
+        ),
+        response_format="write",
+        metadata={"display": "chain_step", "spelling_rule": DROP_E_RULE_SKILL},
         answer=step["to_word"],
     )
 

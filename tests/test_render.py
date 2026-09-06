@@ -24,6 +24,7 @@ from render.pdf import (
     MARGIN,
     PAGE_HEIGHT,
     PAGE_WIDTH,
+    _wrap_text,
     render_worksheet,
 )
 from render.pose_planner import ScenePlan, plan_scenes, plan_word_pictures
@@ -183,6 +184,9 @@ class TestRenderWorksheet:
 
 
 class TestPrintQuality:
+    def test_wrap_text_normalizes_unsupported_arrow_glyphs(self) -> None:
+        assert _wrap_text("smile → smiled — done", 80) == ["smile -> smiled - done"]
+
     def test_valid_pdf_passes(self) -> None:
         pdf_path = _render_pdf()
         result = validate_print_quality(pdf_path)

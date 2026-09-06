@@ -24,6 +24,20 @@ DEFAULT_SINGLE_HOP_RULE = (
 )
 DEFAULT_MULTI_HOP_RULE = "≥1 coherent build/change chain (count steps, not words)"
 
+# UFLI Lesson 109 is an orthographic spelling-change lesson, not a classic
+# one-letter/sound word chain and not one suffix family. Keep its correctness
+# facts together so taxonomy, adaptation, learner-facing goals, and the judge
+# cannot drift into conflicting interpretations.
+DROP_E_RULE_SKILL = "drop_e_rule"
+DROP_E_RULE_SUFFIXES: tuple[str, ...] = ("ed", "ing", "er", "est")
+DROP_E_RULE_GOAL = "I can drop final e before adding an ending"
+DROP_E_RULE_MANIPULATION = (
+    "≥2 Drop-E transformations: start with a silent-e base word, remove final e, "
+    "then add -ed, -ing, -er, or -est to spell the new word; base-anchored "
+    "derived forms ARE this lesson's manipulation form, so do not require a "
+    "one-letter or one-sound substitution chain"
+)
+
 
 class SuffixContract(BaseModel):
     """Correctness facts for one morphological suffix family."""

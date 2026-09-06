@@ -178,6 +178,14 @@ _SCRIPT_STEMS = (
     "make the word",
 )
 
+_SCRIPT_PATTERNS = (
+    # UFLI morphology scripts use directives such as "Change smiled to
+    # smiling." These are teacher actions, not sentences for a child to fill
+    # in or copy. Keep this shape narrow so ordinary prose about change is not
+    # discarded.
+    re.compile(r"^change\s+[a-z]+\s+to\s+[a-z]+[.!?]$", re.IGNORECASE),
+)
+
 
 def _home_practice_items(text: str) -> tuple[list[str], list[str]]:
     """Extract (word chains, student sentences) from a raw home-practice dump.
@@ -204,6 +212,8 @@ def _home_practice_items(text: str) -> tuple[list[str], list[str]]:
         if any(marker in candidate for marker in ("→", "->", "_", "[", "]")):
             continue
         if any(stem in candidate.lower() for stem in _SCRIPT_STEMS):
+            continue
+        if any(pattern.fullmatch(candidate) for pattern in _SCRIPT_PATTERNS):
             continue
         # Every token must be a plain word (letters, optional apostrophe).
         body = candidate[:-1]  # drop terminal punctuation
