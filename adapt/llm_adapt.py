@@ -447,37 +447,33 @@ def _build_items_from_activity(
     max_items = rules.max_items_per_chunk
 
     if activity.activity_type == "word_chain":
-        # Parse chains into build/change steps. Suffix lessons take the
-        # add-the-ending parser (D1 parity with adapt/engine.py:1061-1068 —
-        # letter-substitution parsing yields 0 steps for length-changing
-        # pairs like "quick → quickly"). Item construction is shared with
-        # the deterministic engine's own chain builder so both authoring
-        # paths render the identical student-facing form.
-        from adapt.engine import (
-            _drop_e_step_item,
-            _letter_step_item,
-            _parse_chain_steps,
-            _parse_drop_e_chain_steps,
-            _parse_suffix_chain_steps,
-            _suffix_step_item,
-        )
-        from skill.contract import DROP_E_RULE_SKILL
-        from skill.taxonomy import is_suffix_skill, suffixes_for_skill
+        # Model-authored prose is never trusted as the operation. Analyze the
+        # supplied word pairs with the same objective contract used by the
+        # deterministic path, then compile only replay-verified steps.
+        from adapt.transformation_compiler import activity_item_for
+        from skill.contract import contract_for_skill_id
+        from skill.transformation import analyze_chain, verify_step
 
-        if skill.specific_skill == DROP_E_RULE_SKILL:
-            for drop_e_step in _parse_drop_e_chain_steps(activity.words)[:max_items]:
-                item_id += 1
-                items.append(_drop_e_step_item(item_id, drop_e_step))
-        elif is_suffix_skill(skill.specific_skill):
-            for suffix_step in _parse_suffix_chain_steps(
-                activity.words, suffixes_for_skill(skill.specific_skill)
-            )[:max_items]:
-                item_id += 1
-                items.append(_suffix_step_item(item_id, suffix_step))
-        else:
-            for step in _parse_chain_steps(activity.words)[:max_items]:
-                item_id += 1
-                items.append(_letter_step_item(item_id, step))
+        contract = contract_for_skill_id(skill.specific_skill)
+        if contract is None:
+            contract = contract_for_skill_id("letter_chain")
+        assert contract is not None
+        steps = [
+            step
+            for chain in activity.words
+            for step in analyze_chain(chain, contract)
+            if verify_step(step)
+        ]
+        seen: set[tuple[str, str, str]] = set()
+        for step in steps:
+            key = (step.rule_id, step.from_word, step.to_word)
+            if key in seen:
+                continue
+            seen.add(key)
+            item_id += 1
+            items.append(activity_item_for(step, item_id))
+            if len(items) >= max_items:
+                break
 
     elif activity.activity_type == "match":
         from adapt.engine import _shuffled_mismatch, _word_to_picture_prompt

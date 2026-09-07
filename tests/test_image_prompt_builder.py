@@ -180,8 +180,9 @@ def test_feedback_strip_and_parent_log() -> None:
 
     prompt = build_page_prompt(_spec())
     assert 'titled with exact text: "Grown-up quick log"' in prompt
-    assert "smooth / choppy" in prompt
-    assert "step back one lesson" in prompt  # hint present when show_decision_hint=True
+    assert "steady / still building" in prompt
+    assert "new objective" in prompt  # hint present when show_decision_hint=True
+    assert "step back one lesson" not in prompt
 
 
 def test_page_prompt_renders_quick_log_without_traffic_strip() -> None:

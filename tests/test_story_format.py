@@ -95,13 +95,46 @@ def test_excerpt_comprehension_uses_only_the_visible_story() -> None:
     ]
 
     assert "baking" in read_text
-    assert "larger" not in read_text
+    assert "larger" in read_text
     pattern_question = next(
         item
         for item in comp_items
         if item.content == "Which word from the pattern is in the story?"
     )
     assert pattern_question.answer == "baking"
+    assert all(item.answer != "No" for item in comp_items if item.content.startswith("Is the word"))
+    assert [item.item_id for item in comp_items] == list(range(1, len(comp_items) + 1))
+
+
+def test_excerpt_selects_target_bearing_window_for_any_source_type() -> None:
+    skill = _fluency_skill_for_story().model_copy(
+        update={"template_type": "unknown", "target_words": ["flute", "tune"]}
+    )
+    rules = build_rules(_grade_1_profile())
+    passage = (
+        "Music Day\n\n"
+        "Mara wakes up early. She packs a small lunch. They walk to the park. "
+        "A band starts to play. Luke plays a flute. Mara hums the tune."
+    )
+    chunks = _build_story_chunks([], [passage], skill.target_words, skill, rules)
+    read_text = next(
+        item.content
+        for chunk in chunks
+        if chunk.response_format == "read_aloud"
+        for item in chunk.items
+    )
+    assert "flute" in read_text.casefold()
+    assert "tune" in read_text.casefold()
+
+
+def test_comprehension_word_presence_uses_whole_words() -> None:
+    from adapt.engine import _generate_comprehension_questions
+
+    questions = _generate_comprehension_questions(
+        ["The engine worked powerfully. It stayed calm."], ["powerful", "calm"]
+    )
+    pattern_question = next(question for question in questions if question[0].startswith("Which"))
+    assert pattern_question[2] == "calm"
 
 
 def _fluency_skill_for_story() -> LiteracySkillModel:

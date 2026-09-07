@@ -15,11 +15,9 @@ def _skill_with_essentials() -> LiteracySkillModel:
     sight_words item (which would add obj_irregular), lesson_number=None (no
     corpus injection). Adapted from tests/test_workload.py::_skill_with_essentials
     with one change: that fixture's chain ("un -> sunny -> ...") opens with a
-    fragment hop that is not a single-letter change, which adapt/engine.py::
-    _parse_chain_steps deliberately drops — so no engine-authored package can
-    ever practice it, and the validator CORRECTLY fails such a package (a true
-    positive). This "all forms present" test needs a chain the engine can
-    author in full: every hop a real single-letter change."""
+    fragment hop that cannot be replayed by the objective's permitted
+    operations, so no engine-authored package can practice it. This "all forms
+    present" test uses a chain whose hops all verify."""
     return LiteracySkillModel(
         grade_level="2",
         domain="phonics",

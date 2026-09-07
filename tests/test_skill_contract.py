@@ -26,7 +26,24 @@ def test_registry_covers_exactly_the_current_morphology_tokens() -> None:
     # Byte-identity bar for the migration: same token universe as
     # skill/taxonomy.py MORPHOLOGY_SUFFIXES before this branch.
     assert known_suffix_tokens() == frozenset(
-        {"er", "est", "ed", "ly", "es", "less", "ful", "ness"}
+        {
+            "s",
+            "es",
+            "er",
+            "est",
+            "ed",
+            "ly",
+            "less",
+            "ful",
+            "ness",
+            "or",
+            "ist",
+            "ish",
+            "y",
+            "ment",
+            "able",
+            "ible",
+        }
     )
 
 

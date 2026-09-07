@@ -591,7 +591,13 @@ class TestAdaptLesson:
 
     def test_word_discovery_has_match_items(self) -> None:
         """Word practice worksheet should have match-format items."""
-        worksheets = adapt_lesson(_ufli_59_skill(), _grade_1_profile())
+        from adapt.schema import AdaptationCapabilities
+
+        worksheets = adapt_lesson(
+            _ufli_59_skill(),
+            _grade_1_profile(),
+            capabilities=AdaptationCapabilities(picture_assets_guaranteed=True),
+        )
         # UFLI word work with chains: Discovery is renamed to Word Practice
         # Section cap enforcement may split into multiple parts
         discovery = [
@@ -609,6 +615,18 @@ class TestAdaptLesson:
         ]
         assert len(match_items) >= 1
 
+    def test_default_capabilities_do_not_author_picture_matching(self) -> None:
+        worksheets = adapt_lesson(_ufli_59_skill(), _grade_1_profile())
+        items = [item for ws in worksheets for chunk in ws.chunks for item in chunk.items]
+        assert all(item.response_format != "match" for item in items)
+        assert all(item.picture_prompt is None for item in items)
+        converted = [
+            item for item in items if item.metadata.get("curriculum_supported") is not None
+        ]
+        for item in converted:
+            if item.response_format == "circle" and item.answer:
+                assert item.options and item.answer in item.options
+
     def test_match_items_have_picture_prompts(self) -> None:
         """Match items should have picture_prompt set."""
         worksheets = adapt_lesson(_ufli_59_skill(), _grade_1_profile())
@@ -622,7 +640,13 @@ class TestAdaptLesson:
         """Worked example must describe row 1's actual (shuffled) picture, not
         leak raw picture_prompt text, and must not assert the wrong pairing
         (D4)."""
-        worksheets = adapt_lesson(_ufli_59_skill(), _grade_1_profile())
+        from adapt.schema import AdaptationCapabilities
+
+        worksheets = adapt_lesson(
+            _ufli_59_skill(),
+            _grade_1_profile(),
+            capabilities=AdaptationCapabilities(picture_assets_guaranteed=True),
+        )
         match_chunk = next(
             chunk for ws in worksheets for chunk in ws.chunks if chunk.response_format == "match"
         )

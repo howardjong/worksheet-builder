@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from skill.transformation import TransformationStep
+
 
 class SourceItem(BaseModel):
     """A single extracted question or activity from the source worksheet."""
@@ -12,6 +14,7 @@ class SourceItem(BaseModel):
     content: str
     source_region_index: int  # index into SourceWorksheetModel.regions
     metadata: dict[str, str | int | float | bool] = Field(default_factory=dict)
+    transformations: list[TransformationStep] = Field(default_factory=list)
 
 
 class LiteracySkillModel(BaseModel):

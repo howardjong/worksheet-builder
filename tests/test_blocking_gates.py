@@ -478,6 +478,20 @@ def test_clean_packet_passes_with_no_violations() -> None:
     assert result.violations == []
 
 
+def test_typed_transformation_answer_drift_blocks() -> None:
+    from adapt.transformation_compiler import activity_item_for
+    from skill.contract import contract_for_skill_id
+    from skill.transformation import analyze_chain
+
+    contract = contract_for_skill_id("drop_e_rule")
+    assert contract is not None
+    step = analyze_chain("smile -> smiling", contract)[0]
+    item = activity_item_for(step, 1).model_copy(update={"answer": "smiled"})
+    result = run_blocking_gates([_worksheet([_chunk([item])])], _empty_ledger())
+    assert result.passed is False
+    assert "transformation_consistency" in _gate_names(result)
+
+
 def test_violations_are_deterministically_ordered() -> None:
     ws = _worksheet(
         [

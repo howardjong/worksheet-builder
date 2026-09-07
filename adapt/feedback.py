@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 from adapt.schema import FeedbackPanel
-from skill.contract import DROP_E_RULE_GOAL, DROP_E_RULE_SKILL, contract_for_skill
+from skill.contract import contract_for_skill, contract_for_skill_id
 
-# Next-step hint for the grown-up, printed on the package's last sheet.
-# Thresholds: Betts reading levels + UFLI-aligned practice (spec 2026-07-10).
+# Calm, learning-objective-oriented next-step hint for the grown-up. It avoids
+# score thresholds, color judgments, and curriculum navigation assumptions.
 DECISION_HINT = (
-    "Mostly green + 9 of 10 right + no help: move on. "
-    "Mixed or some help: practice again with fresh words. "
-    "Mostly red or lots of help: step back one lesson."
+    "Steady with little help: try a new objective. Still building: revisit with fresh words."
 )
+
+
+def feedback_log_row(part_number: int) -> str:
+    """Return one non-punitive observation row for print and image renderers."""
+    return f"Part {part_number}: steady / still building   help: none / some / lots"
 
 
 def _display_skill(specific_skill: str) -> str:
@@ -26,8 +29,9 @@ def _display_skill(specific_skill: str) -> str:
 
 def learning_goal_statement(domain: str, specific_skill: str) -> str:
     """Child-friendly 'I can...' goal shown in page banners and feedback strips."""
-    if specific_skill == DROP_E_RULE_SKILL:
-        return DROP_E_RULE_GOAL
+    transformation_contract = contract_for_skill_id(specific_skill)
+    if transformation_contract is not None:
+        return transformation_contract.goal_statement
     if specific_skill.startswith("suffix_"):
         contract = contract_for_skill(specific_skill)
         if contract is not None:

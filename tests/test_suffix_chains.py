@@ -1,10 +1,12 @@
 """Suffix-aware word chains + chain hygiene (spec 2026-07-13, defects D1/D13)."""
 
-from adapt.engine import _build_builder_chunks, _build_discovery_chunks, _parse_suffix_chain_steps
+from adapt.engine import _build_builder_chunks, _build_discovery_chunks
 from adapt.objective_ledger import ClassifiedSourceItem, ObjectiveCell, ObjectiveLedger
 from adapt.rules import AccommodationRules
 from adapt.schema import AdaptedActivityModel, ScaffoldConfig
+from skill.contract import contract_for_skill_id
 from skill.schema import LiteracySkillModel
+from skill.transformation import analyze_chain
 from validate.objective_coverage import build_evidence_index, evaluate_objective_coverage
 
 
@@ -42,10 +44,12 @@ DUP_CHAINS = [
 
 
 def test_parse_suffix_chain_steps_uses_chain_base() -> None:
-    steps = _parse_suffix_chain_steps(["slow → slower → slowest"], ["er", "est"])
-    assert steps == [
-        {"from_word": "slow", "to_word": "slower", "suffix": "er"},
-        {"from_word": "slow", "to_word": "slowest", "suffix": "est"},
+    contract = contract_for_skill_id("suffix_er_est")
+    assert contract is not None
+    steps = analyze_chain("slow → slower → slowest", contract)
+    assert [(step.from_word, step.to_word, step.ending) for step in steps] == [
+        ("slow", "slower", "er"),
+        ("slow", "slowest", "est"),
     ]
 
 
@@ -57,11 +61,11 @@ def test_suffix_chain_items_hide_answers() -> None:
         assert item.answer, "every chain item carries its answer"
         assert item.answer not in item.content, "answer must never be printed"
         assert "______" in item.content
-    # Worked example consumed one hop; instructions speak suffix language.
+    # Worked example consumed one hop; instructions name the exact suffix.
     chain_chunks = [
         c for c in chunks if any(i.metadata.get("display") == "chain_step" for i in c.items)
     ]
-    assert any("Add the ending" in s.text for s in chain_chunks[0].instructions)
+    assert any("Add -er" in s.text or "Add -est" in s.text for s in chain_chunks[0].instructions)
 
 
 def test_duplicate_chains_produce_no_duplicate_chunks_or_items() -> None:
@@ -73,26 +77,19 @@ def test_duplicate_chains_produce_no_duplicate_chunks_or_items() -> None:
 
 
 def test_letter_chain_lessons_unchanged() -> None:
-    # Lesson-74-style single-letter chains still parse through _parse_chain_steps
+    # Ordinary single-letter chains still use the verified letter-chain contract.
     chunks = _build_builder_chunks(["cry → try → dry"], [], [], _skill("y"), _rules())
     steps = [i for c in chunks for i in c.items if i.metadata.get("display") == "chain_step"]
     assert steps and all(i.answer for i in steps)
 
 
 def test_unparseable_chain_fallback_blanks_answers() -> None:
-    # Chains no parser understands still must not print answers. Two chains,
-    # not one: chains[0] is always consumed by the fallback worked example
-    # (adapt/engine.py:872-875), so a single-chain input leaves chain_items
-    # empty and this loop body never runs — de-vacuized per Task 2 review.
+    # An unknown transformation fails closed instead of inventing a write task.
     chunks = _build_builder_chunks(
         ["run → sprinted", "jump → leaped"], [], [], _skill("y"), _rules()
     )
     chain_items = [i for c in chunks for i in c.items if i.metadata.get("display") == "chain"]
-    assert chain_items, "fallback path must actually produce items to exercise"
-    for item in chain_items:
-        assert "______" in item.content
-        assert item.answer
-        assert item.answer not in item.content
+    assert chain_items == []
 
 
 # --------------------------------------------------------------------------- #

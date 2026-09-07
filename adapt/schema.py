@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from skill.transformation import TransformationStep
+
 
 class Step(BaseModel):
     """A single instruction step."""
@@ -29,6 +31,7 @@ class ActivityItem(BaseModel):
     options: list[str] | None = None  # choices for circle/match/fill_blank activities
     answer: str | None = None  # correct answer for fill_blank/circle
     picture_prompt: str | None = None  # description for AI to generate a matching illustration
+    transformation: TransformationStep | None = None
 
 
 class ActivityChunk(BaseModel):
@@ -50,6 +53,12 @@ class ScaffoldConfig(BaseModel):
     show_worked_example: bool = True  # first chunk always has example
     fade_after_chunk: int = 1  # stop showing examples after this chunk
     hint_level: str = "full"  # "full" | "partial" | "none"
+
+
+class AdaptationCapabilities(BaseModel):
+    """Capabilities guaranteed after adaptation, independent of provider intent."""
+
+    picture_assets_guaranteed: bool = False
 
 
 class FeedbackPanel(BaseModel):

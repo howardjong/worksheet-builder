@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from skill.contract import DROP_E_RULE_SKILL, known_suffix_tokens
+from skill.contract import DROP_E_RULE_SKILL, known_suffix_tokens, match_transformation_contract
 
 LITERACY_DOMAINS: dict[str, dict[str, Any]] = {
     "phonemic_awareness": {
@@ -192,6 +192,15 @@ def match_morphology_pattern(concept_text: str) -> str | None:
     known suffix (rime families) or no hyphen tokens exist."""
     import re
 
+    resolved = match_transformation_contract(concept_text)
+    if resolved is not None and resolved.family in {
+        "suffix",
+        "prefix",
+        "orthographic_rule",
+        "review",
+    }:
+        return resolved.skill_id
+
     tokens = re.findall(r"-([a-z]+)", concept_text.lower())
     if tokens and all(t in MORPHOLOGY_SUFFIXES for t in tokens):
         ordered = sorted(set(tokens), key=tokens.index)
@@ -217,6 +226,10 @@ def match_phonics_pattern(concept_text: str) -> str | None:
     to avoid false positives (e.g., "st" in "just").
     """
     import re
+
+    transformation = match_transformation_contract(concept_text)
+    if transformation is not None:
+        return transformation.skill_id
 
     morphology = match_morphology_pattern(concept_text)
     if morphology:

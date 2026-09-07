@@ -23,6 +23,7 @@ from skill.extractor import (
 )
 from skill.schema import LiteracySkillModel, SourceItem
 from skill.taxonomy import match_phonics_pattern
+from skill.transformation import attach_transformations_to_source_items
 
 logger = logging.getLogger(__name__)
 
@@ -146,6 +147,7 @@ def skill_model_from_lesson(lesson_number: int) -> LiteracySkillModel:
         )
 
     objectives = build_word_work_objectives(specific_skill, concept_label, words)
+    source_items = attach_transformations_to_source_items(source_items, specific_skill)
 
     return LiteracySkillModel(
         grade_level=grade_from_lesson(lesson_number),

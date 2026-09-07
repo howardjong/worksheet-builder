@@ -7,16 +7,16 @@ import pytest
 from adapt.engine import (
     _build_builder_chunks,
     _build_discovery_chunks,
-    _parse_drop_e_chain_steps,
     adapt_lesson,
 )
 from adapt.feedback import learning_goal_statement
 from adapt.objective_ledger import build_objective_ledger
 from adapt.rules import AccommodationRules
 from adapt.schema import AdaptedActivityModel, ScaffoldConfig
-from skill.contract import DROP_E_RULE_MANIPULATION, DROP_E_RULE_SKILL
+from skill.contract import DROP_E_RULE_MANIPULATION, DROP_E_RULE_SKILL, contract_for_skill_id
 from skill.schema import LiteracySkillModel, SourceItem
 from skill.taxonomy import match_phonics_pattern
+from skill.transformation import analyze_chain
 from validate.objective_coverage import build_evidence_index, evaluate_objective_coverage
 
 CHAINS = [
@@ -67,9 +67,12 @@ def test_drop_e_concept_has_its_own_skill_and_goal() -> None:
 
 
 def test_parse_drop_e_chains_as_base_anchored_spelling_steps() -> None:
-    assert _parse_drop_e_chain_steps([CHAINS[0]]) == [
-        {"from_word": "smile", "to_word": "smiled", "suffix": "ed"},
-        {"from_word": "smile", "to_word": "smiling", "suffix": "ing"},
+    contract = contract_for_skill_id(DROP_E_RULE_SKILL)
+    assert contract is not None
+    steps = analyze_chain(CHAINS[0], contract)
+    assert [(step.from_word, step.to_word, step.ending) for step in steps] == [
+        ("smile", "smiled", "ed"),
+        ("smile", "smiling", "ing"),
     ]
 
 
@@ -84,7 +87,7 @@ def test_drop_e_builder_is_truthful_and_hides_answers() -> None:
     assert len(chain_chunks) == 1
     first = chain_chunks[0]
     assert first.worked_example is not None
-    assert "drop final e" in first.worked_example.content.lower()
+    assert "drop the final e" in first.worked_example.content.lower()
     assert "one letter changes" not in first.worked_example.content.lower()
     assert [step.text for step in first.instructions] == [
         "Read the base word.",
@@ -111,7 +114,7 @@ def test_drop_e_contract_and_authored_steps_pass_manipulation_coverage() -> None
     ledger = build_objective_ledger(skill, corpus_lookup=lambda _n: None)
     manip = next(cell for cell in ledger.objectives if cell.objective_id == "obj_manipulation")
     assert manip.sufficiency_rule == DROP_E_RULE_MANIPULATION
-    assert manip.display_name == "Apply the Drop E Rule to build words"
+    assert manip.display_name == "Apply drop final e and add the ending"
 
     worksheet = AdaptedActivityModel(
         source_hash="source",

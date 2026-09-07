@@ -21,9 +21,8 @@ from corpus.ufli.lookup import CorpusLookupResult, lookup_lesson
 from skill.contract import (
     DEFAULT_MULTI_HOP_RULE,
     DEFAULT_SINGLE_HOP_RULE,
-    DROP_E_RULE_MANIPULATION,
-    DROP_E_RULE_SKILL,
     contract_for_skill,
+    contract_for_skill_id,
 )
 from skill.schema import LiteracySkillModel, SourceItem
 from skill.taxonomy import match_phonics_pattern
@@ -420,7 +419,9 @@ def _resolve_role(word: str, ctx: PatternContext) -> tuple[SourceRole, RoleConfi
 def _matches_target_pattern(word: str, ctx: PatternContext) -> bool:
     """True when the word cleanly instantiates the lesson's target pattern."""
     if ctx.pattern_kind == "vce":
-        return ctx.vowel is not None and _is_clean_vce(word, ctx.vowel)
+        if ctx.vowel is not None:
+            return _is_clean_vce(word, ctx.vowel)
+        return any(_is_clean_vce(word, vowel) for vowel in _VOWELS)
     return _matches_rime(word, ctx.rimes)
 
 
@@ -527,7 +528,7 @@ def build_objective_ledger(
     has_sentences = _has_item(skill, ("sentence",))
     connected_cell: ObjectiveCell | None = None
     if has_passage_source or has_corpus_passage or has_sentences:
-        connected_cell = _make_connected_cell(pattern_ctx)
+        connected_cell = _make_connected_cell(skill, pattern_ctx)
         objectives.append(connected_cell)
 
     # NOTE: no contrast_discrimination cell — the fixtures carry no deliberate
@@ -679,13 +680,10 @@ def _build_pattern_context(skill: LiteracySkillModel, ctx: _CorpusContext) -> Pa
     # those words still classify correctly via the pattern rule (→ review/contrast).
     corpus_targets: set[str] = set(ctx.roll_and_read_words)
 
-    # Drop-E is an orthographic transformation contract rather than a single
-    # vowel/rime pattern.  Its extracted target_words are the derived words the
-    # learner is explicitly asked to build (smile -> smiling, close -> closed,
-    # etc.), so they are authoritative target evidence even when the optional
-    # corpus lookup is unavailable.  Keep the broader rule above unchanged for
-    # ordinary phonics lessons, where target_words may mix review/contrast words.
-    if skill.specific_skill == DROP_E_RULE_SKILL:
+    # Transformation objectives are mechanically verified rather than inferred
+    # from a vowel/rime visual pattern. Their declared target words are therefore
+    # authoritative even when a non-corpus source has no curriculum lookup.
+    if contract_for_skill_id(skill.specific_skill) is not None:
         corpus_targets.update(_normalize_word(word) for word in skill.target_words)
 
     irregulars: set[str] = set()
@@ -805,26 +803,33 @@ def _manipulation_chain_shape(skill: LiteracySkillModel) -> str:
     the deterministic engine actually renders (and doesn't miscount hyphens
     inside a source item, e.g. a stray "-ly" in chain_script prose, as an
     arrow — `_ARROW_RE` matches bare hyphens too)."""
-    from adapt.engine import _parse_suffix_chain_steps
-    from skill.taxonomy import is_suffix_skill, suffixes_for_skill
+    from skill.contract import contract_for_skill_id
+    from skill.transformation import analyze_chain
 
-    if not is_suffix_skill(skill.specific_skill):
+    contract = contract_for_skill_id(skill.specific_skill)
+    if contract is None or contract.chain_anchoring != "base_anchored":
         return "multi_hop"
-    suffixes = suffixes_for_skill(skill.specific_skill)
     longest = 0
     for item in skill.source_items:
         if item.item_type not in ("word_chain", "chain_script"):
             continue
-        steps = _parse_suffix_chain_steps([item.content], suffixes)
+        steps = item.transformations or analyze_chain(item.content, contract)
         longest = max(longest, len(steps))
     return "single_hop" if 0 < longest <= 1 else "multi_hop"
 
 
 def _make_manipulation_cell(skill: LiteracySkillModel, ctx: PatternContext) -> ObjectiveCell:
     shape = _manipulation_chain_shape(skill)
+    from skill.contract import contract_for_skill_id
+
+    transformation_contract = contract_for_skill_id(skill.specific_skill)
     contract = contract_for_skill(skill.specific_skill)
-    if skill.specific_skill == DROP_E_RULE_SKILL:
-        rule = DROP_E_RULE_MANIPULATION
+    if transformation_contract is not None:
+        rule = (
+            transformation_contract.manipulation_rule_single_hop
+            if shape == "single_hop"
+            else transformation_contract.manipulation_rule_multi_hop
+        )
     elif contract is not None:
         rule = (
             contract.manipulation_rule_single_hop
@@ -835,18 +840,21 @@ def _make_manipulation_cell(skill: LiteracySkillModel, ctx: PatternContext) -> O
         rule = DEFAULT_SINGLE_HOP_RULE
     else:
         rule = DEFAULT_MULTI_HOP_RULE
-    is_drop_e = skill.specific_skill == DROP_E_RULE_SKILL
+    is_orthographic = (
+        transformation_contract is not None
+        and transformation_contract.family == "orthographic_rule"
+    )
     return ObjectiveCell(
         objective_id="obj_manipulation",
         objective_type="phoneme_grapheme_manipulation",
         display_name=(
-            "Apply the Drop E Rule to build words"
-            if is_drop_e
+            f"Apply {transformation_contract.operation_label}"
+            if transformation_contract is not None
             else "Build and change words (word chain)"
         ),
         concept=(
             "orthographic spelling-rule manipulation"
-            if is_drop_e
+            if is_orthographic
             else "phoneme-grapheme manipulation"
         ),
         target_pattern=ctx.pattern_key or None,
@@ -859,19 +867,23 @@ def _make_manipulation_cell(skill: LiteracySkillModel, ctx: PatternContext) -> O
     )
 
 
-def _make_connected_cell(ctx: PatternContext) -> ObjectiveCell:
+def _make_connected_cell(skill: LiteracySkillModel, ctx: PatternContext) -> ObjectiveCell:
     return ObjectiveCell(
         objective_id="obj_connected_text",
         objective_type="connected_text_fluency",
         display_name="Read connected decodable text",
         concept="connected-text fluency",
         target_pattern=ctx.pattern_key or None,
+        target_words=list(dict.fromkeys(skill.target_words)),
         importance="essential",
         required_forms=["decodable_passage"],
         min_practice_count=_CONNECTED_MIN,
         max_recommended_count=_CONNECTED_MAX,
         acceptable_response_formats=list(_CONNECTED_FORMATS),
-        sufficiency_rule="≥1 decodable passage (or 2-4 connected sentences); 1 page chunk",
+        sufficiency_rule=(
+            "≥1 decodable passage (or 2-4 connected sentences) containing at least one "
+            "target-objective word when the source supplies target words; 1 page chunk"
+        ),
     )
 
 

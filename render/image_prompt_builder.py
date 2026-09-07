@@ -9,7 +9,7 @@ as code-enforced prohibitions.
 
 from __future__ import annotations
 
-from adapt.feedback import DECISION_HINT
+from adapt.feedback import DECISION_HINT, feedback_log_row
 from render.design_spec import SectionSpec, WorksheetDesignSpec
 
 # Bump when prompt structure changes — part of the page cache key.
@@ -113,9 +113,7 @@ def build_page_prompt(
     if spec.feedback:
         fb = spec.feedback
         log_lines = "\n".join(
-            f'Log row exact text: "Part {s.chunk_id}: ___ of {len(s.items)} correct   '
-            'smooth / choppy   help: none / some / lots"'
-            for s in spec.sections
+            f'Log row exact text: "{feedback_log_row(s.chunk_id)}"' for s in spec.sections
         )
         hint = (
             f'\nLast line in smaller text, exact text: "{DECISION_HINT}"'

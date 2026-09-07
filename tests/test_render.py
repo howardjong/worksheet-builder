@@ -6,13 +6,20 @@ import tempfile
 from pathlib import Path
 
 import fitz
+import pytest
 from pytest import MonkeyPatch
 
 from adapt.engine import adapt_activity, adapt_lesson
 from adapt.schema import FeedbackPanel
 from companion.character_identity import CharacterIdentity
 from companion.character_judge import CharacterJudgeResult
-from companion.schema import Accommodations, AvatarConfig, CharacterStyleSheet, LearnerProfile
+from companion.schema import (
+    Accommodations,
+    AvatarConfig,
+    CharacterStyleSheet,
+    LearnerProfile,
+    load_profile,
+)
 from render.asset_gen import (
     _build_scene_generation_prompt,
     compute_worksheet_hash,
@@ -28,6 +35,7 @@ from render.pdf import (
     render_worksheet,
 )
 from render.pose_planner import ScenePlan, plan_scenes, plan_word_pictures
+from skill.lesson_loader import skill_model_from_lesson
 from skill.schema import LiteracySkillModel, SourceItem
 from theme.engine import load_theme
 from theme.schema import AssetManifest
@@ -125,6 +133,26 @@ class TestRenderWorksheet:
         assert Path(pdf_path).stat().st_size > 0
         Path(pdf_path).unlink()
 
+    def test_lesson_109_story_keeps_feedback_with_activity(
+        self, tmp_path: Path, monkeypatch: MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("WORKSHEET_LLM_ADAPT", "0")
+        monkeypatch.setenv("WORKSHEET_SKIP_ASSET_GEN", "1")
+        monkeypatch.setenv("WORKSHEET_MAX_WORKSHEETS", "auto")
+        skill = skill_model_from_lesson(109)
+        worksheets = adapt_lesson(skill, load_profile("profiles/ian.yaml"), theme_id="space")
+        story = next(ws for ws in worksheets if ws.worksheet_title == "Story Time")
+        pdf_path = tmp_path / "lesson-109-story.pdf"
+
+        render_worksheet(story, load_theme("space"), str(pdf_path))
+
+        with fitz.open(pdf_path) as doc:
+            page_text = [page.get_text() for page in doc]
+        assert len(page_text) == 1
+        assert "1. Which word from the pattern is in the story?" in page_text[0]
+        assert "Grown-up quick log" in page_text[0]
+        assert "step back one lesson" not in page_text[0]
+
     def test_grade_k_render(self) -> None:
         skill = _phonics_skill()
         profile = LearnerProfile(
@@ -179,7 +207,9 @@ class TestRenderWorksheet:
 
         assert "I can read words with the y pattern" in flat_text
         assert "Grown-up quick log" in flat_text
-        assert "step back one lesson" in flat_text
+        assert "Still building: revisit with fresh words" in flat_text
+        assert "step back one lesson" not in flat_text
+        assert " correct " not in flat_text
         assert "Circle one for each part" not in flat_text
 
 
@@ -221,6 +251,21 @@ class TestPrintQuality:
         result = validate_print_quality(pdf_path)
         page_violations = [v for v in result.violations if v.check == "has_pages"]
         assert len(page_violations) == 0
+        Path(pdf_path).unlink()
+
+    def test_visible_unembedded_font_fails(self) -> None:
+        from reportlab.lib.pagesizes import letter
+        from reportlab.pdfgen.canvas import Canvas
+
+        with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as handle:
+            pdf_path = handle.name
+        canvas = Canvas(pdf_path, pagesize=letter)
+        canvas.setFont("Helvetica", 14)
+        canvas.drawString(72, 720, "Visible system font")
+        canvas.save()
+        result = validate_print_quality(pdf_path)
+        assert not result.passed
+        assert any(violation.check == "font_embedding" for violation in result.violations)
         Path(pdf_path).unlink()
 
     def test_invisible_searchable_text_layer_is_not_flagged_as_overlap(self) -> None:
@@ -383,6 +428,27 @@ def _lesson74_home_skill() -> LiteracySkillModel:
 
 
 class TestMultiWorksheetRender:
+    def test_match_without_verified_picture_assets_fails_before_writing(self) -> None:
+        from adapt.schema import AdaptationCapabilities
+        from render.pdf import RenderContractError
+
+        worksheets = adapt_lesson(
+            _lesson74_home_skill(),
+            _profile(),
+            theme_id="roblox_obby",
+            capabilities=AdaptationCapabilities(picture_assets_guaranteed=True),
+        )
+        word_practice = next(
+            ws
+            for ws in worksheets
+            if ws.worksheet_title and ws.worksheet_title.startswith("Word Practice")
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            pdf_path = Path(directory) / "missing-assets.pdf"
+            with pytest.raises(RenderContractError):
+                render_worksheet(word_practice, load_theme("roblox_obby"), str(pdf_path))
+            assert not pdf_path.exists()
+
     def test_render_match_items(self) -> None:
         """Word-picture matching items should render without error."""
         worksheets = adapt_lesson(_ufli_59_skill(), _profile())
@@ -545,7 +611,14 @@ class TestMultiWorksheetRender:
 
     def test_word_picture_prompts_key_shuffled_picture_word(self) -> None:
         """Match pictures are looked up by the shuffled picture word."""
-        worksheets = adapt_lesson(_lesson74_home_skill(), _profile(), theme_id="roblox_obby")
+        from adapt.schema import AdaptationCapabilities
+
+        worksheets = adapt_lesson(
+            _lesson74_home_skill(),
+            _profile(),
+            theme_id="roblox_obby",
+            capabilities=AdaptationCapabilities(picture_assets_guaranteed=True),
+        )
         # Section cap enforcement may split into multiple parts
         word_practice_parts = [
             ws
@@ -575,7 +648,14 @@ class TestMultiWorksheetRender:
         monkeypatch.delenv("GEMINI_API_KEY", raising=False)
         monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
 
-        worksheets = adapt_lesson(_lesson74_home_skill(), _profile(), theme_id="roblox_obby")
+        from adapt.schema import AdaptationCapabilities
+
+        worksheets = adapt_lesson(
+            _lesson74_home_skill(),
+            _profile(),
+            theme_id="roblox_obby",
+            capabilities=AdaptationCapabilities(picture_assets_guaranteed=True),
+        )
         # Section cap enforcement may split into multiple parts
         word_practice_parts = [
             ws

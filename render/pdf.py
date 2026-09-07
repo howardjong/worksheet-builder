@@ -13,7 +13,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen.canvas import Canvas
 
-from adapt.feedback import DECISION_HINT
+from adapt.feedback import DECISION_HINT, feedback_log_row
 from adapt.schema import ActivityChunk, ActivityItem, AdaptedActivityModel
 from theme.assets import resolve_decoration
 from theme.schema import AssetManifest, ThemeConfig
@@ -50,7 +50,7 @@ LAYOUT_SPACING: dict[str, float] = {
     "section_gap": 18.0,
     "item_gap": 16.0,
     "box_gap": 32.0,
-    "divider_gap": 22.0,
+    "divider_gap": 12.0,
 }
 
 # Avatar clearance: pts above MARGIN to clear avatar (70pt) + speech bubble (18pt) + gap
@@ -59,6 +59,33 @@ AVATAR_CLEARANCE = 90
 PAGE_BREAK_BUFFER = 20
 
 _fonts_registered = False
+
+
+class RenderContractError(RuntimeError):
+    """The adapted model requests a surface the renderer cannot provide."""
+
+
+def _validate_render_inputs(
+    adapted: AdaptedActivityModel, asset_manifest: AssetManifest | None
+) -> None:
+    """Fail before opening an output file when a required picture is absent."""
+    missing: list[str] = []
+    for chunk in adapted.chunks:
+        for item in chunk.items:
+            if item.response_format != "match":
+                continue
+            picture_word = item.options[0] if item.options else ""
+            picture_path = (
+                asset_manifest.word_picture_paths.get(picture_word)
+                if asset_manifest is not None and picture_word
+                else None
+            )
+            if not picture_path or not Path(picture_path).is_file():
+                missing.append(picture_word or f"item {item.item_id}")
+    if missing:
+        raise RenderContractError(
+            "picture matching requires verified picture assets; missing: " + ", ".join(missing)
+        )
 
 
 def render_worksheet(
@@ -72,6 +99,7 @@ def render_worksheet(
 
     Returns the output file path.
     """
+    _validate_render_inputs(adapted, asset_manifest)
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
 
@@ -121,6 +149,8 @@ def render_worksheet(
     # Render each chunk
     use_scenes = asset_manifest is not None and theme.avatar_position == "integrated"
     for chunk_idx, chunk in enumerate(adapted.chunks):
+        has_tail = bool(adapted.break_prompt or adapted.feedback)
+        draw_divider = not (has_tail and chunk_idx == len(adapted.chunks) - 1)
         # Estimate with scenes first; fall back to full-width if too tall
         chunk_use_scene = use_scenes
         # Passage/read_aloud chunks always use full-width for readability
@@ -187,6 +217,7 @@ def render_worksheet(
                 y,
                 asset_manifest,
                 chunk_idx,
+                draw_divider=draw_divider,
             )
         else:
             y = _draw_chunk(
@@ -200,6 +231,7 @@ def render_worksheet(
                 asset_manifest=asset_manifest,
                 page_break_fn=start_new_page,
                 effective_bottom=content_bottom,
+                draw_divider=draw_divider,
             )
 
     # Brain break + feedback panel: treat as a combined block to avoid
@@ -210,7 +242,10 @@ def render_worksheet(
     if adapted.feedback:
         tail_height += _estimate_feedback_panel_height(adapted, sizes)
 
-    if tail_height > 0 and y - tail_height < content_bottom + PAGE_BREAK_BUFFER:
+    # Use the real printable floor for this compact terminal block. Applying
+    # the normal between-item buffer here can orphan a short caregiver log on
+    # an otherwise empty page even though the block fits above the footer.
+    if tail_height > 0 and y - tail_height < content_bottom:
         start_new_page()
 
     if adapted.break_prompt:
@@ -475,12 +510,12 @@ def _estimate_feedback_panel_height(adapted: AdaptedActivityModel, sizes: dict[s
     body = sizes["body"]
     small = sizes["small"]
     rows = len(adapted.chunks)
-    parent = body + 10 + rows * (small + 6)
+    parent = body + 6 + rows * (small + 4)
     hint = 0.0
     if adapted.feedback and adapted.feedback.show_decision_hint:
         max_chars = max(1, int((CONTENT_WIDTH - 10) / (small * 0.5)))
-        hint = len(_wrap_text(DECISION_HINT, max_chars)) * (small + 6)
-    return parent + hint + 20
+        hint = len(_wrap_text(DECISION_HINT, max_chars)) * (small + 4)
+    return parent + hint
 
 
 def _draw_header(
@@ -553,6 +588,7 @@ def _draw_chunk(
     asset_manifest: AssetManifest | None = None,
     page_break_fn: Callable[[], None] | None = None,
     effective_bottom: float = CONTENT_BOTTOM,
+    draw_divider: bool = True,
 ) -> float:
     """Draw a single activity chunk.
 
@@ -806,13 +842,18 @@ def _draw_chunk(
 
             y -= LAYOUT_SPACING["item_gap"]
 
-    # Chunk divider: three centered dots
-    y -= LAYOUT_SPACING["divider_gap"]
-    c.setFillColor(HexColor(theme_colors.chunk_border))
-    center_x = (left + right) / 2
-    for dx in (-12, 0, 12):
-        c.circle(center_x + dx, y, 2, fill=True, stroke=False)
-    y -= LAYOUT_SPACING["divider_gap"]
+    if draw_divider:
+        # Chunk divider: three centered dots
+        y -= LAYOUT_SPACING["divider_gap"]
+        c.setFillColor(HexColor(theme_colors.chunk_border))
+        center_x = (left + right) / 2
+        for dx in (-12, 0, 12):
+            c.circle(center_x + dx, y, 2, fill=True, stroke=False)
+        y -= LAYOUT_SPACING["divider_gap"]
+    else:
+        # The terminal block supplies its own heading gap. Extra divider space
+        # here can orphan a short caregiver log on a new sheet.
+        pass
 
     return y
 
@@ -946,15 +987,9 @@ def _draw_match_group(
                     logger.warning(f"Failed to draw word pic: {e}")
 
         if not word_drawn:
-            c.setStrokeColor(HexColor(theme.colors.chunk_border))
-            c.setDash(3, 3)
-            c.rect(pic_x, pic_y, pic_size, pic_size, fill=False, stroke=True)
-            c.setDash()
-            c.setFont(theme.fonts.primary, 7)
-            c.setFillColor(HexColor(theme.colors.directions))
-            # Show the picture word label so the child knows what the picture is
-            prompt = _word_to_picture_label(pic_word)
-            c.drawString(pic_x + 3, pic_y + pic_size / 2, prompt)
+            # Preflight should make this unreachable; keep the draw boundary
+            # fail-closed in case the file disappears between checks.
+            raise RenderContractError(f"picture asset became unavailable: {pic_word}")
 
     # Draw dotted connecting area between word and picture columns
     # (light dotted lines from each word row to give the child space to draw)
@@ -974,11 +1009,6 @@ def _draw_match_group(
     y -= len(items) * row_height + 10
     c.setFont(theme.fonts.primary, body)
     return y
-
-
-def _word_to_picture_label(word: str) -> str:
-    """Short label for a picture placeholder box."""
-    return f"[{word[:10]}]"
 
 
 def _draw_trace_item(
@@ -1261,6 +1291,7 @@ def _draw_chunk_with_scene(
     y: float,
     asset_manifest: AssetManifest,
     chunk_idx: int,
+    draw_divider: bool = True,
 ) -> float:
     """Draw chunk with two-column layout: content (60%) + scene (40%).
 
@@ -1280,6 +1311,7 @@ def _draw_chunk_with_scene(
             colors,
             y,
             asset_manifest=asset_manifest,
+            draw_divider=draw_divider,
         )
 
     # Layout: even chunks = scene right, odd = scene left
@@ -1324,6 +1356,7 @@ def _draw_chunk_with_scene(
         content_left=content_left,
         content_right=content_right,
         asset_manifest=asset_manifest,
+        draw_divider=draw_divider,
     )
 
     # Ensure we move past the scene height
@@ -1346,28 +1379,37 @@ def _draw_feedback_panel(
         return y
     body = sizes["body"]
     small = sizes["small"]
-    if y - _estimate_feedback_panel_height(adapted, sizes) < effective_bottom:
+    panel_height = _estimate_feedback_panel_height(adapted, sizes)
+    if y - panel_height < effective_bottom:
         c.showPage()
         y = CONTENT_TOP
+
+    # Clear any low-priority decoration under the dense caregiver text block.
+    c.setFillColor(HexColor(theme.colors.background))
+    c.rect(
+        MARGIN - 2,
+        y - panel_height,
+        CONTENT_WIDTH + 4,
+        panel_height + 4,
+        fill=True,
+        stroke=False,
+    )
 
     c.setFont(theme.fonts.heading, body)
     c.setFillColor(HexColor(theme.colors.directions))
     c.drawString(MARGIN, y - body, panel.parent_log_title)
-    y -= body + 10
+    y -= body + 6
     c.setFont(theme.fonts.primary, small)
     c.setFillColor(HexColor(theme.colors.text))
     for chunk in adapted.chunks:
-        line = (
-            f"Part {chunk.chunk_id}: ___ of {len(chunk.items)} correct   "
-            "smooth / choppy   help: none / some / lots"
-        )
+        line = feedback_log_row(chunk.chunk_id)
         c.drawString(MARGIN + 10, y - small, line)
-        y -= small + 6
+        y -= small + 4
     if panel.show_decision_hint:
         max_chars = max(1, int((CONTENT_WIDTH - 10) / (small * 0.5)))
         for ln in _wrap_text(DECISION_HINT, max_chars):
             c.drawString(MARGIN + 10, y - small, ln)
-            y -= small + 6
+            y -= small + 4
     return y
 
 

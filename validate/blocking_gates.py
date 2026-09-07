@@ -39,6 +39,7 @@ GateName = Literal[
     "capitalization",
     "heading_as_item",
     "worked_example_consistency",
+    "transformation_consistency",
 ]
 
 Severity = Literal["blocker", "warning"]
@@ -532,6 +533,56 @@ _INSTR_LONG_VOWEL_RE = re.compile(r"\blong[\s-]+([aeiou])\b", re.IGNORECASE)
 _INSTR_RIME_RE = re.compile(r"(?:^|\s)-([a-z]{2,})\b", re.IGNORECASE)
 
 
+def _check_transformation(
+    item: ActivityItem, activity_id: str, item_id: str
+) -> list[BlockingViolation]:
+    """Reject replay failures, answer drift, and false operation language."""
+    step = item.transformation
+    if step is None:
+        return []
+    from skill.transformation import verify_step
+
+    if not verify_step(step):
+        return [
+            BlockingViolation(
+                gate="transformation_consistency",
+                activity_id=activity_id,
+                item_id=item_id,
+                message="typed transformation does not replay to its expected word",
+            )
+        ]
+    if item.answer and _normalize(item.answer) != _normalize(step.to_word):
+        return [
+            BlockingViolation(
+                gate="transformation_consistency",
+                activity_id=activity_id,
+                item_id=item_id,
+                message="student-production answer differs from the verified transformation",
+            )
+        ]
+
+    kinds = {operation.kind for operation in step.operations}
+    claims = {
+        "drop final e": "drop_final_e",
+        "drop the final e": "drop_final_e",
+        "double the final consonant": "double_final_consonant",
+        "change final y to i": "change_y_to_i",
+        "change one letter": "substitute_grapheme",
+    }
+    text = item.content.casefold()
+    for claim, required_kind in claims.items():
+        if claim in text and required_kind not in kinds:
+            return [
+                BlockingViolation(
+                    gate="transformation_consistency",
+                    activity_id=activity_id,
+                    item_id=item_id,
+                    message=f"child-facing claim {claim!r} conflicts with typed operations",
+                )
+            ]
+    return []
+
+
 def _parse_instruction_predicate(chunk: ActivityChunk) -> PatternPredicate | None:
     """Parse a single machine-checkable phonics predicate from chunk instructions.
 
@@ -586,6 +637,7 @@ def run_blocking_gates(
                 violations.extend(_check_source_notation(item, activity_id, item_id))
                 violations.extend(_check_capitalization(item, proper_nouns, activity_id, item_id))
                 violations.extend(_check_heading_as_item(item, headings, activity_id, item_id))
+                violations.extend(_check_transformation(item, activity_id, item_id))
 
     violations.sort(key=lambda v: (v.activity_id or "", v.item_id or "", v.gate))
     has_blocker = any(v.severity == "blocker" for v in violations)
