@@ -32,7 +32,7 @@ def load_theme(theme_id: str) -> ThemeConfig:
     if config_path.exists():
         with open(config_path) as f:
             data = yaml.safe_load(f)
-        return _parse_theme_config(data)
+        return _parse_theme_config(data, theme_id)
 
     # Built-in default theme
     return _default_theme()
@@ -76,18 +76,20 @@ def _plan_decorations(
         if i >= len(assets):
             break
 
-        placements.append({
-            "asset": assets[i],
-            "x0": zone[0],
-            "y0": zone[1],
-            "x1": zone[2],
-            "y1": zone[3],
-        })
+        placements.append(
+            {
+                "asset": assets[i],
+                "x0": zone[0],
+                "y0": zone[1],
+                "x1": zone[2],
+                "y1": zone[3],
+            }
+        )
 
     return placements
 
 
-def _parse_theme_config(data: dict[str, object]) -> ThemeConfig:
+def _parse_theme_config(data: dict[str, object], theme_id: str) -> ThemeConfig:
     """Parse a theme config from YAML data."""
     fonts_data = data.get("fonts", {})
     colors_data = data.get("colors", {})
@@ -97,12 +99,11 @@ def _parse_theme_config(data: dict[str, object]) -> ThemeConfig:
     fonts = ThemeFonts(**fonts_data) if isinstance(fonts_data, dict) else ThemeFonts()
     colors = ThemeColors(**colors_data) if isinstance(colors_data, dict) else ThemeColors()
     deco = DecorativeConfig(**deco_data) if isinstance(deco_data, dict) else DecorativeConfig()
-    char_spec = (
-        CharacterSpec(**char_data) if isinstance(char_data, dict) else CharacterSpec()
-    )
+    char_spec = CharacterSpec(**char_data) if isinstance(char_data, dict) else CharacterSpec()
 
     return ThemeConfig(
         name=str(data.get("name", "Unknown")),
+        theme_id=theme_id,
         style=str(data.get("style", "calm")),
         fonts=fonts,
         colors=colors,
@@ -117,6 +118,7 @@ def _default_theme() -> ThemeConfig:
     """Return the built-in default theme (clean, calm, no decorations)."""
     return ThemeConfig(
         name="Default",
+        theme_id="default",
         style="calm",
         fonts=ThemeFonts(),
         colors=ThemeColors(),

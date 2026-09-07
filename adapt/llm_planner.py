@@ -173,16 +173,16 @@ def _allow_unjudged_objective_plan() -> bool:
 # build/transformation") are pinned by tests/test_llm_planner.py.
 _FORM_GUIDANCE: dict[RequiredForm, str] = {
     "word_chain": (
-        "author an ordered build/transformation sequence — each step changes ONE "
-        "letter/sound from the previous word, with explicit step language (e.g. "
-        '"Make `tune`. Change the `u` to `o`. What word? ...`tone`"). Do NOT scatter '
-        "the chain's words across separate write items."
+        "author an ordered build/transformation sequence with explicit step language. "
+        "Follow this cell's sufficiency rule: letter chains change one letter/sound, "
+        "while suffix and spelling-rule lessons may add endings or change spelling. "
+        "Do NOT scatter the chain's words across separate write items."
     ),
     "chain_script": (
-        "author an ordered build/transformation sequence — each step changes ONE "
-        "letter/sound from the previous word, with explicit step language (e.g. "
-        '"Make `tune`. Change the `u` to `o`. What word?"). Do NOT scatter the '
-        "chain's words across separate write items."
+        "author an ordered build/transformation sequence with explicit step language. "
+        "Follow this cell's sufficiency rule: letter chains change one letter/sound, "
+        "while suffix and spelling-rule lessons may add endings or change spelling. "
+        "Do NOT scatter the chain's words across separate write items."
     ),
     "decodable_passage": (
         "author real CONNECTED TEXT (a short passage), not a title or a lone sentence."
@@ -224,6 +224,7 @@ def _objective_cell_block(cell: ObjectiveCell, content_by_id: dict[str, str]) ->
             lines.append(f"- Source ({fid}): {content}")
     for form in cell.required_forms:
         lines.append(f"- For `{form}`: {_FORM_GUIDANCE[form]}")
+    lines.append(f"- Sufficiency rule for this lesson: {cell.sufficiency_rule}")
     return "\n".join(lines)
 
 
@@ -250,9 +251,9 @@ def _objective_authoring_block(
 Each objective below MUST be exercised IN its required pedagogical form (not merely
 mentioned). Follow these three rules:
 
-1. AUTHOR EACH REQUIRED FORM IN ITS FORM. A word chain is an ordered \
-build/transformation sequence (change one letter/sound per step, with explicit step \
-language) — NOT the chain's words scattered across separate write items. A passage is \
+1. AUTHOR EACH REQUIRED FORM IN ITS FORM. A word chain is the ordered \
+build/transformation form named in that objective's sufficiency rule, with explicit \
+step language — NOT the chain's words scattered across separate write items. A passage is \
 connected text. An encode/spell objective is written production. A sentence-write \
 objective is production (the child writes it).
 2. SAMPLE samplable pools to the threshold, not exhaustively. For large pools \
@@ -265,6 +266,8 @@ review, and irregular words do not count toward it and must not pad it.
 {cell_blocks}
 
 Example of a compliant build/change-chain activity (adapt words to THIS lesson):
+  {{"activity_type": "word_chain", "words": ["smile → smiled → smiling"], "items": []}}
+  for Drop-E spelling-rule lessons,
   {{"activity_type": "word_chain", "words": ["quick → quickly", "light → lightly"], "items": []}}
   for suffix lessons, or
   {{"activity_type": "word_chain", "words": ["cry → try → dry"], "items": []}}

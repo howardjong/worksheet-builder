@@ -454,14 +454,21 @@ def _build_items_from_activity(
         # the deterministic engine's own chain builder so both authoring
         # paths render the identical student-facing form.
         from adapt.engine import (
+            _drop_e_step_item,
             _letter_step_item,
             _parse_chain_steps,
+            _parse_drop_e_chain_steps,
             _parse_suffix_chain_steps,
             _suffix_step_item,
         )
+        from skill.contract import DROP_E_RULE_SKILL
         from skill.taxonomy import is_suffix_skill, suffixes_for_skill
 
-        if is_suffix_skill(skill.specific_skill):
+        if skill.specific_skill == DROP_E_RULE_SKILL:
+            for drop_e_step in _parse_drop_e_chain_steps(activity.words)[:max_items]:
+                item_id += 1
+                items.append(_drop_e_step_item(item_id, drop_e_step))
+        elif is_suffix_skill(skill.specific_skill):
             for suffix_step in _parse_suffix_chain_steps(
                 activity.words, suffixes_for_skill(skill.specific_skill)
             )[:max_items]:

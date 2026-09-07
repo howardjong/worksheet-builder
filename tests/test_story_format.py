@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from adapt.engine import _build_story_chunks, _format_passage
+from adapt.engine import _build_story_chunks, _format_passage, _passage_excerpt
 from adapt.rules import build_rules
 from companion.schema import Accommodations, LearnerProfile
 from skill.schema import LiteracySkillModel, SourceItem
@@ -22,6 +22,86 @@ def test_format_passage_preserves_every_sentence() -> None:
     formatted = _format_passage(text)
     for s in ["One is here.", "Two is here!", "Three is here?", "Four is here."]:
         assert s in formatted
+
+
+def test_passage_excerpt_keeps_title_and_two_to_four_opening_sentences() -> None:
+    text = (
+        "The Baker\n\n"
+        "Rashawn is a world class baker. "
+        "He has been baking since he was a little boy. "
+        "Every day he dances while making treats. "
+        "He trades tips with other bakers."
+    )
+    excerpt = _passage_excerpt(text)
+
+    assert excerpt.startswith("The Baker\n\n")
+    assert "Rashawn is a world class baker." in excerpt
+    assert "Every day he dances while making treats." in excerpt
+    assert "He trades tips with other bakers." in excerpt
+    assert excerpt.count(".") == 4
+
+
+def test_ufli_word_work_story_uses_bounded_source_excerpt() -> None:
+    skill = _fluency_skill_for_story().model_copy(
+        update={"template_type": "ufli_word_work", "target_words": ["baking"]}
+    )
+    rules = build_rules(_grade_1_profile())
+    passage = (
+        "The Baker\n\n"
+        "Rashawn is a baker. He has been baking a pie. "
+        "He smiles as he makes it. His friend visits the kitchen. "
+        "They share the pie after lunch."
+    )
+    chunks = _build_story_chunks([], [passage], skill.target_words, skill, rules)
+    read_item = next(
+        item for chunk in chunks if chunk.response_format == "read_aloud" for item in chunk.items
+    )
+
+    assert read_item.metadata.get("source_excerpt") is True
+    assert "He smiles as he makes it." in read_item.content
+    assert "His friend visits the kitchen." in read_item.content
+    assert "They share the pie after lunch." not in read_item.content
+    assert read_item.content.count(".") == 4
+    read_chunk = next(chunk for chunk in chunks if chunk.response_format == "read_aloud")
+    assert read_chunk.instructions[1].text == "Underline: baking."
+
+
+def test_excerpt_comprehension_uses_only_the_visible_story() -> None:
+    skill = _fluency_skill_for_story().model_copy(
+        update={
+            "template_type": "ufli_word_work",
+            "target_words": ["baking", "larger"],
+        }
+    )
+    rules = build_rules(_grade_1_profile())
+    passage = (
+        "The Baker\n\n"
+        "Rashawn is a baker. He has been baking a pie. "
+        "He smiles as he makes it. His friend visits the kitchen. "
+        "His friend takes the larger slice."
+    )
+    chunks = _build_story_chunks([], [passage], skill.target_words, skill, rules)
+    read_text = next(
+        item.content
+        for chunk in chunks
+        if chunk.response_format == "read_aloud"
+        for item in chunk.items
+    ).lower()
+    comp_items = [
+        item
+        for chunk in chunks
+        if chunk.micro_goal == "Check your understanding"
+        for item in chunk.items
+    ]
+
+    assert "baking" in read_text
+    assert "larger" not in read_text
+    pattern_question = next(
+        item
+        for item in comp_items
+        if item.content == "Which word from the pattern is in the story?"
+    )
+    assert pattern_question.answer == "baking"
 
 
 def _fluency_skill_for_story() -> LiteracySkillModel:

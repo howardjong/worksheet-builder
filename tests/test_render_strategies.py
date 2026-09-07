@@ -131,25 +131,33 @@ def test_image_prompt_strategy_writes_offline_prompt_artifacts(tmp_path: Path) -
     assert manifest["required_text_count"] == 4
 
 
-def test_hybrid_shell_strategy_is_experimental_pdf_renderer(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_hybrid_shell_strategy_is_experimental_pdf_renderer(tmp_path: Path) -> None:
+    from adapt.engine import adapt_activity
+    from companion.schema import LearnerProfile
     from render.strategies import RenderContext, resolve_render_strategy
+    from skill.schema import LiteracySkillModel, SourceItem
+    from theme.engine import load_theme
 
-    calls: list[str] = []
-
-    def fake_render_worksheet(*args: object, **kwargs: object) -> str:
-        calls.append(str(args[2]))
-        Path(str(args[2])).write_text("pdf placeholder")
-        return str(args[2])
-
-    monkeypatch.setattr("render.strategies.render_worksheet", fake_render_worksheet)
+    skill = LiteracySkillModel(
+        grade_level="1",
+        domain="phonics",
+        specific_skill="cvc_blending",
+        learning_objectives=["Blend CVC words"],
+        target_words=["tall", "call", "wall", "fall", "mall", "doll"],
+        response_types=["write"],
+        source_items=[
+            SourceItem(item_type="word_list", content="tall, call, wall", source_region_index=0),
+            SourceItem(item_type="word_list", content="fall, mall, doll", source_region_index=1),
+        ],
+        extraction_confidence=0.95,
+        template_type="ufli_word_work",
+    )
+    adapted = adapt_activity(skill, LearnerProfile(name="Test", grade_level="1"))
     output_path = tmp_path / "hybrid.pdf"
     context = RenderContext(
         design_spec=_design_spec("hybrid_shell"),
-        adapted=object(),
-        theme=object(),
+        adapted=adapted,
+        theme=load_theme("space"),
         output_path=output_path,
         artifacts_dir=tmp_path,
     )
@@ -157,11 +165,17 @@ def test_hybrid_shell_strategy_is_experimental_pdf_renderer(
     strategy = resolve_render_strategy("hybrid_shell")
     result = strategy.render(context)
 
-    assert calls == [str(output_path)]
     assert strategy.renderer_id == "hybrid_shell"
     assert strategy.produces_pdf is True
     assert strategy.experimental is True
+    assert result.renderer_id == "hybrid_shell"
+    assert result.produces_pdf is True
+    assert result.experimental is True
     assert result.pdf_path == str(output_path)
+    assert output_path.exists() and output_path.stat().st_size > 0
+    manifest_path = tmp_path / "composed_manifest_1.json"
+    assert manifest_path.exists()
+    assert result.artifact_paths == [str(output_path), str(manifest_path)]
 
 
 def test_render_artifacts_dir_isolates_experimental_renderers(tmp_path: Path) -> None:

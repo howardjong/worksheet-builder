@@ -114,8 +114,11 @@ def _build_review_prompt(adapted: AdaptedActivityModel) -> str:
     for chunk in adapted.chunks:
         items_desc = []
         for item in chunk.items:
+            options = f", options={item.options}" if item.options else ""
+            answer = f", answer={item.answer!r}" if item.answer else ""
             items_desc.append(
-                f'    - Item {item.item_id}: "{item.content}" (format: {item.response_format})'
+                f'    - Item {item.item_id}: "{item.content}" '
+                f"(format: {item.response_format}{options}{answer})"
             )
         chunks_desc.append(
             f"  Chunk {chunk.chunk_id}: {chunk.micro_goal}\n"
@@ -327,6 +330,15 @@ def _apply_suggestions(
                     item = item.model_copy(update={"options": options})
 
             new_items.append(item)
+
+        if not new_items:
+            # A mutation may remove a bad item, but it must never leave task
+            # instructions and scoring chrome with nothing for the child to do.
+            logger.warning(
+                "  Refusing suggestions that would empty chunk %s; preserving original items",
+                chunk.chunk_id,
+            )
+            new_items = list(chunk.items)
 
         new_chunks.append(
             ActivityChunk(

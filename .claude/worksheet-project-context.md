@@ -8,6 +8,185 @@
 
 ## Current State
 
+### Session 66 — 2026-09-07 (Draft PR opened for selective review)
+
+**Status:** Draft PR [#1](https://github.com/howardjong/worksheet-builder/pull/1)
+is open from `refound/skill-contracts-composed-render` into `main`. It is a
+review checkpoint only; nothing has been merged into `main`. The PR body calls
+out that the branch also contains the earlier owner-gated refound contract and
+`hybrid_shell` experiment commits, and directs reviewers toward selective
+promotion rather than a wholesale merge.
+
+**Review contents:** The branch carries the validated Lesson 109 Drop-E fix in
+`af414cc`, the systemic spelling-rule implementation plan in `8200851`, and the
+post-checkpoint handoff updates through `2084f6b`. The focused and full test
+evidence remains green: 917 full-suite tests passed, 103 focused tests passed,
+Ruff and mypy passed, and all commit hooks passed. `make test-golden` remains
+unavailable because the repository has no golden E2E tests.
+
+**Git state:** The review branch is pushed and tracks
+`origin/refound/skill-contracts-composed-render`. `main` is unchanged at
+`fdb1995`. The local redundant labels `refound/track-a` and `refound/track-b`
+were removed after their commits were verified reachable from the review
+branch. The older `claude/review-recent-refactoring-rma786` branch remains
+locally and remotely as a future cleanup candidate. There is one worktree. The
+unrelated historical plan
+`docs/superpowers/plans/2026-07-17-skill-contracts-composed-render.md` remains
+intentionally untracked.
+
+**Next:** Review PR #1. Do not merge it wholesale without separately reviewing
+the refound renderer experiment. If the Drop-E/contract changes are accepted,
+create a clean promotion branch from `main`, selectively carry the required
+commits, rerun the focused and relevant full gates, and complete any required
+live visual acceptance before merging. The systemic spelling-rule engine plan
+has not been implemented.
+
+### Session 65 — 2026-09-06 (Lesson 109 checkpoint committed and review branch pushed)
+
+**Status:** The validated Lesson 109 Drop-E repair and the systemic spelling-rule
+engine plan are now committed and pushed to the review branch
+`refound/skill-contracts-composed-render`:
+
+- `af414cc` — `fix: preserve Lesson 109 Drop-E spelling rule`
+- `8200851` — `docs: record systemic spelling-rule engine plan`
+
+The remote branch is tracking `origin/refound/skill-contracts-composed-render`.
+Nothing has been merged into `main`. The current branch still includes the
+earlier refound experiment commits, including the owner-gated `hybrid_shell`
+work, so promotion to `main` must be selective rather than a wholesale merge.
+
+**Verification:** The same working tree passed the full suite with 917 tests
+passed and 7 warnings, Ruff clean, and mypy clean. After the pre-commit
+formatter hooks, the focused Lesson 109/story/render/validation selection passed
+103 tests with 5 warnings. No golden E2E tests are present, so
+`make test-golden` skipped. The commit hooks passed for both commits.
+
+**Branch cleanup:** Local `refound/track-a` and `refound/track-b` were deleted
+after verifying their commits remain reachable from the pushed review branch.
+There is one worktree. `main` remains at `fdb1995` and the older
+`claude/review-recent-refactoring-rma786` branch remains locally and remotely;
+it is an ancestor of `main` and a future cleanup candidate, but was not deleted
+in this checkpoint. The unrelated untracked historical plan
+`docs/superpowers/plans/2026-07-17-skill-contracts-composed-render.md` remains
+intentionally unstaged.
+
+**Next:** Review the pushed branch / open a PR, then create a clean promotion
+branch from `main` and selectively carry the contract and Drop-E changes after
+the owner reviews the experimental refound commits and any needed live visual
+acceptance. The systemic engine implementation plan itself has not been
+executed.
+
+### Session 64 — 2026-08-27 (systemic spelling-rule repair planned; implementation deferred to a new session)
+
+**Status:** Planning-only follow-up to the Lesson 109 UAT/fix. The owner agreed
+that the repair should not continue as one-off lesson patches and explicitly
+requested a full red-green TDD implementation plan under the top-level `plans/`
+folder, with a git checkpoint for every independently working block. Plan of
+record:
+`plans/2026-08-27-systemic-spelling-rule-engine-implementation-plan.md`.
+No systemic-engine task from that plan has been implemented yet.
+
+**How the decision was reached:** The black-ink Lesson 109 request first exposed
+a genuine processing defect: `smile -> smiled -> smiling` was treated as a
+classic one-letter word chain. The accepted Lesson 109 patch proved a truthful
+Drop-E contract can fix the output, but owner follow-up asked whether the defect
+was lesson-specific. A direct corpus/code diagnostic confirmed the broader
+failure class:
+
+- Lesson 99 (`-s/-es`) currently describes `cloud -> clouds` as a one-letter
+  change.
+- Lesson 107 (doubling with `-ed/-ing`) classifies as `cvc_blending` and routes
+  through the false one-letter fallback.
+- Lesson 108 recognizes `-er/-est` suffixes but says only "add the ending,"
+  omitting the required consonant doubling.
+- Lesson 110 (Y to I) can emit the misleading worked example
+  `dries -> dried (change s to d)`.
+- The wider Lessons 99-128 scan found the same architectural exposure across
+  plain prefixes (103-105), affix reviews (106/128), later suffixes/word parts
+  (119-126), and prefixes `bi-/tri-/uni-` (127). Several currently collide with
+  short grapheme classifiers or generic slugs and then reach the letter-chain
+  fallback. Therefore the unit of repair is the transformation family, not the
+  lesson number.
+
+**Decisions captured in the plan:** Audit all 148 local corpus records before
+changing production behavior; introduce a typed/replayable transformation IR;
+generalize correctness-as-data contracts; share one analyzer/compiler between
+deterministic and LLM paths; make objective evidence and blocking gates consume
+typed transformations; make unknown transformations fail closed; and require a
+corpus completeness gate plus representative live acceptance. The plan covers
+substitution/insertion/deletion, prefixes, suffixes, plural `-s/-es`, doubling,
+Drop E, Y to I, later affixes, and mixed reviews. FLSZ/review/exception concepts
+must receive either a reviewed pattern contract or an explicit non-transformation
+exemption. The Literacy Skill Preservation rules are load-bearing: written
+encoding stays production, target objectives remain represented within the
+ADHD workload budget, and answer-key text cannot become practice evidence.
+
+**Git/checkpoint state:** Current branch is
+`refound/skill-contracts-composed-render` at `a033d8b`; `main` is `fdb1995` and
+is an ancestor. The current branch contains the suffix-contract registry that
+the new engine depends on, so the new session must not branch directly from
+`main`. Lesson 109 source/test changes, this plan, and this handoff remain
+uncommitted because both normal and escalated `git add` failed with
+`.git/index.lock: Operation not permitted`. The unrelated untracked file
+`docs/superpowers/plans/2026-07-17-skill-contracts-composed-render.md` must not be
+staged without separate owner authorization.
+
+**Next-session entry point:** Read the new plan and execute Task 0 exactly.
+Re-verify the current Drop-E baseline (`917 passed`, 7 warnings, Ruff clean,
+mypy clean), commit the existing Lesson 109 fix separately, commit this plan and
+handoff separately, then create
+`feature/systemic-spelling-rule-engine` from the resulting current-branch tip.
+Each later task begins with a focused RED test, ends with focused/full green
+gates, and receives its own commit. Local corpus audit JSON and generated PDFs
+stay uncommitted; only aggregate/non-proprietary audit and acceptance summaries
+may be committed. Do not merge until the owner reviews the final audit and live
+matrix.
+
+### Session 63 — 2026-08-27 (lesson-109 Drop-E contract fixed; black-ink Geometry Dash packet shipped)
+
+**Status:** Lesson 109 now ships through the normal, non-override production path.
+The requested raw source directory `data/ufli/raw/109` was consumed through its
+supported normalized-corpus entry point, `--lesson 109`, with `profiles/ian.yaml`,
+theme `geometry_dash`, `--render-mode pdf_classic`, and
+`WORKSHEET_SKIP_ASSET_GEN=1`. Final deliverable:
+`output/pdf/lesson-109-geometry-dash-black-ink.pdf` (US Letter, four pages, two
+worksheets, no embedded raster images).
+
+**Root causes and fixes:** Lesson 109's concept was falling through as a generic
+phonics label, so its base-anchored spelling transformations (`smile -> smiled` and
+`smile -> smiling`) were misread as a consecutive one-letter chain. Added the
+first-class `drop_e_rule` contract across `skill/contract.py`, taxonomy/extraction,
+feedback, objective-ledger wording, deterministic adaptation, LLM plan translation,
+and planner instructions. Drop-E items now explicitly say to drop final e and add the
+ending, hide the written answer, and provide a truthful worked example. The objective
+evidence layer narrowly treats a stamped chain-step answer as the word the child must
+produce (not passive answer-key evidence), and extracted Drop-E targets remain
+high-confidence if the optional corpus lookup is missing.
+
+The packet was reduced to essential, sustainable practice: Word Work contains five
+Drop-E transformations plus five read-aloud words; Story Time contains a bounded
+four-sentence source excerpt and two questions based only on visible text. Generic
+discovery/copy/fill-blank families are omitted for this orthographic-rule lesson.
+Asset-free mode no longer authors picture matching. Teacher-script directives such as
+`Change smiled to smiling.` are filtered at lesson load. AI review prompts now expose
+options/answers and cannot remove the last item from a chunk. Classic PDF text
+normalizes unsupported arrows/dashes at the render boundary, preventing missing-glyph
+boxes in print.
+
+**Acceptance evidence:** Independent objective judge approved at 0.84; deterministic
+objective coverage passed all four essential cells (decode 12/6, encode 3/3,
+manipulation 1/1, connected text 1/1); blocking gates and final print validation
+passed. Both worksheet AI reviews passed on their first iteration. The merged PDF was
+rendered to all four pages at 120-DPI grayscale and inspected page by page: no clipping,
+overlap, missing glyphs, empty tasks, or artwork behind content; `pdfimages -list`
+reported zero images. Gates: 917 tests passed (7 warnings), Ruff clean, mypy clean.
+
+**Gotchas / next:** `pdf_classic` still references base Helvetica in addition to
+embedded Fredoka/Lexend, although the print validator passes and the visual result is
+clean. The generated packet is complete; no product follow-up is required for Lesson
+109. Preserve the unrelated untracked plan at
+`docs/superpowers/plans/2026-07-17-skill-contracts-composed-render.md` when committing.
+
 ### Session 62 — 2026-07-16 (lesson-101 UAT: 2 new defects found + fixed — D48 chain-evidence stamp gap, D49 shape-aware judge facts; first complexity-matched model-selection cycle)
 
 **Participants:** Claude controller (Sonnet 5/Fable 5 across the session) + Sonnet 5 implementers/reviewers (Tasks 1-2) + Opus 4.8 implementer/reviewer (Task 3) + Opus 4.8 (Task 4, live-run adjudication) + Fable 5 final review (owner-directed per-task model split, first cycle to vary model by task complexity rather than uniform Sonnet 5), owner (D49 scope decision, L100 regression adjudication call, simplify/merge direction).

@@ -819,6 +819,10 @@ def _draw_chunk(
 
 def _wrap_text(text: str, max_chars: int) -> list[str]:
     """Wrap text into lines that fit within max_chars."""
+    # The embedded worksheet fonts do not consistently carry Unicode arrow
+    # and dash glyphs. Normalize only at the render boundary so model/evidence
+    # content retains its canonical notation.
+    text = text.replace("→", "->").replace("—", "-").replace("–", "-")
     if len(text) <= max_chars:
         return [text]
 

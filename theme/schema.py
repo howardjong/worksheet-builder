@@ -55,6 +55,7 @@ class ThemeConfig(BaseModel):
     """Complete theme configuration."""
 
     name: str
+    theme_id: str = "default"  # theme directory id (set by theme.engine.load_theme)
     style: str = "calm"
     fonts: ThemeFonts = Field(default_factory=ThemeFonts)
     colors: ThemeColors = Field(default_factory=ThemeColors)
