@@ -3349,3 +3349,64 @@ Then evaluate honestly and record both scorecards. Do NOT touch parent-plan Task
 - Gotcha: none new — G17 (full typecheck)/G19 (no Agent-tool nesting in dispatched subagents) discipline held across all dispatches.
 
 **What's next:** merge to `main`. Queue: passage-split (task_202def01, sole remaining judge blocker); extend suffix-aware wording to multi-hop suffix lessons (new chip); Q5 (2-of-3 judge sampling + render-layer visibility); `--record-results` ingestion; gpt model swap still paused.
+
+### Session 63 — 2026-09-07 (PR #1 repair generalized to learning-objective contracts)
+
+**Status:** Production repair is complete on local branch
+`codex/objective-transformation-promotion` at `c358a46`, based on current
+`origin/main` (`fdb1995`). Nothing was pushed and PR #1 was not modified. The
+original PR branch must **not** be merged wholesale: it still mixes production
+repairs with the earlier `hybrid_shell`/refound experiment and planning history.
+
+**What changed:**
+- Added a source-neutral `TransformationContract` registry and typed,
+  replayable transformation IR covering substitution, insertion, deletion,
+  prefix/suffix addition, final-e deletion, final-consonant doubling, and
+  final-y-to-i. Unknown or inconsistent changes fail closed.
+- Wired the contract through generic extraction, known-template extraction,
+  lesson loading, deterministic adaptation, LLM adaptation/planning, objective
+  coverage, and blocking gates. An unknown-layout worksheet with an explicit
+  objective and word chain now follows the same path as corpus content.
+- Replaced unsafe suffix reconstruction (`greedi + -ness`) with verified base
+  inference (`greedy`, then y-to-i, then `-ness`). Audited lessons 99-110 and
+  119-128: every classified transformation replays, including Lesson 109.
+- Made story excerpt selection target-objective-aware for every source type,
+  fixed whole-word matching, removed absent-word comprehension questions, and
+  restarted visible question numbering at 1.
+- Made picture matching capability-gated. Without guaranteed assets, adaptation
+  emits written production instead of answer-labelled placeholders or
+  unvalidated distractors; the PDF renderer fails before creating an output if
+  an explicit match item lacks a verified asset.
+- Added pre-render input checks, visible-font embedding validation, embedded
+  theme fonts, compact non-punitive objective-oriented caregiver feedback, and
+  tail layout that avoids orphan log pages/decorative overlap.
+- `make test-golden` now runs a real non-corpus Drop-E semantic/render golden.
+
+**Validation on the clean promotion branch:**
+- `make lint` — pass.
+- `make typecheck` — pass, 197 source files.
+- `make test` — 952 passed, 7 pre-existing warnings.
+- `make test-golden` — 1 passed.
+- Focused Lesson 109/adaptation/objective/render/validation/provider tests —
+  449 passed.
+- Fresh deterministic Lesson 109 classic render — 3 letter-size pages; visual
+  review found no clipping, overlap, orphan page, answer leakage, or numbering
+  defect; print validator passed all 7 checks.
+
+**Split boundary:** The clean promotion branch contains only the five shared
+skill-contract prerequisites, the original Drop-E repair, and the generalized
+objective repair. It intentionally excludes `render/composed.py`, refound A/B
+scripts/reports, curated `hybrid_shell` assets, exit-review docs, and the
+systemic implementation-plan commits. Separate hardening for those experiments
+is retained on `codex/objective-transformation-fixes` at `9262ad3` and should
+remain deferred pending an owner decision and its own PR.
+
+**Gotchas:** Running the top-level lesson CLI with asset/LLM planning disabled
+still invoked the configured objective judge and AI reviewer; use the direct
+deterministic stage path for offline visual acceptance. The untracked owner file
+`docs/superpowers/plans/2026-07-17-skill-contracts-composed-render.md` was
+preserved and not staged.
+
+**Next:** Owner may push `codex/objective-transformation-promotion` and replace
+or supersede PR #1 with that clean diff. Keep the experiment branch out of the
+production merge unless it receives a separate product/visual acceptance pass.
