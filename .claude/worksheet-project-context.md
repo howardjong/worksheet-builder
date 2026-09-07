@@ -8,6 +8,39 @@
 
 ## Current State
 
+### Session 66 — 2026-09-07 (Draft PR opened for selective review)
+
+**Status:** Draft PR [#1](https://github.com/howardjong/worksheet-builder/pull/1)
+is open from `refound/skill-contracts-composed-render` into `main`. It is a
+review checkpoint only; nothing has been merged into `main`. The PR body calls
+out that the branch also contains the earlier owner-gated refound contract and
+`hybrid_shell` experiment commits, and directs reviewers toward selective
+promotion rather than a wholesale merge.
+
+**Review contents:** The branch carries the validated Lesson 109 Drop-E fix in
+`af414cc`, the systemic spelling-rule implementation plan in `8200851`, and the
+post-checkpoint handoff updates through `2084f6b`. The focused and full test
+evidence remains green: 917 full-suite tests passed, 103 focused tests passed,
+Ruff and mypy passed, and all commit hooks passed. `make test-golden` remains
+unavailable because the repository has no golden E2E tests.
+
+**Git state:** The review branch is pushed and tracks
+`origin/refound/skill-contracts-composed-render`. `main` is unchanged at
+`fdb1995`. The local redundant labels `refound/track-a` and `refound/track-b`
+were removed after their commits were verified reachable from the review
+branch. The older `claude/review-recent-refactoring-rma786` branch remains
+locally and remotely as a future cleanup candidate. There is one worktree. The
+unrelated historical plan
+`docs/superpowers/plans/2026-07-17-skill-contracts-composed-render.md` remains
+intentionally untracked.
+
+**Next:** Review PR #1. Do not merge it wholesale without separately reviewing
+the refound renderer experiment. If the Drop-E/contract changes are accepted,
+create a clean promotion branch from `main`, selectively carry the required
+commits, rerun the focused and relevant full gates, and complete any required
+live visual acceptance before merging. The systemic spelling-rule engine plan
+has not been implemented.
+
 ### Session 65 — 2026-09-06 (Lesson 109 checkpoint committed and review branch pushed)
 
 **Status:** The validated Lesson 109 Drop-E repair and the systemic spelling-rule
