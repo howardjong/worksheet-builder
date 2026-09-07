@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from adapt.feedback import (
     DECISION_HINT,
+    PARENT_LOG_INSTRUCTION,
     build_feedback_panel,
     feedback_log_row,
     learning_goal_statement,
@@ -98,7 +99,7 @@ def test_goal_statement_phonics_keeps_split_vowel_notation_verbatim() -> None:
 def test_build_feedback_panel_defaults() -> None:
     panel = build_feedback_panel("phonics", "a_e")
     assert panel.goal_statement == "I can read words with the a_e pattern"
-    assert panel.parent_log_title == "Grown-up quick log"
+    assert panel.parent_log_title == ("Grown-up quick log — circle one choice in each pair")
     assert panel.show_decision_hint is False
     assert "new objective" in DECISION_HINT
     assert "step back" not in DECISION_HINT
@@ -110,6 +111,9 @@ def test_feedback_log_is_observational_not_score_based() -> None:
     assert row.startswith("Part 2:")
     assert "steady / still building" in row
     assert "correct" not in row
+    assert PARENT_LOG_INSTRUCTION == (
+        "Circle one progress choice and one help choice for each part."
+    )
 
 
 def test_feedback_panel_has_no_child_strip() -> None:

@@ -7,8 +7,11 @@ from skill.contract import contract_for_skill, contract_for_skill_id
 
 # Calm, learning-objective-oriented next-step hint for the grown-up. It avoids
 # score thresholds, color judgments, and curriculum navigation assumptions.
+PARENT_LOG_INSTRUCTION = "Circle one progress choice and one help choice for each part."
+
 DECISION_HINT = (
-    "Steady with little help: try a new objective. Still building: revisit with fresh words."
+    "If progress is steady with little help, choose a new objective next time. "
+    "If progress is still building, practice this objective again with new words."
 )
 
 

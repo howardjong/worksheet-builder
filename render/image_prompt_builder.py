@@ -9,7 +9,7 @@ as code-enforced prohibitions.
 
 from __future__ import annotations
 
-from adapt.feedback import DECISION_HINT, feedback_log_row
+from adapt.feedback import DECISION_HINT, PARENT_LOG_INSTRUCTION, feedback_log_row
 from render.design_spec import SectionSpec, WorksheetDesignSpec
 
 # Bump when prompt structure changes — part of the page cache key.
@@ -122,7 +122,9 @@ def build_page_prompt(
         )
         parts.append(
             "Final section: a thin outlined box titled with exact text: "
-            f'"{fb.parent_log_title}" containing one log row per section:\n{log_lines}{hint}'
+            f'"{fb.parent_log_title}". Under the title, print this exact instruction: '
+            f'"{PARENT_LOG_INSTRUCTION}" Then include one log row per section:\n'
+            f"{log_lines}{hint}"
         )
     if spec.break_prompt:
         parts.append(
@@ -197,9 +199,10 @@ def _damping_block(spec: WorksheetDesignSpec, *, has_character: bool = False) ->
     budget = spec.visual_budget
     if budget.max_decorative_elements > 0:
         decoration_rule = (
-            f"Exactly {budget.max_decorative_elements} small purely decorative "
-            "accents on the whole page, placed only in the header or footer "
-            "corners — never between activities."
+            f"Use at most {budget.max_decorative_elements} intentional, clearly legible "
+            "theme elements integrated into the whole-page composition. Omit them "
+            "entirely rather than rendering token-sized corner stickers. Never place "
+            "art between activities."
         )
     else:
         decoration_rule = "No purely decorative elements; only the section chrome described above."

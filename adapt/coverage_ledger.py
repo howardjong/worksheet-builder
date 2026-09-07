@@ -272,7 +272,10 @@ def repair_coverage(
             activity_type="write",
             micro_goal="Practice the words and sentences from your lesson.",
             items=items[i : i + chunk_size],
-            instructions=["Read each one out loud.", "Then write it."],
+            instructions=[
+                "Read each printed word or sentence aloud.",
+                "Write the same word or sentence on its line.",
+            ],
             response_format="write",
             rationale="Deterministic catch-up: every source item gets its own practice.",
         )

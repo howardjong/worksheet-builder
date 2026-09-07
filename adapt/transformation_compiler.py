@@ -45,21 +45,29 @@ def instruction_steps_for(step: TransformationStep) -> list[Step]:
             "Write the whole word.",
         ]
     elif kinds == ("drop_final_e", "append_affix"):
-        actions = ["Read the base word.", "Drop the final e.", "Add the ending and write."]
+        actions = [
+            "Read the base word in each problem.",
+            "Drop the final e in each base word.",
+            "Add the printed ending; write each complete new word.",
+        ]
     elif kinds == ("double_final_consonant", "append_affix"):
         actions = [
-            "Read the base word.",
-            "Double the final consonant.",
-            "Add the ending and write.",
+            "Read the base word in each problem.",
+            "Double the final consonant in each base word.",
+            "Add the printed ending; write each complete new word.",
         ]
     elif kinds == ("change_y_to_i", "append_affix"):
         actions = [
-            "Read the base word.",
-            "Change the final y to i.",
-            "Add the ending and write.",
+            "Read the base word in each problem.",
+            "Change the final y to i in each base word.",
+            "Add the printed ending; write each complete new word.",
         ]
     else:
-        actions = ["Read the base word.", "Make the verified change.", "Write the new word."]
+        actions = [
+            "Read the starting word in each problem.",
+            "Follow every spelling operation printed in each problem.",
+            "Write each complete new word on its line.",
+        ]
     return [Step(number=index, text=text) for index, text in enumerate(actions, start=1)]
 
 
@@ -82,14 +90,43 @@ def _operation_phrase(step: TransformationStep) -> str:
         return f"double the final consonant, then add -{step.ending}"
     if kinds == ("change_y_to_i", "append_affix"):
         return f"change final y to i, then add -{step.ending}"
-    return "make the verified change"
+    phrases: list[str] = []
+    for item in step.operations:
+        if item.kind == "substitute_grapheme":
+            phrases.append(f'change "{item.old}" to "{item.new}"')
+        elif item.kind == "insert_grapheme":
+            if item.index == 0:
+                phrases.append(f'add "{item.value}" at the beginning')
+            elif item.index == len(step.from_word):
+                phrases.append(f'add "{item.value}" at the end')
+            else:
+                phrases.append(f'add "{item.value}" after the first {item.index} letters')
+        elif item.kind == "delete_grapheme":
+            deleted = item.old or item.value
+            if item.index == 0:
+                phrases.append(f'remove "{deleted}" from the beginning')
+            elif item.index is not None and item.index + len(deleted or "") == len(step.from_word):
+                phrases.append(f'remove "{deleted}" from the end')
+            else:
+                phrases.append(f'remove "{deleted}" after the first {item.index} letters')
+        elif item.kind == "prepend_affix":
+            phrases.append(f"add {item.value}- to the beginning")
+        elif item.kind == "append_affix":
+            phrases.append(f"add -{item.value} to the end")
+        elif item.kind == "drop_final_e":
+            phrases.append("drop the final e")
+        elif item.kind == "double_final_consonant":
+            phrases.append("double the final consonant")
+        elif item.kind == "change_y_to_i":
+            phrases.append("change the final y to i")
+    return ", then ".join(phrases)
 
 
 def worked_example_for(step: TransformationStep) -> Example:
     if not verify_step(step):
         raise ValueError("cannot compile an unverified transformation example")
     return Example(
-        instruction="Watch one verified change:",
+        instruction="Read one completed spelling change:",
         content=f"{step.from_word} -> {step.to_word} ({_operation_phrase(step)})",
     )
 

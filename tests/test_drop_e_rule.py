@@ -90,9 +90,9 @@ def test_drop_e_builder_is_truthful_and_hides_answers() -> None:
     assert "drop the final e" in first.worked_example.content.lower()
     assert "one letter changes" not in first.worked_example.content.lower()
     assert [step.text for step in first.instructions] == [
-        "Read the base word.",
-        "Drop the final e.",
-        "Add the ending and write.",
+        "Read the base word in each problem.",
+        "Drop the final e in each base word.",
+        "Add the printed ending; write each complete new word.",
     ]
     for chunk in chain_chunks:
         for item in chunk.items:

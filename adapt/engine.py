@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from adapt.feedback import build_feedback_panel
+from adapt.instruction_clarity import ensure_clear_chunk_instructions, ensure_clear_instructions
 from adapt.objective_ledger import ObjectiveCell, build_objective_ledger
 from adapt.rules import (
     BRAIN_BREAK_PROMPTS,
@@ -129,7 +130,7 @@ def adapt_activity(
         grade_level=skill.grade_level,
         domain=skill.domain,
         specific_skill=skill.specific_skill,
-        chunks=chunks,
+        chunks=[ensure_clear_chunk_instructions(chunk) for chunk in chunks],
         scaffolding=scaffolding,
         theme_id=theme_id,
         decoration_zones=decoration_zones,
@@ -160,7 +161,7 @@ def _finalize_lesson_package(
             fallback_feedback=build_feedback_panel(skill.domain, skill.specific_skill),
             essential_forms=_essential_form_carriers(skill, capped),
         )
-    return capped
+    return ensure_clear_instructions(capped)
 
 
 def _enforce_adaptation_capabilities(
@@ -202,8 +203,8 @@ def _enforce_adaptation_capabilities(
             chunk.response_format = "write"
             chunk.micro_goal = f"Write {len(replacement_items)} target words"
             chunk.instructions = [
-                Step(number=1, text="Read each word."),
-                Step(number=2, text="Write each word on the line."),
+                Step(number=1, text="Read each printed word aloud."),
+                Step(number=2, text="Write each word on its line."),
             ]
     return worksheets
 
@@ -812,9 +813,9 @@ def _build_add_ending_chunk(
         chunk_id=chunk_id,
         micro_goal=f"Add the ending to {len(items)} words",
         instructions=[
-            Step(number=1, text="Read the word part."),
-            Step(number=2, text="Add the ending."),
-            Step(number=3, text="Write the whole word."),
+            Step(number=1, text="Read the base word in each problem aloud."),
+            Step(number=2, text="Follow the spelling change printed in each problem."),
+            Step(number=3, text="Write each complete new word on its line."),
         ],
         worked_example=None,
         items=items,
@@ -888,8 +889,8 @@ def _build_choose_form_chunk(
         chunk_id=chunk_id,
         micro_goal=f"Choose the right word {len(items)} times",
         instructions=[
-            Step(number=1, text="Read the question."),
-            Step(number=2, text="Circle the right word."),
+            Step(number=1, text="Read each question and both word choices."),
+            Step(number=2, text="Circle one word that answers each question."),
         ],
         worked_example=None,
         items=items,
@@ -966,11 +967,14 @@ def _build_discovery_chunks(
                     chunk_id=chunk_id,
                     micro_goal=f"Match {len(match_words)} words to their pictures",
                     instructions=[
-                        Step(number=1, text="Look at each picture."),
-                        Step(number=2, text="Draw a line to the matching word."),
+                        Step(number=1, text="Look at every picture and read every word."),
+                        Step(
+                            number=2,
+                            text="Draw one line from each picture to its matching word.",
+                        ),
                     ],
                     worked_example=Example(
-                        instruction="Watch how I do the first one:",
+                        instruction="Follow the completed match example:",
                         content=_match_example_content(shuffled_pictures[0]),
                     ),
                     items=items,
@@ -1008,8 +1012,8 @@ def _build_discovery_chunks(
                         chunk_id=len(chunks) + 1,
                         micro_goal=f"Trace {len(trace_words)} words",
                         instructions=[
-                            Step(number=1, text="Say each word out loud."),
-                            Step(number=2, text="Trace the dotted letters."),
+                            Step(number=1, text="Say each printed word aloud."),
+                            Step(number=2, text="Trace every dotted letter in each word."),
                         ],
                         worked_example=None,
                         items=items,
@@ -1091,8 +1095,8 @@ def _build_discovery_chunks(
                         chunk_id=len(chunks) + 1,
                         micro_goal=f"Write {len(write_words)} words",
                         instructions=[
-                            Step(number=1, text="Say each word out loud."),
-                            Step(number=2, text="Write the word on the line."),
+                            Step(number=1, text="Say each printed word aloud."),
+                            Step(number=2, text="Write each word on its line."),
                         ],
                         worked_example=None,
                         items=items,
@@ -1124,8 +1128,8 @@ def _build_discovery_chunks(
                     chunk_id=chunk_id,
                     micro_goal="Find the pattern words",
                     instructions=[
-                        Step(number=1, text="Look at each word."),
-                        Step(number=2, text="Circle the words that match the pattern."),
+                        Step(number=1, text="Read every word in the choice row."),
+                        Step(number=2, text="Circle every word that follows the named pattern."),
                     ],
                     worked_example=None,
                     items=[item],
@@ -1253,8 +1257,8 @@ def _build_builder_chunks(
                     chunk_id=len(chunks) + 1,
                     micro_goal=f"Fill in {len(items)} missing letters",
                     instructions=[
-                        Step(number=1, text="Look at the word with a missing letter."),
-                        Step(number=2, text="Circle the missing letter."),
+                        Step(number=1, text="Read each incomplete word and every letter choice."),
+                        Step(number=2, text="Circle the letter that completes each word."),
                     ],
                     worked_example=None,
                     items=items,
@@ -1290,8 +1294,8 @@ def _build_builder_chunks(
                     chunk_id=len(chunks) + 1,
                     micro_goal=f"Practice {len(items)} sight words",
                     instructions=[
-                        Step(number=1, text="Read each sight word."),
-                        Step(number=2, text="Write each word on the line."),
+                        Step(number=1, text="Read each printed sight word aloud."),
+                        Step(number=2, text="Write each sight word on its line."),
                     ],
                     worked_example=None,
                     items=items,
@@ -1345,12 +1349,12 @@ def _build_warmup_chunk(
         chunk_id=start_chunk_id + 1,
         micro_goal=f"Tap out the sounds in {len(items)} words",
         instructions=[
-            Step(number=1, text="Say the word out loud."),
-            Step(number=2, text="Tap each sound you hear."),
-            Step(number=3, text="Write one sound in each box."),
+            Step(number=1, text="Say each printed word aloud."),
+            Step(number=2, text="Tap once for every sound you hear."),
+            Step(number=3, text="Write one sound in each box for that word."),
         ],
         worked_example=Example(
-            instruction="Watch how I tap out the sounds:",
+            instruction="Follow the completed sound example:",
             content=f'"{selected[0]}" has {len(_segment_phonemes(selected[0]))} sounds: '
             + " - ".join(f'"{p}"' for p in _segment_phonemes(selected[0])),
         ),
@@ -1501,9 +1505,9 @@ def _build_roll_and_read_chunk(
         chunk_id=start_chunk_id,
         micro_goal=f"Read {len(items)} words smoothly",
         instructions=[
-            Step(number=1, text="Read each word smoothly."),
-            Step(number=2, text="Try the list three times."),
-            Step(number=3, text="Point to each word as you read."),
+            Step(number=1, text="Read every word aloud at a smooth pace."),
+            Step(number=2, text="Read the entire list aloud three times."),
+            Step(number=3, text="Point to each word while you read it."),
         ],
         worked_example=None,
         items=items,
@@ -1670,7 +1674,7 @@ def _build_story_chunks(
                     blank_sent = example_item.content
                     removed_word = example_item.answer or ""
                     worked_example = Example(
-                        instruction="Watch me do the first one:",
+                        instruction="Read the completed sentence example:",
                         content=f"{blank_sent} → {removed_word}",
                     )
                 if not batch:
@@ -1680,8 +1684,8 @@ def _build_story_chunks(
                         chunk_id=len(chunks) + 1,
                         micro_goal=f"Complete {len(batch)} sentences",
                         instructions=[
-                            Step(number=1, text="Read the sentence."),
-                            Step(number=2, text="Fill in the missing word."),
+                            Step(number=1, text="Read each incomplete sentence and its word bank."),
+                            Step(number=2, text="Write one word that completes each sentence."),
                         ],
                         worked_example=worked_example,
                         items=batch,
@@ -1714,17 +1718,24 @@ def _build_story_chunks(
                 word for word in target_words if _text_contains_word(passage_text.lower(), word)
             ]
             if visible_targets:
-                target_cue = "Underline: " + ", ".join(visible_targets[:max_items]) + "."
+                target_cue = (
+                    "Underline these target words in the story: "
+                    + ", ".join(visible_targets[:max_items])
+                    + "."
+                )
             else:
-                target_cue = "Point to each word as you read."
+                target_cue = "Point to each word while you read it."
             chunks.append(
                 ActivityChunk(
                     chunk_id=len(chunks) + 1,
                     micro_goal="Read the story",
                     instructions=[
-                        Step(number=1, text="Read the story out loud."),
+                        Step(number=1, text="Read the entire story aloud."),
                         Step(number=2, text=target_cue),
-                        Step(number=3, text="Read those words again."),
+                        Step(
+                            number=3,
+                            text="Read each underlined target word aloud one more time.",
+                        ),
                     ],
                     worked_example=None,
                     items=items,
@@ -1760,8 +1771,8 @@ def _build_story_chunks(
                         chunk_id=len(chunks) + 1,
                         micro_goal="Check your understanding",
                         instructions=[
-                            Step(number=1, text="Think about the story."),
-                            Step(number=2, text="Circle the best answer."),
+                            Step(number=1, text="Think about what you read in the story."),
+                            Step(number=2, text="Circle one answer for each question."),
                         ],
                         worked_example=None,
                         items=batch,
@@ -2075,7 +2086,9 @@ def _build_chunks(
             ActivityChunk(
                 chunk_id=1,
                 micro_goal=f"Practice {skill.domain} skills",
-                instructions=[Step(number=1, text="Try your best!")],
+                instructions=[
+                    Step(number=1, text="Ask a grown-up to read the learning goal aloud.")
+                ],
                 worked_example=None,
                 items=[],
                 response_format="write",
@@ -2426,18 +2439,19 @@ def _generate_instructions(
 
     if skill.domain == "phonics":
         if chunk_id == 1:
-            steps.append(Step(number=1, text="Look at each word carefully."))
-            steps.append(Step(number=2, text=f"Read each word out loud. ({item_count} words)"))
+            steps.append(Step(number=1, text="Look at every printed word."))
+            steps.append(Step(number=2, text=f"Read all {item_count} words aloud."))
         else:
-            steps.append(Step(number=1, text=f"Read these {item_count} words out loud."))
-            steps.append(Step(number=2, text="Write each word on the line."))
+            steps.append(Step(number=1, text=f"Read all {item_count} printed words aloud."))
+            steps.append(Step(number=2, text="Write each word on its line."))
 
     elif skill.domain == "fluency":
-        steps.append(Step(number=1, text="Read the passage out loud."))
-        steps.append(Step(number=2, text="Point to each word as you read."))
+        steps.append(Step(number=1, text="Read the entire passage aloud."))
+        steps.append(Step(number=2, text="Point to each word while you read it."))
 
     else:
-        steps.append(Step(number=1, text=f"Complete the {item_count} items below."))
+        steps.append(Step(number=1, text=f"Read all {item_count} printed prompts."))
+        steps.append(Step(number=2, text="Complete the printed action for each prompt."))
 
     # Trim to max steps
     steps = steps[: rules.instruction_max_steps]
@@ -2468,12 +2482,12 @@ def _generate_worked_example(
 
     if skill.domain == "phonics":
         return Example(
-            instruction="Watch how I do the first one:",
+            instruction="Read the completed word example:",
             content=f'"{first_item.content}" — I can read this word!',
         )
     elif skill.domain == "fluency":
         return Example(
-            instruction="Listen first, then you try:",
+            instruction="Listen to the completed reading example:",
             content=(
                 f'I read: "{first_item.content[:50]}..."'
                 if len(first_item.content) > 50
@@ -2482,7 +2496,7 @@ def _generate_worked_example(
         )
     else:
         return Example(
-            instruction="Here is an example:",
+            instruction="Read the completed example:",
             content=f'"{first_item.content}"',
         )
 

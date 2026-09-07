@@ -21,9 +21,17 @@ def test_compiler_hides_answer_and_preserves_typed_step() -> None:
 
 def test_compiler_uses_truthful_rule_language() -> None:
     cases = [
-        ("doubling_ed_ing", "skip -> skipped", "Double the final consonant."),
-        ("drop_e_rule", "smile -> smiling", "Drop the final e."),
-        ("y_to_i_rule", "happy -> happier", "Change the final y to i."),
+        (
+            "doubling_ed_ing",
+            "skip -> skipped",
+            "Double the final consonant in each base word.",
+        ),
+        ("drop_e_rule", "smile -> smiling", "Drop the final e in each base word."),
+        (
+            "y_to_i_rule",
+            "happy -> happier",
+            "Change the final y to i in each base word.",
+        ),
         ("prefix_un", "safe -> unsafe", "Add un- to the beginning."),
         ("suffix_ness", "dark -> darkness", "Add -ness."),
     ]

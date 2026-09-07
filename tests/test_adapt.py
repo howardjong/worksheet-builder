@@ -361,7 +361,9 @@ class TestAdaptActivity:
         model = adapt_activity(_phonics_skill(), _grade_1_profile())
         assert model.feedback is not None
         assert model.feedback.goal_statement == "I can read words with the cvc blending pattern"
-        assert model.feedback.parent_log_title == "Grown-up quick log"
+        assert model.feedback.parent_log_title == (
+            "Grown-up quick log — circle one choice in each pair"
+        )
 
     def test_decoration_zones_defined(self) -> None:
         model = adapt_activity(_phonics_skill(), _grade_1_profile())
@@ -578,7 +580,7 @@ class TestAdaptLesson:
         fill_chunks = [c for c in chunks if c.response_format == "fill_blank"]
         assert fill_chunks
         texts = " ".join(s.text for s in fill_chunks[0].instructions)
-        assert "Circle the missing letter" in texts
+        assert "Circle the letter that completes each word" in texts
         assert "Write the missing letter" not in texts
 
     def test_backward_compat_adapt_activity(self) -> None:

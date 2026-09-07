@@ -71,7 +71,7 @@ class FeedbackPanel(BaseModel):
     """
 
     goal_statement: str  # child-friendly "I can..." goal; also the page banner ribbon
-    parent_log_title: str = "Grown-up quick log"
+    parent_log_title: str = "Grown-up quick log — circle one choice in each pair"
     show_decision_hint: bool = False
 
 

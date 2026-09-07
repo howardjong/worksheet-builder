@@ -14,8 +14,8 @@ from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen.canvas import Canvas
 
 from adapt.feedback import DECISION_HINT, feedback_log_row
+from adapt.instruction_clarity import instruction_clarity_issues
 from adapt.schema import ActivityChunk, ActivityItem, AdaptedActivityModel
-from theme.assets import resolve_decoration
 from theme.schema import AssetManifest, ThemeConfig
 
 logger = logging.getLogger(__name__)
@@ -69,6 +69,29 @@ def _validate_render_inputs(
     adapted: AdaptedActivityModel, asset_manifest: AssetManifest | None
 ) -> None:
     """Fail before opening an output file when a required picture is absent."""
+    unclear: list[str] = []
+    for chunk in adapted.chunks:
+        for step in chunk.instructions:
+            issues = instruction_clarity_issues(step.text)
+            if issues:
+                issue_text = ", ".join(issues)
+                unclear.append(
+                    f"chunk {chunk.chunk_id}, step {step.number}: {step.text!r} ({issue_text})"
+                )
+        if chunk.worked_example is not None:
+            issues = instruction_clarity_issues(chunk.worked_example.instruction)
+            if issues:
+                unclear.append(
+                    f"chunk {chunk.chunk_id} worked example: "
+                    f"{chunk.worked_example.instruction!r} ({', '.join(issues)})"
+                )
+    if adapted.break_prompt:
+        issues = instruction_clarity_issues(adapted.break_prompt)
+        if issues:
+            unclear.append(f"break prompt: {adapted.break_prompt!r} ({', '.join(issues)})")
+    if unclear:
+        raise RenderContractError("unclear worksheet instructions: " + "; ".join(unclear))
+
     missing: list[str] = []
     for chunk in adapted.chunks:
         for item in chunk.items:
@@ -126,8 +149,8 @@ def render_worksheet(
     # Page header
     y = _draw_header(c, adapted, theme, sizes, y)
 
-    # Draw decorations and avatar on first page
-    _draw_decorations(c, theme, adapted.theme_id)
+    # Classic print output omits decorative-only raster art. Task-supporting
+    # scenes and word pictures still render through the verified asset manifest.
     if avatar_image:
         _draw_avatar(c, avatar_image, theme)
 
@@ -142,7 +165,6 @@ def render_worksheet(
         c.setFillColor(HexColor(theme.colors.background))
         c.rect(0, 0, PAGE_WIDTH, PAGE_HEIGHT, fill=True, stroke=False)
         _apply_adhd_spacing(c, "body")
-        _draw_decorations(c, theme, adapted.theme_id)
         if avatar_image:
             _draw_avatar(c, avatar_image, theme)
 
@@ -1465,50 +1487,6 @@ def _draw_avatar(
         c.drawString(bubble_x + 5, bubble_y + 5, "You can do it!")
     except Exception as e:
         logger.warning(f"Failed to draw avatar: {e}")
-
-
-def _draw_decorations(
-    c: Canvas,
-    theme: ThemeConfig,
-    theme_id: str,
-) -> None:
-    """Draw theme decorative elements in safe zones.
-
-    ADHD rules: max 2 per page, in fixed corners only, never between items.
-    """
-    assets = theme.decorative_elements.assets
-    max_elements = theme.decorative_elements.max_per_page
-
-    if not assets:
-        return
-
-    # Decoration zones: top-right corner and bottom-left corner
-    zones = [
-        (PAGE_WIDTH - MARGIN - 45, PAGE_HEIGHT - MARGIN - 45, 40),  # top-right
-        (MARGIN + 5, MARGIN + 5, 35),  # bottom-left
-    ]
-
-    for i, asset_name in enumerate(assets):
-        if i >= max_elements or i >= len(zones):
-            break
-
-        asset_path = resolve_decoration(asset_name, theme_id)
-        if asset_path is None:
-            continue
-
-        x, y, size = zones[i]
-        try:
-            c.drawImage(
-                str(asset_path),
-                x,
-                y,
-                width=size,
-                height=size,
-                preserveAspectRatio=True,
-                mask="auto",
-            )
-        except Exception as e:
-            logger.warning(f"Failed to draw decoration {asset_name}: {e}")
 
 
 def _draw_footer(

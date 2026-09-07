@@ -8,6 +8,57 @@
 
 ## Current State
 
+### Session 64 — 2026-09-07 (system-wide instruction clarity + no token-sized art)
+
+**Status:** Follow-up fixes are complete on
+`codex/objective-transformation-promotion` in the commit containing this entry;
+nothing was pushed. The owner-owned
+untracked plan at
+`docs/superpowers/plans/2026-07-17-skill-contracts-composed-render.md` remains
+untouched and must not be staged.
+
+**What changed:**
+- Added `adapt/instruction_clarity.py`, a source-neutral stage-boundary contract
+  that detects ambiguous directions and deterministically replaces them with
+  response-format-specific actions. It requires an observable action and
+  object, preserves explicit list repetition counts, covers worked examples and
+  break prompts, and is applied to deterministic, planner, and direct-compiler
+  outputs. The PDF renderer independently fails before opening an output file if
+  ambiguous instructions bypass adaptation.
+- Rewrote deterministic directions across reading, writing, spelling
+  transformations, matching, tracing, sound boxes, fill blanks, story reading,
+  comprehension, coverage repair, and brain breaks. In particular, "Try the
+  list three times" is now "Read the entire list aloud three times." Provider
+  prompts carry the same action/object/count contract.
+- Clarified the caregiver surface: the heading now says "Grown-up quick log —
+  circle one choice in each pair," and the next-step hint names the exact action
+  for steady versus still-building progress.
+- Removed the classic PDF renderer's hard-coded 35-40pt corner decorations.
+  Large task-supporting scenes and verified word pictures remain; pages without
+  such assets render with no raster images. Image-model prompts now request at
+  most a few intentional, legible, composition-level theme elements and say to
+  omit them rather than create token-sized stickers.
+- Hardened the generic transformation instruction fallback so arbitrary verified
+  typed operation sequences are described from their actual operations instead
+  of saying "make the verified change."
+
+**Validation:**
+- `make lint` — pass.
+- `make typecheck` — pass, 199 source files.
+- `make test` — 958 passed, 7 warnings.
+- `make test-golden` — 1 passed.
+- Focused clarity/render/transformation suites — pass.
+- Full local corpus audit: 120 lessons, 337 worksheets, 2,467 numbered steps,
+  242 worked-example directions, and 217 break directions; zero clarity-contract
+  violations.
+- Fresh deterministic Lesson 109 render: two worksheet files / three total
+  letter pages, zero raster images, Story Time remains one page, and visual
+  inspection found the revised child and grown-up directions legible and
+  unambiguous.
+
+**Next:** Do not push or alter PR #1 without a separate owner request. Keep the
+`hybrid_shell`/refound experiment outside the production promotion branch.
+
 ### Session 62 — 2026-07-16 (lesson-101 UAT: 2 new defects found + fixed — D48 chain-evidence stamp gap, D49 shape-aware judge facts; first complexity-matched model-selection cycle)
 
 **Participants:** Claude controller (Sonnet 5/Fable 5 across the session) + Sonnet 5 implementers/reviewers (Tasks 1-2) + Opus 4.8 implementer/reviewer (Task 3) + Opus 4.8 (Task 4, live-run adjudication) + Fable 5 final review (owner-directed per-task model split, first cycle to vary model by task complexity rather than uniform Sonnet 5), owner (D49 scope decision, L100 regression adjudication call, simplify/merge direction).

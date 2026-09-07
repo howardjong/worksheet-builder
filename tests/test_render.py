@@ -10,7 +10,7 @@ import pytest
 from pytest import MonkeyPatch
 
 from adapt.engine import adapt_activity, adapt_lesson
-from adapt.schema import FeedbackPanel
+from adapt.schema import FeedbackPanel, Step
 from companion.character_identity import CharacterIdentity
 from companion.character_judge import CharacterJudgeResult
 from companion.schema import (
@@ -31,6 +31,7 @@ from render.pdf import (
     MARGIN,
     PAGE_HEIGHT,
     PAGE_WIDTH,
+    RenderContractError,
     _wrap_text,
     render_worksheet,
 )
@@ -111,6 +112,25 @@ class TestRenderWorksheet:
         assert Path(pdf_path).stat().st_size > 0
         Path(pdf_path).unlink()
 
+    def test_classic_renderer_omits_decorative_only_images(self, tmp_path: Path) -> None:
+        adapted = adapt_activity(_phonics_skill(), _profile(), theme_id="space")
+        pdf_path = tmp_path / "no-token-decorations.pdf"
+
+        render_worksheet(adapted, load_theme("space"), str(pdf_path))
+
+        with fitz.open(pdf_path) as document:
+            assert all(not page.get_images(full=True) for page in document)
+
+    def test_renderer_rejects_ambiguous_instructions_before_writing(self, tmp_path: Path) -> None:
+        adapted = adapt_activity(_phonics_skill(), _profile(), theme_id="space")
+        adapted.chunks[0].instructions = [Step(number=1, text="Try the list three times.")]
+        pdf_path = tmp_path / "ambiguous.pdf"
+
+        with pytest.raises(RenderContractError, match="unclear worksheet instructions"):
+            render_worksheet(adapted, load_theme("space"), str(pdf_path))
+
+        assert not pdf_path.exists()
+
     def test_different_themes_produce_different_pdfs(self) -> None:
         pdf1 = _render_pdf(theme_id="space")
         pdf2 = _render_pdf(theme_id="dinosaur")
@@ -151,6 +171,7 @@ class TestRenderWorksheet:
         assert len(page_text) == 1
         assert "1. Which word from the pattern is in the story?" in page_text[0]
         assert "Grown-up quick log" in page_text[0]
+        assert "circle one choice in each pair" in page_text[0]
         assert "step back one lesson" not in page_text[0]
 
     def test_grade_k_render(self) -> None:
@@ -207,7 +228,7 @@ class TestRenderWorksheet:
 
         assert "I can read words with the y pattern" in flat_text
         assert "Grown-up quick log" in flat_text
-        assert "Still building: revisit with fresh words" in flat_text
+        assert "If progress is still building, practice this objective again" in flat_text
         assert "step back one lesson" not in flat_text
         assert " correct " not in flat_text
         assert "Circle one for each part" not in flat_text

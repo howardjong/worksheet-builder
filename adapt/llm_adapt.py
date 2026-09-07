@@ -22,7 +22,8 @@ import re
 from pydantic import BaseModel, Field
 
 from adapt.feedback import build_feedback_panel
-from adapt.rules import AccommodationRules, build_rules, llm_adapt_enabled
+from adapt.instruction_clarity import ensure_clear_instructions
+from adapt.rules import BRAIN_BREAK_PROMPTS, AccommodationRules, build_rules, llm_adapt_enabled
 from adapt.schema import (
     ActivityChunk,
     ActivityItem,
@@ -140,6 +141,10 @@ Response format preferences: {profile.accommodations.response_format_prefs}
 - Allowed response formats: {rules.allowed_response_formats}
 - First activity MUST have a worked example
 - Use brain breaks between worksheets
+- Write instructions that a child and grown-up can follow without guessing.
+  Every step must name the observable action, its exact object, and any count
+  or repetition. For example, write "Read the entire list aloud three times,"
+  never "Try the list three times" or "Read those again."
 
 ## Your Task
 
@@ -286,7 +291,10 @@ def _translate_plan(
                 for i, text in enumerate(activity.instructions[: rules.instruction_max_steps])
             ]
             if not instructions:
-                instructions = [Step(number=1, text="Complete the activity below.")]
+                instructions = [
+                    Step(number=1, text="Read each printed prompt."),
+                    Step(number=2, text="Complete the printed action for each prompt."),
+                ]
 
             # Build worked example (only the first chunk shows one, and only if
             # it actually models a correct answer — see _is_clean_worked_example).
@@ -297,7 +305,7 @@ def _translate_plan(
                 and _is_clean_worked_example(activity.worked_example)
             ):
                 worked_example = Example(
-                    instruction="Watch how I do the first one:",
+                    instruction="Read the completed example before you begin:",
                     content=activity.worked_example,
                 )
 
@@ -352,21 +360,14 @@ def _translate_plan(
                 worksheet_count=len(plan.worksheets),
                 worksheet_title=ws_plan.title,
                 break_prompt=(
-                    _BRAIN_BREAKS[ws_idx % len(_BRAIN_BREAKS)]
+                    BRAIN_BREAK_PROMPTS[ws_idx % len(BRAIN_BREAK_PROMPTS)]
                     if ws_idx < len(plan.worksheets) - 1
                     else None
                 ),
             )
         )
 
-    return worksheets
-
-
-_BRAIN_BREAKS = [
-    "Stand up and stretch!",
-    "Do 5 jumping jacks!",
-    "Get a drink of water!",
-]
+    return ensure_clear_instructions(worksheets)
 
 
 # Formats whose renderer/evidence contracts (shuffled picture options, phoneme

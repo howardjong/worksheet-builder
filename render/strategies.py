@@ -162,7 +162,7 @@ def _render_pdf(context: RenderContext) -> None:
 def _build_image_prompt(spec: WorksheetDesignSpec) -> str:
     required_text = "\n".join(f"- {text}" for text in spec.required_text)
     answer_zones = "\n".join(
-        (f"- item {zone.item_id} ({zone.response_format}): " f"{zone.prompt_text}")
+        (f"- item {zone.item_id} ({zone.response_format}): {zone.prompt_text}")
         for zone in spec.answer_zones
     )
     if not answer_zones:
@@ -175,7 +175,10 @@ def _build_image_prompt(spec: WorksheetDesignSpec) -> str:
             "Create a print-ready children's literacy worksheet image.",
             "Do not add, remove, rewrite, or misspell required text.",
             "Keep all instructional text legible, high contrast, and inside safe margins.",
-            "Use a calm themed visual style with limited decorative elements.",
+            (
+                "Use a calm themed visual style. Omit decorative art unless it can be "
+                "rendered as an intentional, clearly legible part of the composition."
+            ),
             "",
             "## Worksheet",
             f"Title: {spec.worksheet_title}",

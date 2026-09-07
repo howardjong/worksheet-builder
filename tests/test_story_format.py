@@ -63,7 +63,7 @@ def test_ufli_word_work_story_uses_bounded_source_excerpt() -> None:
     assert "They share the pie after lunch." not in read_item.content
     assert read_item.content.count(".") == 4
     read_chunk = next(chunk for chunk in chunks if chunk.response_format == "read_aloud")
-    assert read_chunk.instructions[1].text == "Underline: baking."
+    assert read_chunk.instructions[1].text == ("Underline these target words in the story: baking.")
 
 
 def test_excerpt_comprehension_uses_only_the_visible_story() -> None:
