@@ -25,11 +25,11 @@ unfinished 73-step plan covering both skill-contract work and the experimental
 `codex/objective-transformation-fixes` branch retains that experiment and has
 not been pushed or deleted.
 
-**Next:** Create/review a replacement PR from the published promotion branch.
-Only after that PR is accepted should PR #1 and its unmerged `refound` branch be
-closed/deleted. Keep the experiment branch and untracked plan until the owner
-decides whether the composed-renderer work deserves a separate product/visual
-acceptance pass.
+**Next:** Replacement PR #2 is open for review at
+`https://github.com/howardjong/worksheet-builder/pull/2`. Review and accept it
+before closing PR #1 and deleting its unmerged `refound` branch. Keep the
+experiment branch and untracked plan until the owner decides whether the
+composed-renderer work deserves a separate product/visual acceptance pass.
 
 ### Session 64 — 2026-09-07 (system-wide instruction clarity + no token-sized art)
 
