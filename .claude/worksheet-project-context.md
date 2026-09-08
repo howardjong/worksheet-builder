@@ -8,6 +8,29 @@
 
 ## Current State
 
+### Session 65 — 2026-09-08 (promotion branch published; safe branch cleanup)
+
+**Status:** The verified production promotion branch
+`codex/objective-transformation-promotion` is now published at `a8d5920` and
+tracks `origin/codex/objective-transformation-promotion`. The fully merged,
+worktree-free `claude/review-recent-refactoring-rma786` branch was deleted
+locally and remotely after ancestry verification.
+
+**Still intentionally separate:** PR #1 remains the open draft on
+`refound/skill-contracts-composed-render`; it has not been closed or changed.
+The untracked owner plan
+`docs/superpowers/plans/2026-07-17-skill-contracts-composed-render.md` is an
+unfinished 73-step plan covering both skill-contract work and the experimental
+`hybrid_shell` renderer; it remains untouched and unstaged. The local
+`codex/objective-transformation-fixes` branch retains that experiment and has
+not been pushed or deleted.
+
+**Next:** Create/review a replacement PR from the published promotion branch.
+Only after that PR is accepted should PR #1 and its unmerged `refound` branch be
+closed/deleted. Keep the experiment branch and untracked plan until the owner
+decides whether the composed-renderer work deserves a separate product/visual
+acceptance pass.
+
 ### Session 64 — 2026-09-07 (system-wide instruction clarity + no token-sized art)
 
 **Status:** Follow-up fixes are complete on
