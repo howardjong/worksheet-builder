@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from adapt.engine import adapt_activity, adapt_lesson
+from adapt.schema import AdaptationCapabilities
 from companion.schema import Accommodations, LearnerProfile
 from skill.schema import LiteracySkillModel, SourceItem
 
@@ -69,7 +70,12 @@ def test_distractor_blacklist_from_rag() -> None:
         }
     ]
 
-    worksheets = adapt_lesson(_skill(), _profile(), rag_prior_adaptations=prior)
+    worksheets = adapt_lesson(
+        _skill(),
+        _profile(),
+        rag_prior_adaptations=prior,
+        capabilities=AdaptationCapabilities(picture_assets_guaranteed=True),
+    )
     # Section cap enforcement may split into multiple parts
     discovery_parts = [
         ws
@@ -109,7 +115,12 @@ def test_format_mix_rotation_from_rag() -> None:
         }
     ]
 
-    worksheets = adapt_lesson(_skill(), _profile(), rag_prior_adaptations=prior)
+    worksheets = adapt_lesson(
+        _skill(),
+        _profile(),
+        rag_prior_adaptations=prior,
+        capabilities=AdaptationCapabilities(picture_assets_guaranteed=True),
+    )
     # Section cap enforcement may split into multiple parts
     discovery_parts = [
         ws
@@ -147,6 +158,7 @@ def test_curriculum_prioritizes_supported_target_words() -> None:
         rag_curriculum_references=_curriculum_refs(
             "Lesson 59 VCe Review 2 words: grade slide quite froze these",
         ),
+        capabilities=AdaptationCapabilities(picture_assets_guaranteed=True),
     )
     # No chains in source_items, so no reorder — title stays "Word Discovery"
     # Section cap enforcement may split into multiple parts

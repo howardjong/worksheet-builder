@@ -141,6 +141,14 @@ class TestHomePracticeCleaning:
         )
         assert sentences == ["Are you older than your brother?"]
 
+    def test_change_word_to_word_is_teacher_script_not_sentence(self) -> None:
+        from skill.lesson_loader import _home_practice_items
+
+        _, sentences = _home_practice_items(
+            "Change smiled to smiling. He likes ice skating on the rink."
+        )
+        assert sentences == ["He likes ice skating on the rink."]
+
 
 class TestWordPoolHygiene:
     """The real corpus's Roll and Read blocks are raw PDF-grid extractions and

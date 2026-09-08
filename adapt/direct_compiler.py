@@ -14,6 +14,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from adapt.feedback import build_feedback_panel
+from adapt.instruction_clarity import ensure_clear_instructions
 from adapt.schema import AdaptedActivityModel
 from companion.character_identity import CharacterIdentity
 from companion.dosage import current_grade
@@ -87,6 +88,9 @@ Preferences: {preferences}
   when they are present in the source.
 - The package must pass deterministic content coverage validation before it is
   accepted.
+- Every instruction must name the child's observable action, the exact object
+  of that action, and any required count or repetition. Never use vague phrases
+  such as "try it," "do this," "read those again," or "circle the right one."
 """
 
 
@@ -120,7 +124,7 @@ def compile_lesson_direct(
         )
         return None
 
-    return worksheets
+    return ensure_clear_instructions(worksheets)
 
 
 def _call_direct_compiler(prompt: str) -> str | None:
@@ -148,7 +152,7 @@ def _parse_direct_compiler_response(response_text: str) -> list[AdaptedActivityM
                 worksheet.feedback = build_feedback_panel(
                     worksheet.domain, worksheet.specific_skill
                 )
-        return worksheets
+        return ensure_clear_instructions(worksheets)
     except (json.JSONDecodeError, TypeError, ValidationError, ValueError) as exc:
         logger.warning("Failed to parse direct compiler output: %s", exc)
         return None

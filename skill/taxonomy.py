@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from skill.contract import DROP_E_RULE_SKILL, known_suffix_tokens, match_transformation_contract
+
 LITERACY_DOMAINS: dict[str, dict[str, Any]] = {
     "phonemic_awareness": {
         "skills": [
@@ -95,6 +97,11 @@ def all_domains() -> list[str]:
 
 # Common phonics patterns for UFLI concept label matching
 PHONICS_PATTERNS: dict[str, str] = {
+    # Orthographic spelling-change rules (must precede generic CVCe matches).
+    "drop -e rule": DROP_E_RULE_SKILL,
+    "drop e rule": DROP_E_RULE_SKILL,
+    "drop -e": DROP_E_RULE_SKILL,
+    "drop e": DROP_E_RULE_SKILL,
     # CVC
     "cvc": "cvc_blending",
     "short": "cvc_blending",
@@ -174,8 +181,9 @@ PHONICS_PATTERNS: dict[str, str] = {
 # A concept is a suffix lesson ONLY when every hyphen-prefixed token is in
 # this set — "-ing, -ang, -ong" is a rime-family lesson ("ang" vetoes),
 # "-er, -est" is morphology. "-ing" alone stays a family (PHONICS_PATTERNS)
-# until UFLI suffix--ing lessons are wired; extending = add the token here.
-MORPHOLOGY_SUFFIXES = frozenset({"er", "est", "ed", "ly", "es"})
+# until UFLI suffix--ing lessons are wired. Extending = register a
+# SuffixContract in skill/contract.py; this set is derived from it.
+MORPHOLOGY_SUFFIXES = known_suffix_tokens()
 
 
 def match_morphology_pattern(concept_text: str) -> str | None:
@@ -183,6 +191,15 @@ def match_morphology_pattern(concept_text: str) -> str | None:
     '-er, -est' -> 'suffix_er_est'. None when any hyphen token is not a
     known suffix (rime families) or no hyphen tokens exist."""
     import re
+
+    resolved = match_transformation_contract(concept_text)
+    if resolved is not None and resolved.family in {
+        "suffix",
+        "prefix",
+        "orthographic_rule",
+        "review",
+    }:
+        return resolved.skill_id
 
     tokens = re.findall(r"-([a-z]+)", concept_text.lower())
     if tokens and all(t in MORPHOLOGY_SUFFIXES for t in tokens):
@@ -209,6 +226,10 @@ def match_phonics_pattern(concept_text: str) -> str | None:
     to avoid false positives (e.g., "st" in "just").
     """
     import re
+
+    transformation = match_transformation_contract(concept_text)
+    if transformation is not None:
+        return transformation.skill_id
 
     morphology = match_morphology_pattern(concept_text)
     if morphology:

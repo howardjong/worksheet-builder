@@ -331,13 +331,9 @@ def test_case3b_complete_chain_required_form_pass() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# Case 3c/3d: deterministic-engine chain-step items stitch into chain evidence
-# (P3a scope extension). The engines (adapt/engine.py::_build_builder_chunks and
-# adapt/llm_adapt.py::_build_items_from_activity) author chains as per-step
-# write items — from-word in the quoted content, target word in `answer`, and
-# metadata {"display": "chain_step"} stamped ONLY by our own deterministic
-# derivation (_parse_chain_steps); a model cannot assert the stamp. Those items
-# must be recognized as manipulation evidence.
+# Case 3c/3d: deterministic compiler items stitch into chain evidence. Typed
+# operations, from-word, and answer must agree before the validator counts the
+# item; metadata alone is not trusted.
 # --------------------------------------------------------------------------- #
 
 

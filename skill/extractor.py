@@ -7,6 +7,7 @@ import re
 from extract.schema import SourceWorksheetModel
 from skill.schema import LiteracySkillModel, SourceItem
 from skill.taxonomy import match_phonics_pattern
+from skill.transformation import attach_transformations_to_source_items
 
 _LESSON_PATTERN = re.compile(r"lesson\s+(\d+)", re.IGNORECASE)
 _MARKER_PATTERN = re.compile(r"(\w+[*♥❤])", re.UNICODE)
@@ -155,6 +156,7 @@ def _extract_word_work(source: SourceWorksheetModel) -> LiteracySkillModel:
     # Confidence: average of region confidences, weighted down if concept label missing
     extraction_confidence = _compute_confidence(confidences, has_concept=bool(concept_text))
 
+    source_items = attach_transformations_to_source_items(source_items, specific_skill)
     model = LiteracySkillModel(
         grade_level=grade_level,
         domain="phonics",
@@ -259,27 +261,53 @@ def _extract_decodable_story(source: SourceWorksheetModel) -> LiteracySkillModel
 
 
 def _extract_generic(source: SourceWorksheetModel) -> LiteracySkillModel:
-    """Fallback extraction for unknown layouts."""
+    """Extract reusable literacy signals without relying on a provider layout.
+
+    Region semantics are part of the extraction contract even when no template
+    is recognized.  In particular, an explicit concept label plus a word chain
+    must reach the same objective and transformation machinery as a known
+    curriculum template.
+    """
     source_items: list[SourceItem] = []
     target_words: list[str] = []
     confidences: list[float] = []
+    concept_text = ""
 
     for i, region in enumerate(source.regions):
         confidences.append(region.confidence)
 
-        if region.type == "word_list":
+        if region.type == "concept_label" and not concept_text:
+            concept_text = region.content
+        elif region.type in {"word_list", "sample_words", "sight_word_list"}:
             words = _extract_words(region.content)
             target_words.extend(words)
             cleaned_content, markers = _strip_source_notation(region.content)
             source_items.append(
                 SourceItem(
-                    item_type="word_list",
+                    item_type=("sight_words" if region.type == "sight_word_list" else "word_list"),
                     content=cleaned_content,
                     source_region_index=i,
                     metadata={"notation_markers": ",".join(markers)} if markers else {},
                 )
             )
-        elif region.type == "question":
+        elif region.type == "word_chain":
+            source_items.append(
+                SourceItem(
+                    item_type="word_chain",
+                    content=region.content,
+                    source_region_index=i,
+                )
+            )
+            target_words.extend(_extract_chain_words(region.content))
+        elif region.type in {"decodable_passage", "passage"}:
+            source_items.append(
+                SourceItem(
+                    item_type="passage",
+                    content=region.content,
+                    source_region_index=i,
+                )
+            )
+        elif region.type in {"question", "practice_sentences", "sentence"}:
             cleaned_content, markers = _strip_source_notation(region.content)
             source_items.append(
                 SourceItem(
@@ -290,33 +318,46 @@ def _extract_generic(source: SourceWorksheetModel) -> LiteracySkillModel:
                 )
             )
 
-    # Try to identify domain from title/instructions
+    # An explicit, recognized objective wins over layout or provider identity.
+    concept_label = _sanitize_concept_text(concept_text)
+    matched_skill = match_phonics_pattern(concept_label) if concept_label else None
+
+    # Otherwise, conservatively identify the broad domain from visible text.
     domain = "phonics"  # default
-    specific_skill = "unknown"
+    specific_skill = matched_skill or "unknown"
     response_types = ["write"]
 
-    for region in source.regions:
-        text_lower = region.content.lower()
-        if "read" in text_lower or "story" in text_lower:
-            domain = "fluency"
-            specific_skill = "passage_reading"
-            response_types = ["read_aloud"]
-            break
-        if "write" in text_lower or "sentence" in text_lower:
-            domain = "writing"
-            specific_skill = "sentence_writing"
-            response_types = ["write"]
-            break
+    if matched_skill:
+        response_types = ["write", "read_aloud"]
+    else:
+        for region in source.regions:
+            text_lower = region.content.lower()
+            if "read" in text_lower or "story" in text_lower:
+                domain = "fluency"
+                specific_skill = "passage_reading"
+                response_types = ["read_aloud"]
+                break
+            if "write" in text_lower or "sentence" in text_lower:
+                domain = "writing"
+                specific_skill = "sentence_writing"
+                response_types = ["write"]
+                break
 
     target_words = _dedupe_preserve_order(target_words)
+    source_items = attach_transformations_to_source_items(source_items, specific_skill)
 
-    extraction_confidence = _compute_confidence(confidences, has_concept=False) * 0.7
+    extraction_confidence = _compute_confidence(confidences, has_concept=bool(concept_label)) * 0.7
+    objectives = (
+        _build_word_work_objectives(specific_skill, concept_label, target_words)
+        if matched_skill
+        else [f"Practice {domain} skills"]
+    )
 
     return LiteracySkillModel(
         grade_level="1",
         domain=domain,
         specific_skill=specific_skill,
-        learning_objectives=[f"Practice {domain} skills"],
+        learning_objectives=objectives,
         target_words=target_words,
         response_types=response_types,
         source_items=source_items,
@@ -620,6 +661,7 @@ def _build_word_work_objectives(
         "r_controlled": "Read words with r-controlled vowels",
         "multisyllable": "Decode multisyllable words",
         "letter_sound": "Match letters to their sounds",
+        "drop_e_rule": "Drop final e before adding an ending",
     }
 
     label = skill_labels.get(specific_skill)

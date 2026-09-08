@@ -173,16 +173,16 @@ def _allow_unjudged_objective_plan() -> bool:
 # build/transformation") are pinned by tests/test_llm_planner.py.
 _FORM_GUIDANCE: dict[RequiredForm, str] = {
     "word_chain": (
-        "author an ordered build/transformation sequence — each step changes ONE "
-        "letter/sound from the previous word, with explicit step language (e.g. "
-        '"Make `tune`. Change the `u` to `o`. What word? ...`tone`"). Do NOT scatter '
-        "the chain's words across separate write items."
+        "author an ordered build/transformation sequence with explicit step language. "
+        "Copy source arrow strings into words; the deterministic transformation "
+        "contract will infer, replay, and label each permitted operation. "
+        "Do NOT scatter the chain's words across separate write items."
     ),
     "chain_script": (
-        "author an ordered build/transformation sequence — each step changes ONE "
-        "letter/sound from the previous word, with explicit step language (e.g. "
-        '"Make `tune`. Change the `u` to `o`. What word?"). Do NOT scatter the '
-        "chain's words across separate write items."
+        "author an ordered build/transformation sequence with explicit step language. "
+        "Copy source arrow strings into words; the deterministic transformation "
+        "contract will infer, replay, and label each permitted operation. "
+        "Do NOT scatter the chain's words across separate write items."
     ),
     "decodable_passage": (
         "author real CONNECTED TEXT (a short passage), not a title or a lone sentence."
@@ -224,6 +224,7 @@ def _objective_cell_block(cell: ObjectiveCell, content_by_id: dict[str, str]) ->
             lines.append(f"- Source ({fid}): {content}")
     for form in cell.required_forms:
         lines.append(f"- For `{form}`: {_FORM_GUIDANCE[form]}")
+    lines.append(f"- Sufficiency rule for this lesson: {cell.sufficiency_rule}")
     return "\n".join(lines)
 
 
@@ -244,15 +245,31 @@ def _objective_authoring_block(
         ledger = build_objective_ledger(skill)
     content_by_id = {si.source_item_id: si.content for si in ledger.source_items}
     cell_blocks = "\n\n".join(_objective_cell_block(c, content_by_id) for c in ledger.objectives)
+    from skill.contract import contract_for_skill_id
+
+    transformation_contract = contract_for_skill_id(skill.specific_skill)
+    if transformation_contract is not None:
+        transformation_guidance = (
+            "Resolved transformation contract: "
+            f"{transformation_contract.rule_id}; operation: "
+            f"{transformation_contract.operation_label}; anchoring: "
+            f"{transformation_contract.chain_anchoring}. Use source arrow strings "
+            "verbatim in words and leave items empty. Do not invent an operation explanation."
+        )
+    else:
+        transformation_guidance = (
+            "For a word_chain, use source arrow strings verbatim in words and leave items empty. "
+            "The deterministic analyzer will accept only replay-verified edits."
+        )
     return f"""
 ## Objective coverage (author each objective IN its required form)
 
 Each objective below MUST be exercised IN its required pedagogical form (not merely
 mentioned). Follow these three rules:
 
-1. AUTHOR EACH REQUIRED FORM IN ITS FORM. A word chain is an ordered \
-build/transformation sequence (change one letter/sound per step, with explicit step \
-language) — NOT the chain's words scattered across separate write items. A passage is \
+1. AUTHOR EACH REQUIRED FORM IN ITS FORM. A word chain is the ordered \
+build/transformation form named in that objective's sufficiency rule, with explicit \
+step language — NOT the chain's words scattered across separate write items. A passage is \
 connected text. An encode/spell objective is written production. A sentence-write \
 objective is production (the child writes it).
 2. SAMPLE samplable pools to the threshold, not exhaustively. For large pools \
@@ -264,15 +281,9 @@ review, and irregular words do not count toward it and must not pad it.
 
 {cell_blocks}
 
-Example of a compliant build/change-chain activity (adapt words to THIS lesson):
-  {{"activity_type": "word_chain", "words": ["quick → quickly", "light → lightly"], "items": []}}
-  for suffix lessons, or
-  {{"activity_type": "word_chain", "words": ["cry → try → dry"], "items": []}}
-  for letter-pattern lessons. The rendering system builds the student-facing
-  steps mechanically from these arrow strings — do NOT author word_chain
-  "items"; they are ignored.
-Your plan MUST include one such build/change chain activity, and the plan's
-total estimated minutes MUST fit the session budget stated below.
+{transformation_guidance}
+When the source contains a required word chain, include one build/change activity.
+The plan's total estimated minutes MUST fit the session budget stated below.
 """
 
 
@@ -294,6 +305,18 @@ def _build_planner_prompt(
     contract_block = _coverage_contract_block(skill)
     objective_block = _objective_authoring_block(skill, objective_ledger)
     covered_ids_schema = _covered_ids_schema_line()
+    if _objective_coverage_enabled():
+        source_heading = "COMPLETE OBJECTIVE EVIDENCE — sample pools to stated thresholds"
+        preservation_rule = (
+            "Preserve every learning objective and required response form. Sample large word "
+            "pools only to the objective thresholds within the attention budget."
+        )
+    else:
+        source_heading = "COMPLETE — preserve every item in this photographed page"
+        preservation_rule = (
+            "Preserve all source content as INDIVIDUAL practice because this is the legacy "
+            "single-page photo workflow."
+        )
 
     curriculum_text = ""
     if rag_curriculum_references:
@@ -307,7 +330,7 @@ def _build_planner_prompt(
     return f"""You are an expert literacy curriculum designer specializing in \
 ADHD-optimized worksheets for children ages 5-8.
 
-## Source Worksheet Content (COMPLETE — preserve everything below)
+## Source Worksheet Content ({source_heading})
 
 Template: {skill.template_type}
 Domain: {skill.domain}
@@ -346,7 +369,8 @@ Response format preferences: {profile.accommodations.response_format_prefs}
 Design 2-3 mini-worksheets that teach "{skill.specific_skill}" effectively.
 
 CRITICAL RULES:
-1. Preserve ALL source content as INDIVIDUAL practice. Every source word, every
+1. {preservation_rule}
+   Every retained source word, every
    word-chain step, and every source sentence MUST appear as its OWN separate
    item that the child actually works (read, write, build, or circle). Coverage
    is judged on individual practice, not mere presence:
@@ -369,9 +393,8 @@ CRITICAL RULES:
 4. Order worksheets so the most concept-focused activity comes FIRST.
 5. For "match", "sound_box", and "word_chain" activities, list the words in
    "words" and leave "items" empty — the rendering system constructs those
-   mechanically. word_chain "words" are arrow strings: one pair per string
-   for suffix lessons ("quick → quickly"), the full chain for letter-pattern
-   lessons ("cry → try → dry").
+   mechanically. For word_chain, copy the source arrow strings exactly; the
+   resolved objective contract determines anchoring and verifies every operation.
 6. Each activity needs a rationale for WHY it teaches this concept.
 
 ## Output Format
@@ -557,7 +580,7 @@ def plan_lesson_llm(
     return None
 
 
-def _coverage_feedback_block(coverage: ObjectiveCoverageResult) -> str:
+def _coverage_feedback_block(coverage: ObjectiveCoverageResult, skill: LiteracySkillModel) -> str:
     """Per-cell revision feedback appended to the prompt for the ONE coverage retry."""
     lines = [
         "## REVISION REQUIRED — previous plan rejected by deterministic coverage",
@@ -572,11 +595,14 @@ def _coverage_feedback_block(coverage: ObjectiveCoverageResult) -> str:
             f"Your revised plan MUST satisfy this objective IN its required form."
         )
         if "word_chain" in cell.missing_required_forms:
+            from skill.contract import contract_for_skill_id
+
+            contract = contract_for_skill_id(skill.specific_skill)
+            operation = contract.operation_label if contract is not None else "verified edit"
             line += (
-                ' Provide the chain as arrow strings in the activity\'s "words" '
-                '(suffix lessons: one pair per string, e.g. "quick → quickly"; '
-                'letter lessons: the full chain, e.g. "cry → try → dry") with '
-                '"items" empty — authored word_chain items are ignored.'
+                ' Copy the source chain as arrow strings in the activity\'s "words" with '
+                f'"items" empty. The required operation is: {operation}. '
+                "Authored word_chain items are ignored."
             )
         lines.append(line)
     for breach in coverage.package_bounds.breaches:
@@ -730,7 +756,7 @@ def _plan_lesson_objective(
             failing_ids,
         )
 
-        retry_prompt = prompt + "\n\n" + _coverage_feedback_block(coverage)
+        retry_prompt = prompt + "\n\n" + _coverage_feedback_block(coverage, skill)
         retry_extra_details: dict[str, object] = {
             "coverage_retry": {"attempted": True, "first_failure": first_failure}
         }

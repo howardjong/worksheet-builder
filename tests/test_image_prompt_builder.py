@@ -88,7 +88,9 @@ def test_prompt_damping_block_uses_visual_budget_numbers() -> None:
     prompt = build_page_prompt(_spec())
 
     assert "at most 4 accent colors" in prompt
-    assert "Exactly 2 small purely decorative accents" in prompt
+    assert "at most 2 intentional, clearly legible theme elements" in prompt
+    assert "Omit them entirely rather than rendering token-sized corner stickers" in prompt
+    assert "small purely decorative accents" not in prompt
     assert "calm and tidy" in prompt
     assert "never put patterns, gradients, or scene art behind text" in prompt
 
@@ -179,9 +181,11 @@ def test_feedback_strip_and_parent_log() -> None:
     from render.image_prompt_builder import build_page_prompt
 
     prompt = build_page_prompt(_spec())
-    assert 'titled with exact text: "Grown-up quick log"' in prompt
-    assert "smooth / choppy" in prompt
-    assert "step back one lesson" in prompt  # hint present when show_decision_hint=True
+    assert 'titled with exact text: "Grown-up quick log — circle one choice in each pair"' in prompt
+    assert "Circle one progress choice and one help choice for each part." in prompt
+    assert "steady / still building" in prompt
+    assert "new objective" in prompt  # hint present when show_decision_hint=True
+    assert "step back one lesson" not in prompt
 
 
 def test_page_prompt_renders_quick_log_without_traffic_strip() -> None:

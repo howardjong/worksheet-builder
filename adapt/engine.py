@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from adapt.feedback import build_feedback_panel
+from adapt.instruction_clarity import ensure_clear_chunk_instructions, ensure_clear_instructions
 from adapt.objective_ledger import ObjectiveCell, build_objective_ledger
 from adapt.rules import (
     BRAIN_BREAK_PROMPTS,
@@ -21,6 +22,7 @@ from adapt.rules import (
 from adapt.schema import (
     ActivityChunk,
     ActivityItem,
+    AdaptationCapabilities,
     AdaptedActivityModel,
     Example,
     ScaffoldConfig,
@@ -64,6 +66,13 @@ class _CurriculumWordBank:
     lesson_ids: tuple[str, ...]
     concepts: tuple[str, ...]
     documents: tuple[str, ...]
+
+
+def _transformation_family(skill: LiteracySkillModel) -> str | None:
+    from skill.contract import contract_for_skill_id
+
+    contract = contract_for_skill_id(skill.specific_skill)
+    return contract.family if contract is not None else None
 
 
 def adapt_activity(
@@ -121,7 +130,7 @@ def adapt_activity(
         grade_level=skill.grade_level,
         domain=skill.domain,
         specific_skill=skill.specific_skill,
-        chunks=chunks,
+        chunks=[ensure_clear_chunk_instructions(chunk) for chunk in chunks],
         scaffolding=scaffolding,
         theme_id=theme_id,
         decoration_zones=decoration_zones,
@@ -135,6 +144,7 @@ def _finalize_lesson_package(
     rules: AccommodationRules,
     skill: LiteracySkillModel,
     package_cap: int | None,
+    capabilities: AdaptationCapabilities,
 ) -> list[AdaptedActivityModel]:
     """Apply the section cap (split) then the optional package cap (trim).
 
@@ -142,6 +152,7 @@ def _finalize_lesson_package(
     (lesson mode defaults it to "auto" — the evidence-based workload budget);
     the photo path doesn't set it, keeping split-never-trim there.
     """
+    worksheets = _enforce_adaptation_capabilities(worksheets, skill, capabilities)
     capped = enforce_section_cap(worksheets, rules)
     if package_cap is not None and len(capped) > package_cap:
         capped = enforce_package_cap(
@@ -150,7 +161,52 @@ def _finalize_lesson_package(
             fallback_feedback=build_feedback_panel(skill.domain, skill.specific_skill),
             essential_forms=_essential_form_carriers(skill, capped),
         )
-    return capped
+    return ensure_clear_instructions(capped)
+
+
+def _enforce_adaptation_capabilities(
+    worksheets: list[AdaptedActivityModel],
+    skill: LiteracySkillModel,
+    capabilities: AdaptationCapabilities,
+) -> list[AdaptedActivityModel]:
+    """Replace asset-dependent practice unless its assets are guaranteed.
+
+    This runs after either authoring path, so a model plan cannot bypass the
+    deterministic capability contract. Picture matching is supporting practice;
+    its safe fallback is written production, never a labelled empty box or a
+    synthetic multiple-choice item whose distractors have not been validated
+    against the learning objective.
+    """
+    if capabilities.picture_assets_guaranteed:
+        return worksheets
+    for worksheet in worksheets:
+        for chunk in worksheet.chunks:
+            if not any(item.response_format == "match" for item in chunk.items):
+                continue
+            replacement_items: list[ActivityItem] = []
+            for item in chunk.items:
+                if item.response_format != "match":
+                    replacement_items.append(item)
+                    continue
+                replacement_items.append(
+                    item.model_copy(
+                        update={
+                            "content": item.content,
+                            "response_format": "write",
+                            "options": None,
+                            "answer": item.content,
+                            "picture_prompt": None,
+                        }
+                    )
+                )
+            chunk.items = replacement_items
+            chunk.response_format = "write"
+            chunk.micro_goal = f"Write {len(replacement_items)} target words"
+            chunk.instructions = [
+                Step(number=1, text="Read each printed word aloud."),
+                Step(number=2, text="Write each word on its line."),
+            ]
+    return worksheets
 
 
 def _essential_form_carriers(
@@ -259,6 +315,7 @@ def adapt_lesson(
     rag_curriculum_references: list[dict[str, object]] | None = None,
     artifacts_dir: str | None = None,
     character_identity: CharacterIdentity | None = None,
+    capabilities: AdaptationCapabilities | None = None,
 ) -> list[AdaptedActivityModel]:
     """Transform a skill model into 2-3 ADHD-optimized mini-worksheets.
 
@@ -270,6 +327,7 @@ def adapt_lesson(
     """
     if rules is None:
         rules = build_rules(profile)
+    capabilities = capabilities or AdaptationCapabilities()
 
     package_cap = _resolve_lesson_package_cap(skill, profile, rules, artifacts_dir)
 
@@ -284,7 +342,9 @@ def adapt_lesson(
                 character_identity=character_identity,
             )
             if direct_result:
-                return _finalize_lesson_package(direct_result, rules, skill, package_cap)
+                return _finalize_lesson_package(
+                    direct_result, rules, skill, package_cap, capabilities
+                )
         except Exception as exc:
             logger.warning("Direct compiler failed, using fallback adaptation: %s", exc)
 
@@ -303,7 +363,7 @@ def adapt_lesson(
                 artifacts_dir=artifacts_dir,
             )
             if planned:
-                return _finalize_lesson_package(planned, rules, skill, package_cap)
+                return _finalize_lesson_package(planned, rules, skill, package_cap, capabilities)
         except Exception as exc:
             logger.warning("LLM planner failed, using deterministic engine: %s", exc)
     else:
@@ -320,7 +380,7 @@ def adapt_lesson(
                 artifacts_dir=artifacts_dir,
             )
             if llm_result:
-                return _finalize_lesson_package(llm_result, rules, skill, package_cap)
+                return _finalize_lesson_package(llm_result, rules, skill, package_cap, capabilities)
         except Exception as exc:
             logger.warning("LLM orchestration failed, using deterministic engine: %s", exc)
 
@@ -334,6 +394,10 @@ def adapt_lesson(
     discovery_default = ["match", "trace", "circle"]
     if "trace" not in rules.allowed_response_formats:
         discovery_default = ["write" if f == "trace" else f for f in discovery_default]
+    if os.environ.get("WORKSHEET_SKIP_ASSET_GEN") == "1":
+        # Put the asset-free recognition task before repeated production so
+        # the first retained Word Practice page mixes response modes.
+        discovery_default = ["circle", "write"]
     discovery_formats = _suggest_format_mix(prior_adaptations, discovery_default)
     curriculum = _build_curriculum_word_bank(rag_curriculum_references)
     if prior_adaptations:
@@ -404,7 +468,14 @@ def adapt_lesson(
     profile_hash = _hash_str(profile.model_dump_json())
 
     # Worksheet 1: Word Discovery (if we have word items or target words)
-    discovery_words = word_items or prioritized_targets[:6]
+    # Drop-E already gets explicit spelling transformations plus a short oral
+    # reading list in Word Work. A generic discovery/copy family adds pages and
+    # fatigue without exercising the spelling operation itself.
+    discovery_words = (
+        []
+        if _transformation_family(skill) == "orthographic_rule"
+        else word_items or prioritized_targets[:6]
+    )
     if discovery_words:
         chunks = _build_discovery_chunks(
             discovery_words,
@@ -489,7 +560,11 @@ def adapt_lesson(
                 decoration_zones=_define_decoration_zones(),
                 feedback=build_feedback_panel(skill.domain, skill.specific_skill),
                 worksheet_number=len(worksheets) + 1,
-                worksheet_title="Word Builder",
+                worksheet_title=(
+                    "Word Work"
+                    if _transformation_family(skill) == "orthographic_rule"
+                    else "Word Builder"
+                ),
                 break_prompt=BRAIN_BREAK_PROMPTS[1 % len(BRAIN_BREAK_PROMPTS)],
             )
         )
@@ -577,9 +652,9 @@ def adapt_lesson(
             rag_prior_adaptations=rag_prior_adaptations,
             rag_curriculum_references=rag_curriculum_references,
         )
-        return _finalize_lesson_package([single], rules, skill, package_cap)
+        return _finalize_lesson_package([single], rules, skill, package_cap, capabilities)
 
-    return _finalize_lesson_package(worksheets, rules, skill, package_cap)
+    return _finalize_lesson_package(worksheets, rules, skill, package_cap, capabilities)
 
 
 def _decompose_suffix_word(word: str, suffixes: list[str]) -> tuple[str, str] | None:
@@ -688,17 +763,42 @@ def _build_add_ending_chunk(
     decompose fall back to a plain say-and-write item."""
     items: list[ActivityItem] = []
     item_id = item_id_start
+    from skill.contract import contract_for_skill_id
+    from skill.transformation import infer_base_step_for_derived
+
+    contract = contract_for_skill_id("suffix_" + "_".join(suffixes))
     for word in words:
         item_id += 1
-        decomposed = _decompose_suffix_word(word, suffixes)
-        if decomposed:
-            base, sfx = decomposed
+        step = infer_base_step_for_derived(word, contract) if contract is not None else None
+        if step is not None:
+            kinds = tuple(operation.kind for operation in step.operations)
+            if kinds == ("append_affix",):
+                content = f"{step.from_word} + -{step.ending} → ______"
+            elif kinds == ("change_y_to_i", "append_affix"):
+                content = (
+                    f'Start with "{step.from_word}". Change final y to i. '
+                    f"Add -{step.ending}. Write: ______"
+                )
+            elif kinds == ("drop_final_e", "append_affix"):
+                content = (
+                    f'Start with "{step.from_word}". Drop the final e. '
+                    f"Add -{step.ending}. Write: ______"
+                )
+            elif kinds == ("double_final_consonant", "append_affix"):
+                content = (
+                    f'Start with "{step.from_word}". Double the final consonant. '
+                    f"Add -{step.ending}. Write: ______"
+                )
+            else:
+                content = f'Start with "{step.from_word}". Write the new word: ______'
             items.append(
                 ActivityItem(
                     item_id=item_id,
-                    content=f"{base} + -{sfx} → ______",
+                    content=content,
                     response_format="write",
+                    metadata={"rule_id": step.rule_id, "display": "derived_word"},
                     answer=word,
+                    transformation=step,
                 )
             )
         else:
@@ -713,9 +813,9 @@ def _build_add_ending_chunk(
         chunk_id=chunk_id,
         micro_goal=f"Add the ending to {len(items)} words",
         instructions=[
-            Step(number=1, text="Read the word part."),
-            Step(number=2, text="Add the ending."),
-            Step(number=3, text="Write the whole word."),
+            Step(number=1, text="Read the base word in each problem aloud."),
+            Step(number=2, text="Follow the spelling change printed in each problem."),
+            Step(number=3, text="Write each complete new word on its line."),
         ],
         worked_example=None,
         items=items,
@@ -789,8 +889,8 @@ def _build_choose_form_chunk(
         chunk_id=chunk_id,
         micro_goal=f"Choose the right word {len(items)} times",
         instructions=[
-            Step(number=1, text="Read the question."),
-            Step(number=2, text="Circle the right word."),
+            Step(number=1, text="Read each question and both word choices."),
+            Step(number=2, text="Circle one word that answers each question."),
         ],
         worked_example=None,
         items=items,
@@ -832,6 +932,12 @@ def _build_discovery_chunks(
     for fmt in ordered_formats:
         chunk_id = len(chunks) + 1
         if fmt == "match":
+            if os.environ.get("WORKSHEET_SKIP_ASSET_GEN") == "1":
+                # A picture-matching task without pictures is impossible. The
+                # black-ink/offline path deliberately removes raster assets,
+                # so omit this form and let the text-based write/circle forms
+                # below carry the same target-word practice.
+                continue
             # The match renderer lays out two columns cleanly up to four rows.
             match_words = words[: min(max_items, 4)]
             if not match_words:
@@ -861,11 +967,14 @@ def _build_discovery_chunks(
                     chunk_id=chunk_id,
                     micro_goal=f"Match {len(match_words)} words to their pictures",
                     instructions=[
-                        Step(number=1, text="Look at each picture."),
-                        Step(number=2, text="Draw a line to the matching word."),
+                        Step(number=1, text="Look at every picture and read every word."),
+                        Step(
+                            number=2,
+                            text="Draw one line from each picture to its matching word.",
+                        ),
                     ],
                     worked_example=Example(
-                        instruction="Watch how I do the first one:",
+                        instruction="Follow the completed match example:",
                         content=_match_example_content(shuffled_pictures[0]),
                     ),
                     items=items,
@@ -903,8 +1012,8 @@ def _build_discovery_chunks(
                         chunk_id=len(chunks) + 1,
                         micro_goal=f"Trace {len(trace_words)} words",
                         instructions=[
-                            Step(number=1, text="Say each word out loud."),
-                            Step(number=2, text="Trace the dotted letters."),
+                            Step(number=1, text="Say each printed word aloud."),
+                            Step(number=2, text="Trace every dotted letter in each word."),
                         ],
                         worked_example=None,
                         items=items,
@@ -986,8 +1095,8 @@ def _build_discovery_chunks(
                         chunk_id=len(chunks) + 1,
                         micro_goal=f"Write {len(write_words)} words",
                         instructions=[
-                            Step(number=1, text="Say each word out loud."),
-                            Step(number=2, text="Write the word on the line."),
+                            Step(number=1, text="Say each printed word aloud."),
+                            Step(number=2, text="Write each word on its line."),
                         ],
                         worked_example=None,
                         items=items,
@@ -1019,8 +1128,8 @@ def _build_discovery_chunks(
                     chunk_id=chunk_id,
                     micro_goal="Find the pattern words",
                     instructions=[
-                        Step(number=1, text="Look at each word."),
-                        Step(number=2, text="Circle the words that match the pattern."),
+                        Step(number=1, text="Read every word in the choice row."),
+                        Step(number=2, text="Circle every word that follows the named pattern."),
                     ],
                     worked_example=None,
                     items=[item],
@@ -1058,133 +1167,48 @@ def _build_builder_chunks(
                 deduped.append(chain)
         chains = deduped
 
-        from skill.taxonomy import is_suffix_skill, suffixes_for_skill
+        from adapt.transformation_compiler import compile_transformation_chunk
+        from skill.contract import contract_for_skill_id
+        from skill.transformation import analyze_chain, verify_step
 
-        if is_suffix_skill(skill.specific_skill):
-            suffix_steps = _parse_suffix_chain_steps(
-                chains, suffixes_for_skill(skill.specific_skill)
+        contract = contract_for_skill_id(skill.specific_skill)
+        if contract is None:
+            contract = contract_for_skill_id("letter_chain")
+        assert contract is not None
+
+        analyzed = [step for chain in chains for step in analyze_chain(chain, contract)]
+        seen_steps: set[tuple[str, str, str]] = set()
+        verified_steps = []
+        for step in analyzed:
+            step_key = (step.rule_id, step.from_word, step.to_word)
+            if verify_step(step) and step_key not in seen_steps:
+                seen_steps.add(step_key)
+                verified_steps.append(step)
+
+        # Orthographic-rule objectives need a calm representative set, not
+        # every duplicated source form. Other contracts may span chunks.
+        if contract.family == "orthographic_rule":
+            verified_steps = verified_steps[: max_items + 1]
+
+        remaining = verified_steps
+        first_chunk = True
+        while remaining:
+            # One modeled step plus max_items independent steps on the first
+            # chunk; subsequent chunks contain independent practice only.
+            take = max_items + 1 if first_chunk else max_items
+            batch, remaining = remaining[:take], remaining[take:]
+            chunk = compile_transformation_chunk(
+                batch,
+                contract,
+                chunk_id=len(chunks) + 1,
+                item_id_start=item_id,
+                max_items=max_items,
+                include_example=first_chunk,
             )
-        else:
-            suffix_steps = []
-
-        if suffix_steps:
-            # Worked example uses the first step; activity uses the rest
-            ex_step = suffix_steps[0]
-            example = Example(
-                instruction="Watch how to add the ending:",
-                content=f"{ex_step['from_word']} + -{ex_step['suffix']} → {ex_step['to_word']}",
-            )
-            activity_suffix_steps = suffix_steps[1:]
-
-            for batch_start in range(0, len(activity_suffix_steps), max_items):
-                batch = activity_suffix_steps[batch_start : batch_start + max_items]
-                items: list[ActivityItem] = []
-                for step in batch:
-                    item_id += 1
-                    items.append(_suffix_step_item(item_id, step))
-                chunks.append(
-                    ActivityChunk(
-                        chunk_id=len(chunks) + 1,
-                        micro_goal=f"Build {len(items)} new words",
-                        instructions=[
-                            Step(number=1, text="Read the word."),
-                            Step(number=2, text="Add the ending."),
-                            Step(number=3, text="Write the new word."),
-                        ],
-                        worked_example=example if batch_start == 0 else None,
-                        items=items,
-                        response_format="write",
-                        time_estimate="About 1 minute",
-                    )
-                )
-        else:
-            chain_steps = _parse_chain_steps(chains)
-            # Deduplicate steps (source PDFs sometimes repeat chains)
-            seen_steps: set[tuple[str, str]] = set()
-            unique_steps: list[dict[str, str]] = []
-            for step in chain_steps:
-                step_key = (step["from_word"], step["to_word"])
-                if step_key not in seen_steps:
-                    seen_steps.add(step_key)
-                    unique_steps.append(step)
-            chain_steps = unique_steps
-
-            if chain_steps:
-                # Worked example uses the first step; activity uses the rest
-                ex_step = chain_steps[0]
-                example = Example(
-                    instruction="Watch how the letters change:",
-                    content=(
-                        f"{ex_step['from_word']} → {ex_step['to_word']}  "
-                        f'(change the "{ex_step["old_letter"]}" '
-                        f'to "{ex_step["new_letter"]}")'
-                    ),
-                )
-                activity_steps = chain_steps[1:]
-            else:
-                # Fallback if parsing fails — show chain read-only
-                example = Example(
-                    instruction="Watch how the letters change:",
-                    content=f'In "{chains[0]}" — one letter changes each time!',
-                )
-                activity_steps = []
-
-            if activity_steps:
-                for batch_start in range(0, len(activity_steps), max_items):
-                    batch = activity_steps[batch_start : batch_start + max_items]
-                    items = []
-                    for step in batch:
-                        item_id += 1
-                        items.append(_letter_step_item(item_id, step))
-                    chunks.append(
-                        ActivityChunk(
-                            chunk_id=len(chunks) + 1,
-                            micro_goal=f"Build {len(items)} new words",
-                            instructions=[
-                                Step(number=1, text="Read the starting word."),
-                                Step(number=2, text="Change the letter shown."),
-                                Step(number=3, text="Write the new word on the line."),
-                            ],
-                            worked_example=example if batch_start == 0 else None,
-                            items=items,
-                            response_format="write",
-                            time_estimate="About 1 minute",
-                        )
-                    )
-            else:
-                # Fallback: plain chain items (skip chains[0], already in worked example)
-                remaining_chains = chains[1:]
-                for batch_start in range(0, len(remaining_chains), max_items):
-                    chain_batch = remaining_chains[batch_start : batch_start + max_items]
-                    items = []
-                    for chain in chain_batch:
-                        item_id += 1
-                        parts = [w.strip() for w in re.split(r"\s*(?:->|→)\s*", chain) if w.strip()]
-                        content = parts[0] + "".join(" → ______" for _ in parts[1:])
-                        items.append(
-                            ActivityItem(
-                                item_id=item_id,
-                                content=content,
-                                response_format="write",
-                                metadata={"display": "chain"},
-                                answer=", ".join(parts[1:]),
-                            )
-                        )
-                    chunks.append(
-                        ActivityChunk(
-                            chunk_id=len(chunks) + 1,
-                            micro_goal=f"Build {len(items)} new words",
-                            instructions=[
-                                Step(number=1, text="Read the starting word."),
-                                Step(number=2, text="Change the letter shown."),
-                                Step(number=3, text="Write the new word on the line."),
-                            ],
-                            worked_example=example if batch_start == 0 else None,
-                            items=items,
-                            response_format="write",
-                            time_estimate="About 1 minute",
-                        )
-                    )
+            if chunk is not None:
+                chunks.append(chunk)
+                item_id += len(chunk.items)
+            first_chunk = False
 
     # Chunk 2: Fill in the missing letter
     # Word-list-only lessons rely on these chunks for full target coverage, so
@@ -1197,6 +1221,10 @@ def _build_builder_chunks(
         if not chains
         else [words[:max_items]]
     )
+    if _transformation_family(skill) is not None:
+        # Missing-vowel completion tests a generic cue, not the declared word
+        # transformation. Verified written steps already carry encoding.
+        fill_word_batches = []
     for fill_words in fill_word_batches:
         if not fill_words:
             continue
@@ -1229,8 +1257,8 @@ def _build_builder_chunks(
                     chunk_id=len(chunks) + 1,
                     micro_goal=f"Fill in {len(items)} missing letters",
                     instructions=[
-                        Step(number=1, text="Look at the word with a missing letter."),
-                        Step(number=2, text="Circle the missing letter."),
+                        Step(number=1, text="Read each incomplete word and every letter choice."),
+                        Step(number=2, text="Circle the letter that completes each word."),
                     ],
                     worked_example=None,
                     items=items,
@@ -1266,8 +1294,8 @@ def _build_builder_chunks(
                     chunk_id=len(chunks) + 1,
                     micro_goal=f"Practice {len(items)} sight words",
                     instructions=[
-                        Step(number=1, text="Read each sight word."),
-                        Step(number=2, text="Write each word on the line."),
+                        Step(number=1, text="Read each printed sight word aloud."),
+                        Step(number=2, text="Write each sight word on its line."),
                     ],
                     worked_example=None,
                     items=items,
@@ -1321,12 +1349,12 @@ def _build_warmup_chunk(
         chunk_id=start_chunk_id + 1,
         micro_goal=f"Tap out the sounds in {len(items)} words",
         instructions=[
-            Step(number=1, text="Say the word out loud."),
-            Step(number=2, text="Tap each sound you hear."),
-            Step(number=3, text="Write one sound in each box."),
+            Step(number=1, text="Say each printed word aloud."),
+            Step(number=2, text="Tap once for every sound you hear."),
+            Step(number=3, text="Write one sound in each box for that word."),
         ],
         worked_example=Example(
-            instruction="Watch how I tap out the sounds:",
+            instruction="Follow the completed sound example:",
             content=f'"{selected[0]}" has {len(_segment_phonemes(selected[0]))} sounds: '
             + " - ".join(f'"{p}"' for p in _segment_phonemes(selected[0])),
         ),
@@ -1477,9 +1505,9 @@ def _build_roll_and_read_chunk(
         chunk_id=start_chunk_id,
         micro_goal=f"Read {len(items)} words smoothly",
         instructions=[
-            Step(number=1, text="Read each word smoothly."),
-            Step(number=2, text="Try the list three times."),
-            Step(number=3, text="Point to each word as you read."),
+            Step(number=1, text="Read every word aloud at a smooth pace."),
+            Step(number=2, text="Read the entire list aloud three times."),
+            Step(number=3, text="Point to each word while you read it."),
         ],
         worked_example=None,
         items=items,
@@ -1513,6 +1541,62 @@ def _format_passage(text: str) -> str:
     return formatted
 
 
+def _passage_excerpt(
+    text: str,
+    *,
+    target_words: list[str] | None = None,
+    max_sentences: int = 4,
+    max_words: int = 50,
+) -> str:
+    """Return a coherent, ADHD-safe excerpt that preserves objective evidence.
+
+    Score bounded contiguous sentence windows by distinct target-objective
+    words, then by total target occurrences, context length, and earliest
+    position. With no target words, the opening remains deterministic.
+    """
+    raw_lines = text.splitlines()
+    title_line = ""
+    body = text
+    if raw_lines:
+        first_line = raw_lines[0].strip()
+        if first_line and not re.search(r"[.!?]\s*$", first_line):
+            title_line = first_line
+            body = "\n".join(raw_lines[1:])
+
+    normalized = re.sub(r"\s+", " ", body.replace("\n", " ")).strip()
+    sentences = [s.strip() for s in re.findall(r"[^.!?]+[.!?]", normalized) if s.strip()]
+    if len(sentences) < 2:
+        return _format_passage(text)
+
+    targets = {_normalize_word(word) for word in (target_words or []) if _normalize_word(word)}
+    candidates: list[tuple[tuple[int, int, int, int], list[str]]] = []
+    for start in range(len(sentences)):
+        word_count = 0
+        for length in range(1, max_sentences + 1):
+            end = start + length
+            if end > len(sentences):
+                break
+            sentence = sentences[end - 1]
+            word_count += len(re.findall(r"[A-Za-z]+(?:'[A-Za-z]+)?", sentence))
+            if word_count > max_words and length > 2:
+                break
+            if length < 2:
+                continue
+            window = sentences[start:end]
+            normalized_words = [
+                _normalize_word(word) for word in re.findall(r"[A-Za-z]+", " ".join(window))
+            ]
+            target_hits = [word for word in normalized_words if word in targets]
+            candidates.append(((len(set(target_hits)), len(target_hits), length, -start), window))
+
+    selected = max(candidates, key=lambda candidate: candidate[0])[1]
+
+    excerpt = " ".join(selected)
+    if title_line:
+        excerpt = f"{title_line}\n\n{excerpt}"
+    return _format_passage(excerpt)
+
+
 def _build_story_chunks(
     sentences: list[str],
     passages: list[str],
@@ -1526,9 +1610,12 @@ def _build_story_chunks(
     chunks: list[ActivityChunk] = []
     item_id = 0
     max_items = rules.max_items_per_chunk
+    visible_passages = [
+        _passage_excerpt(passage, target_words=target_words) for passage in passages
+    ]
 
     # Chunk 1: Sentence completion with word bank
-    if sentences:
+    if sentences and _transformation_family(skill) is None:
         items: list[ActivityItem] = []
         for sent in sentences:
             item_id += 1
@@ -1587,7 +1674,7 @@ def _build_story_chunks(
                     blank_sent = example_item.content
                     removed_word = example_item.answer or ""
                     worked_example = Example(
-                        instruction="Watch me do the first one:",
+                        instruction="Read the completed sentence example:",
                         content=f"{blank_sent} → {removed_word}",
                     )
                 if not batch:
@@ -1597,8 +1684,8 @@ def _build_story_chunks(
                         chunk_id=len(chunks) + 1,
                         micro_goal=f"Complete {len(batch)} sentences",
                         instructions=[
-                            Step(number=1, text="Read the sentence."),
-                            Step(number=2, text="Fill in the missing word."),
+                            Step(number=1, text="Read each incomplete sentence and its word bank."),
+                            Step(number=2, text="Write one word that completes each sentence."),
                         ],
                         worked_example=worked_example,
                         items=batch,
@@ -1612,26 +1699,43 @@ def _build_story_chunks(
                 )
 
     # Chunk 2: Read the story (passage)
-    if passages:
-        for batch_start in range(0, len(passages), max_items):
-            passage_batch = passages[batch_start : batch_start + max_items]
+    if visible_passages:
+        for batch_start in range(0, len(visible_passages), max_items):
+            passage_batch = visible_passages[batch_start : batch_start + max_items]
             items = []
-            for passage in passage_batch:
+            for passage_text in passage_batch:
                 item_id += 1
                 items.append(
                     ActivityItem(
                         item_id=item_id,
-                        content=_format_passage(passage),
+                        content=passage_text,
                         response_format="read_aloud",
+                        metadata={"source_excerpt": passage_text not in passages},
                     )
                 )
+            passage_text = " ".join(passage_batch)
+            visible_targets = [
+                word for word in target_words if _text_contains_word(passage_text.lower(), word)
+            ]
+            if visible_targets:
+                target_cue = (
+                    "Underline these target words in the story: "
+                    + ", ".join(visible_targets[:max_items])
+                    + "."
+                )
+            else:
+                target_cue = "Point to each word while you read it."
             chunks.append(
                 ActivityChunk(
                     chunk_id=len(chunks) + 1,
                     micro_goal="Read the story",
                     instructions=[
-                        Step(number=1, text="Read the story out loud."),
-                        Step(number=2, text="Point to each word as you read."),
+                        Step(number=1, text="Read the entire story aloud."),
+                        Step(number=2, text=target_cue),
+                        Step(
+                            number=3,
+                            text="Read each underlined target word aloud one more time.",
+                        ),
                     ],
                     worked_example=None,
                     items=items,
@@ -1641,16 +1745,19 @@ def _build_story_chunks(
             )
 
     # Chunk 3: Story comprehension (circle format)
-    if passages:
-        comp_questions = _generate_comprehension_questions(passages, target_words)
+    if visible_passages:
+        # Questions must be answerable from the exact excerpt printed above,
+        # never from source sentences removed by the ADHD dosage step.
+        comp_questions = _generate_comprehension_questions(visible_passages, target_words)
         if comp_questions:
             items = []
-            for q, opts, ans in comp_questions:
+            # Read-aloud passage items are not visibly numbered. Restart the
+            # visible question sequence so the printed page never begins at 2.
+            for question_number, (q, opts, ans) in enumerate(comp_questions, start=1):
                 limited_opts = _limit_options(opts, required=ans, max_items=max_items)
-                item_id += 1
                 items.append(
                     ActivityItem(
-                        item_id=item_id,
+                        item_id=question_number,
                         content=q,
                         response_format="circle",
                         options=limited_opts,
@@ -1664,8 +1771,8 @@ def _build_story_chunks(
                         chunk_id=len(chunks) + 1,
                         micro_goal="Check your understanding",
                         instructions=[
-                            Step(number=1, text="Think about the story."),
-                            Step(number=2, text="Circle the best answer."),
+                            Step(number=1, text="Think about what you read in the story."),
+                            Step(number=2, text="Circle one answer for each question."),
                         ],
                         worked_example=None,
                         items=batch,
@@ -1846,10 +1953,10 @@ def _generate_comprehension_questions(
     Returns list of (question, options, answer).
     """
     questions: list[tuple[str, list[str], str]] = []
-    full_text = " ".join(passages).lower()
+    full_text = " ".join(passages)
 
     # Question 1: What word appears in the story?
-    found_words = [w for w in target_words if w.lower() in full_text]
+    found_words = [w for w in target_words if _text_contains_word(full_text, w)]
     if found_words:
         correct = found_words[0]
         distractors = _generate_distractors(found_words, 2)
@@ -1862,25 +1969,17 @@ def _generate_comprehension_questions(
             )
         )
 
-    # Question 2: Simple yes/no about a word presence
-    if len(target_words) >= 2:
-        not_found = [w for w in target_words if w.lower() not in full_text]
-        if not_found:
-            questions.append(
-                (
-                    f'Is the word "{not_found[0]}" in the story?',
-                    ["Yes", "No"],
-                    "No",
-                )
+    # Question 2: reinforce another word that is actually visible. Asking about
+    # an absent target would introduce disconnected practice after the excerpt
+    # was deliberately selected around its objective-bearing words.
+    if len(found_words) >= 2:
+        questions.append(
+            (
+                f'Is the word "{found_words[1]}" in the story?',
+                ["Yes", "No"],
+                "Yes",
             )
-        elif found_words and len(found_words) >= 2:
-            questions.append(
-                (
-                    f'Is the word "{found_words[1]}" in the story?',
-                    ["Yes", "No"],
-                    "Yes",
-                )
-            )
+        )
 
     return questions[:3]  # Max 3 questions
 
@@ -1987,7 +2086,9 @@ def _build_chunks(
             ActivityChunk(
                 chunk_id=1,
                 micro_goal=f"Practice {skill.domain} skills",
-                instructions=[Step(number=1, text="Try your best!")],
+                instructions=[
+                    Step(number=1, text="Ask a grown-up to read the learning goal aloud.")
+                ],
                 worked_example=None,
                 items=[],
                 response_format="write",
@@ -2260,88 +2361,11 @@ def _normalize_word(word: str) -> str:
 
 def _text_contains_word(text: str, word: str) -> bool:
     """Check whole-word presence inside retrieved curriculum text."""
-    return bool(re.search(rf"(?<![a-z]){re.escape(word)}(?![a-z])", text))
-
-
-def _parse_chain_steps(chains: list[str]) -> list[dict[str, str]]:
-    """Parse word chains into individual letter-change steps.
-
-    Given ["cry -> try -> dry -> pry", "fry -> fly -> sly -> sky"],
-    returns a list of dicts like:
-      [{"from_word": "cry", "to_word": "try", "old_letter": "c", "new_letter": "t"}, ...]
-    """
-    steps: list[dict[str, str]] = []
-    for chain in chains:
-        words = [w.strip() for w in re.split(r"\s*(?:->|→)\s*", chain) if w.strip()]
-        for i in range(len(words) - 1):
-            from_w = words[i].lower()
-            to_w = words[i + 1].lower()
-            old_letter, new_letter = _find_letter_change(from_w, to_w)
-            if old_letter and new_letter:
-                steps.append(
-                    {
-                        "from_word": from_w,
-                        "to_word": to_w,
-                        "old_letter": old_letter,
-                        "new_letter": new_letter,
-                    }
-                )
-    return steps
-
-
-def _parse_suffix_chain_steps(chains: list[str], suffixes: list[str]) -> list[dict[str, str]]:
-    """Parse suffix chains ('slow → slower → slowest') into add-the-ending
-    hops measured from the chain BASE word: (slow, slower, er), (slow, slowest, est)."""
-    steps: list[dict[str, str]] = []
-    for chain in chains:
-        words = [w.strip().lower() for w in re.split(r"\s*(?:->|→)\s*", chain) if w.strip()]
-        if len(words) < 2:
-            continue
-        base = words[0]
-        for derived in words[1:]:
-            suffix = next(
-                (s for s in suffixes if derived.endswith(s) and len(derived) > len(s) + 1),
-                None,
-            )
-            if suffix is None:
-                continue
-            steps.append({"from_word": base, "to_word": derived, "suffix": suffix})
-    return steps
-
-
-def _suffix_step_item(item_id: int, step: dict[str, str]) -> ActivityItem:
-    """One add-the-ending chain-step item, stamped for coverage evidence.
-
-    Shared by the deterministic engine (`_build_builder_chunks`) and the
-    LLM-plan translation path (`adapt/llm_adapt.py::_build_items_from_activity`)
-    so both authoring paths render the identical student-facing form.
-    """
-    return ActivityItem(
-        item_id=item_id,
-        content=f"{step['from_word']} + -{step['suffix']} → ______",
-        response_format="write",
-        metadata={"display": "chain_step"},
-        answer=step["to_word"],
-    )
-
-
-def _letter_step_item(item_id: int, step: dict[str, str]) -> ActivityItem:
-    """One letter-substitution chain-step item, stamped for coverage evidence.
-
-    Shared by the deterministic engine and the LLM-plan translation path —
-    see `_suffix_step_item`.
-    """
-    return ActivityItem(
-        item_id=item_id,
-        content=(
-            f'Start with "{step["from_word"]}". '
-            f'Change the "{step["old_letter"]}" '
-            f'to "{step["new_letter"]}". '
-            f"Write the new word."
-        ),
-        response_format="write",
-        metadata={"display": "chain_step"},
-        answer=step["to_word"],
+    return bool(
+        re.search(
+            rf"(?<![a-z]){re.escape(_normalize_word(word))}(?![a-z])",
+            text.casefold(),
+        )
     )
 
 
@@ -2356,7 +2380,7 @@ def _shuffled_mismatch(words: list[str]) -> list[str]:
     if len(words) <= 1:
         return list(words)
 
-    seed = hash(tuple(words)) & 0xFFFFFFFF
+    seed = int.from_bytes(hashlib.sha256("\x1f".join(words).encode()).digest()[:4], "big")
     rng = random.Random(seed)
     shuffled = list(words)
     # Fisher-Yates derangement: keep shuffling until no element is in place
@@ -2366,21 +2390,6 @@ def _shuffled_mismatch(words: list[str]) -> list[str]:
             return shuffled
     # Fallback: rotate by 1 (always a derangement for len >= 2)
     return words[1:] + words[:1]
-
-
-def _find_letter_change(word_a: str, word_b: str) -> tuple[str, str]:
-    """Find the single letter that changed between two words.
-
-    Returns (old_letter, new_letter) or ("", "") if no single change found.
-    """
-    if len(word_a) != len(word_b):
-        # Length change — find the differing position(s)
-        # For simple add/remove, describe broadly
-        return "", ""
-    diffs = [(a, b) for a, b in zip(word_a, word_b) if a != b]
-    if len(diffs) == 1:
-        return diffs[0][0], diffs[0][1]
-    return "", ""
 
 
 def _split_word_chains(text: str) -> list[str]:
@@ -2430,18 +2439,19 @@ def _generate_instructions(
 
     if skill.domain == "phonics":
         if chunk_id == 1:
-            steps.append(Step(number=1, text="Look at each word carefully."))
-            steps.append(Step(number=2, text=f"Read each word out loud. ({item_count} words)"))
+            steps.append(Step(number=1, text="Look at every printed word."))
+            steps.append(Step(number=2, text=f"Read all {item_count} words aloud."))
         else:
-            steps.append(Step(number=1, text=f"Read these {item_count} words out loud."))
-            steps.append(Step(number=2, text="Write each word on the line."))
+            steps.append(Step(number=1, text=f"Read all {item_count} printed words aloud."))
+            steps.append(Step(number=2, text="Write each word on its line."))
 
     elif skill.domain == "fluency":
-        steps.append(Step(number=1, text="Read the passage out loud."))
-        steps.append(Step(number=2, text="Point to each word as you read."))
+        steps.append(Step(number=1, text="Read the entire passage aloud."))
+        steps.append(Step(number=2, text="Point to each word while you read it."))
 
     else:
-        steps.append(Step(number=1, text=f"Complete the {item_count} items below."))
+        steps.append(Step(number=1, text=f"Read all {item_count} printed prompts."))
+        steps.append(Step(number=2, text="Complete the printed action for each prompt."))
 
     # Trim to max steps
     steps = steps[: rules.instruction_max_steps]
@@ -2472,12 +2482,12 @@ def _generate_worked_example(
 
     if skill.domain == "phonics":
         return Example(
-            instruction="Watch how I do the first one:",
+            instruction="Read the completed word example:",
             content=f'"{first_item.content}" — I can read this word!',
         )
     elif skill.domain == "fluency":
         return Example(
-            instruction="Listen first, then you try:",
+            instruction="Listen to the completed reading example:",
             content=(
                 f'I read: "{first_item.content[:50]}..."'
                 if len(first_item.content) > 50
@@ -2486,7 +2496,7 @@ def _generate_worked_example(
         )
     else:
         return Example(
-            instruction="Here is an example:",
+            instruction="Read the completed example:",
             content=f'"{first_item.content}"',
         )
 

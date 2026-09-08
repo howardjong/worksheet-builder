@@ -443,16 +443,16 @@ def test_objective_block_nonempty_with_header_when_flag_on(
 
 # D12: the LLM planner authored 0/4 word-chain activities across lessons
 # 74+100 even with retry feedback — the authoring block STATES the
-# build/change-chain requirement but never SHOWS one, so the model can't
-# ground what "in its form" means. Fix: embed a concrete example + a
-# one-line session-minutes budget reminder.
-def test_authoring_block_contains_concrete_chain_example_and_budget_line(
+# build/change-chain requirement must ground the model in the actual source
+# chain and the deterministic verification boundary.
+def test_authoring_block_contains_source_chain_contract_and_budget_line(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("WORKSHEET_OBJECTIVE_COVERAGE", "1")
     block = _objective_authoring_block(_skill())
-    assert '"words": ["quick → quickly"' in block
-    assert "MUST include" in block
+    assert "source arrow strings verbatim" in block
+    assert "deterministic analyzer" in block
+    assert "include one build/change activity" in block
     assert "minutes" in block.lower()
 
 
@@ -494,7 +494,7 @@ def test_prompt_authors_chain_in_required_form_when_flag_on(
     assert "must not pad" in lowered
 
 
-def test_prompt_rule5_and_chain_example_use_words_format(
+def test_prompt_rule5_uses_source_words_format(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """D48: after Task 1, authored word_chain items are discarded — the prompt
@@ -504,23 +504,20 @@ def test_prompt_rule5_and_chain_example_use_words_format(
 
     # Rule 5 covers word_chain alongside match/sound_box.
     assert '"match", "sound_box", and "word_chain"' in prompt
-    # The chain example shows the words-format for suffix AND letter lessons.
-    assert '"words": ["quick → quickly", "light → lightly"]' in prompt
-    assert '"words": ["cry → try → dry"]' in prompt
-    # And explicitly warns authored word_chain items are ignored.
-    assert "do NOT author word_chain" in prompt
+    assert "copy the source arrow strings exactly" in prompt.lower()
+    assert "resolved objective contract determines anchoring" in prompt.lower()
 
 
 def test_coverage_feedback_names_word_chain_words_format() -> None:
     """D48: the ONE coverage retry must tell the model the structural fix,
     not just restate the miss."""
     coverage = _manip_failing_coverage()
-    block = _coverage_feedback_block(coverage)
+    block = _coverage_feedback_block(coverage, _skill())
 
     assert "obj_manipulation" in block
     assert '"words"' in block
-    assert "quick → quickly" in block
-    assert "cry → try → dry" in block
+    assert "Copy the source chain" in block
+    assert "required operation" in block
 
 
 # --- T9: objective-sufficiency coverage path in plan_lesson_llm (flagged) ------

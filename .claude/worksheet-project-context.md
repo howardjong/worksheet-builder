@@ -8,6 +8,80 @@
 
 ## Current State
 
+### Session 65 — 2026-09-08 (promotion branch published; safe branch cleanup)
+
+**Status:** The verified production promotion branch
+`codex/objective-transformation-promotion` is now published at `a8d5920` and
+tracks `origin/codex/objective-transformation-promotion`. The fully merged,
+worktree-free `claude/review-recent-refactoring-rma786` branch was deleted
+locally and remotely after ancestry verification.
+
+**Still intentionally separate:** PR #1 remains the open draft on
+`refound/skill-contracts-composed-render`; it has not been closed or changed.
+The untracked owner plan
+`docs/superpowers/plans/2026-07-17-skill-contracts-composed-render.md` is an
+unfinished 73-step plan covering both skill-contract work and the experimental
+`hybrid_shell` renderer; it remains untouched and unstaged. The local
+`codex/objective-transformation-fixes` branch retains that experiment and has
+not been pushed or deleted.
+
+**Next:** Replacement PR #2 is open for review at
+`https://github.com/howardjong/worksheet-builder/pull/2`. Review and accept it
+before closing PR #1 and deleting its unmerged `refound` branch. Keep the
+experiment branch and untracked plan until the owner decides whether the
+composed-renderer work deserves a separate product/visual acceptance pass.
+
+### Session 64 — 2026-09-07 (system-wide instruction clarity + no token-sized art)
+
+**Status:** Follow-up fixes are complete on
+`codex/objective-transformation-promotion` in the commit containing this entry;
+nothing was pushed. The owner-owned
+untracked plan at
+`docs/superpowers/plans/2026-07-17-skill-contracts-composed-render.md` remains
+untouched and must not be staged.
+
+**What changed:**
+- Added `adapt/instruction_clarity.py`, a source-neutral stage-boundary contract
+  that detects ambiguous directions and deterministically replaces them with
+  response-format-specific actions. It requires an observable action and
+  object, preserves explicit list repetition counts, covers worked examples and
+  break prompts, and is applied to deterministic, planner, and direct-compiler
+  outputs. The PDF renderer independently fails before opening an output file if
+  ambiguous instructions bypass adaptation.
+- Rewrote deterministic directions across reading, writing, spelling
+  transformations, matching, tracing, sound boxes, fill blanks, story reading,
+  comprehension, coverage repair, and brain breaks. In particular, "Try the
+  list three times" is now "Read the entire list aloud three times." Provider
+  prompts carry the same action/object/count contract.
+- Clarified the caregiver surface: the heading now says "Grown-up quick log —
+  circle one choice in each pair," and the next-step hint names the exact action
+  for steady versus still-building progress.
+- Removed the classic PDF renderer's hard-coded 35-40pt corner decorations.
+  Large task-supporting scenes and verified word pictures remain; pages without
+  such assets render with no raster images. Image-model prompts now request at
+  most a few intentional, legible, composition-level theme elements and say to
+  omit them rather than create token-sized stickers.
+- Hardened the generic transformation instruction fallback so arbitrary verified
+  typed operation sequences are described from their actual operations instead
+  of saying "make the verified change."
+
+**Validation:**
+- `make lint` — pass.
+- `make typecheck` — pass, 199 source files.
+- `make test` — 958 passed, 7 warnings.
+- `make test-golden` — 1 passed.
+- Focused clarity/render/transformation suites — pass.
+- Full local corpus audit: 120 lessons, 337 worksheets, 2,467 numbered steps,
+  242 worked-example directions, and 217 break directions; zero clarity-contract
+  violations.
+- Fresh deterministic Lesson 109 render: two worksheet files / three total
+  letter pages, zero raster images, Story Time remains one page, and visual
+  inspection found the revised child and grown-up directions legible and
+  unambiguous.
+
+**Next:** Do not push or alter PR #1 without a separate owner request. Keep the
+`hybrid_shell`/refound experiment outside the production promotion branch.
+
 ### Session 62 — 2026-07-16 (lesson-101 UAT: 2 new defects found + fixed — D48 chain-evidence stamp gap, D49 shape-aware judge facts; first complexity-matched model-selection cycle)
 
 **Participants:** Claude controller (Sonnet 5/Fable 5 across the session) + Sonnet 5 implementers/reviewers (Tasks 1-2) + Opus 4.8 implementer/reviewer (Task 3) + Opus 4.8 (Task 4, live-run adjudication) + Fable 5 final review (owner-directed per-task model split, first cycle to vary model by task complexity rather than uniform Sonnet 5), owner (D49 scope decision, L100 regression adjudication call, simplify/merge direction).
@@ -3349,3 +3423,64 @@ Then evaluate honestly and record both scorecards. Do NOT touch parent-plan Task
 - Gotcha: none new — G17 (full typecheck)/G19 (no Agent-tool nesting in dispatched subagents) discipline held across all dispatches.
 
 **What's next:** merge to `main`. Queue: passage-split (task_202def01, sole remaining judge blocker); extend suffix-aware wording to multi-hop suffix lessons (new chip); Q5 (2-of-3 judge sampling + render-layer visibility); `--record-results` ingestion; gpt model swap still paused.
+
+### Session 63 — 2026-09-07 (PR #1 repair generalized to learning-objective contracts)
+
+**Status:** Production repair is complete on local branch
+`codex/objective-transformation-promotion` at `c358a46`, based on current
+`origin/main` (`fdb1995`). Nothing was pushed and PR #1 was not modified. The
+original PR branch must **not** be merged wholesale: it still mixes production
+repairs with the earlier `hybrid_shell`/refound experiment and planning history.
+
+**What changed:**
+- Added a source-neutral `TransformationContract` registry and typed,
+  replayable transformation IR covering substitution, insertion, deletion,
+  prefix/suffix addition, final-e deletion, final-consonant doubling, and
+  final-y-to-i. Unknown or inconsistent changes fail closed.
+- Wired the contract through generic extraction, known-template extraction,
+  lesson loading, deterministic adaptation, LLM adaptation/planning, objective
+  coverage, and blocking gates. An unknown-layout worksheet with an explicit
+  objective and word chain now follows the same path as corpus content.
+- Replaced unsafe suffix reconstruction (`greedi + -ness`) with verified base
+  inference (`greedy`, then y-to-i, then `-ness`). Audited lessons 99-110 and
+  119-128: every classified transformation replays, including Lesson 109.
+- Made story excerpt selection target-objective-aware for every source type,
+  fixed whole-word matching, removed absent-word comprehension questions, and
+  restarted visible question numbering at 1.
+- Made picture matching capability-gated. Without guaranteed assets, adaptation
+  emits written production instead of answer-labelled placeholders or
+  unvalidated distractors; the PDF renderer fails before creating an output if
+  an explicit match item lacks a verified asset.
+- Added pre-render input checks, visible-font embedding validation, embedded
+  theme fonts, compact non-punitive objective-oriented caregiver feedback, and
+  tail layout that avoids orphan log pages/decorative overlap.
+- `make test-golden` now runs a real non-corpus Drop-E semantic/render golden.
+
+**Validation on the clean promotion branch:**
+- `make lint` — pass.
+- `make typecheck` — pass, 197 source files.
+- `make test` — 952 passed, 7 pre-existing warnings.
+- `make test-golden` — 1 passed.
+- Focused Lesson 109/adaptation/objective/render/validation/provider tests —
+  449 passed.
+- Fresh deterministic Lesson 109 classic render — 3 letter-size pages; visual
+  review found no clipping, overlap, orphan page, answer leakage, or numbering
+  defect; print validator passed all 7 checks.
+
+**Split boundary:** The clean promotion branch contains only the five shared
+skill-contract prerequisites, the original Drop-E repair, and the generalized
+objective repair. It intentionally excludes `render/composed.py`, refound A/B
+scripts/reports, curated `hybrid_shell` assets, exit-review docs, and the
+systemic implementation-plan commits. Separate hardening for those experiments
+is retained on `codex/objective-transformation-fixes` at `9262ad3` and should
+remain deferred pending an owner decision and its own PR.
+
+**Gotchas:** Running the top-level lesson CLI with asset/LLM planning disabled
+still invoked the configured objective judge and AI reviewer; use the direct
+deterministic stage path for offline visual acceptance. The untracked owner file
+`docs/superpowers/plans/2026-07-17-skill-contracts-composed-render.md` was
+preserved and not staged.
+
+**Next:** Owner may push `codex/objective-transformation-promotion` and replace
+or supersede PR #1 with that clean diff. Keep the experiment branch out of the
+production merge unless it receives a separate product/visual acceptance pass.

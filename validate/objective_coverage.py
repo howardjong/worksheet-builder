@@ -338,12 +338,9 @@ def _evidence_for_chunk(
     return out
 
 
-# Metadata stamp set ONLY by our own deterministic chain derivation
-# (adapt/engine.py::_build_builder_chunks and adapt/llm_adapt.py::
-# _build_items_from_activity, both via _parse_chain_steps). A model cannot
-# assert this stamp — it can only supply words the parser verifies into
-# single-letter-change steps — so it is a sound evidence discriminator for
-# "deterministically verified chain step" (P3a scope extension).
+# Metadata stamp set only by the deterministic transformation compiler. A
+# model-authored item does not become manipulation evidence unless its attached
+# typed operation replays to the expected word.
 _CHAIN_DISPLAYS = frozenset({"chain_step", "chain"})
 
 
@@ -436,6 +433,12 @@ def _chain_step_pair(item: ActivityItem) -> tuple[str, str] | None:
     Either way, the target word is what the child writes — carried in
     ``answer``.
     """
+    if item.transformation is not None:
+        from skill.transformation import verify_step
+
+        if not verify_step(item.transformation):
+            return None
+        return item.transformation.from_word, item.transformation.to_word
     if not item.answer:
         return None
     m = _QUOTED_WORD_RE.search(item.content)
@@ -644,7 +647,32 @@ def _evidence_for_item(
         # it is realized as the correct-option practice above, so no extra key item.
         return out
 
-    # 3. Non-selection items: any answer field is a KEY (never practice).
+    # 3. Deterministically stamped chain steps are a narrow exception: their
+    # answer is the word the child must construct and WRITE, not a passive key
+    # surface. Credit that expected production to encoding while keeping it
+    # hidden from the worksheet's visible text. Arbitrary non-selection
+    # answers remain key-only below.
+    if (
+        item.metadata.get("display") == "chain_step"
+        and is_production
+        and item.answer
+        and item.answer.strip()
+    ):
+        answer_words = _words(item.answer)
+        out.append(
+            EvidenceItem(
+                visible_text=item.answer,
+                practice_role=PRACTICE_STUDENT,
+                answer_key_text=None,
+                response_format=fmt,
+                is_student_production=True,
+                objective_ids=_match_cells(answer_words, fmt, ledger, index, practice=True),
+                evidence_item_id=f"{base_id}_expected_production",
+            )
+        )
+        return out
+
+    # 4. Other non-selection items: any answer field is a KEY (never practice).
     if item.answer and item.answer.strip():
         out.append(
             EvidenceItem(
@@ -822,7 +850,7 @@ def _evaluate_cell(
     if cell.objective_type == "phoneme_grapheme_manipulation":
         return _evaluate_manipulation_cell(cell, evidence, ledger)
     if cell.objective_type == "connected_text_fluency":
-        return _evaluate_connected_cell(cell, evidence)
+        return _evaluate_connected_cell(cell, evidence, index)
     if cell.objective_type == "irregular_word_reading":
         return _evaluate_irregular_cell(cell, evidence, index)
     # contrast / sentence_reading_or_writing / fallback: count practiced words.
@@ -1103,18 +1131,27 @@ def _chain_covers(authored: list[str], ledger_chain: list[str]) -> bool:
 def _evaluate_connected_cell(
     cell: ObjectiveCell,
     evidence: list[EvidenceItem],
+    index: _LedgerIndex,
 ) -> ObjectiveCellResult:
     """Connected-text: satisfied by an actual passage / connected text (a multi-
     sentence surface), NOT a title or a lone word/label."""
     has_connected = False
+    required_targets = {_normalize(word) for word in cell.target_words if _normalize(word)}
+    connected_without_target = False
     for ev in evidence:
         if ev.practice_role != PRACTICE_STUDENT:
             continue
         if cell.objective_id not in ev.objective_ids:
             continue
         if _is_connected_text(ev.visible_text):
-            has_connected = True
-            break
+            visible_words = set(_words(ev.visible_text))
+            has_target_role = any(
+                index.resolve(word)[0] == "target_pattern" for word in visible_words
+            )
+            if not required_targets or visible_words & required_targets or has_target_role:
+                has_connected = True
+                break
+            connected_without_target = True
 
     notes: list[str] = []
     missing_forms: list[str] = []
@@ -1124,7 +1161,10 @@ def _evaluate_connected_cell(
         missing_forms.append("decodable_passage")
         if cell.importance == "essential":
             status = "fail"
-            notes.append("no connected decodable text (passage / 2+ sentences) present")
+            if connected_without_target:
+                notes.append("connected text is present but contains no target-objective word")
+            else:
+                notes.append("no connected decodable text (passage / 2+ sentences) present")
         else:
             status = "needs_verification"
 

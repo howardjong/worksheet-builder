@@ -31,7 +31,7 @@ def validate_print_quality(pdf_path: str) -> ValidationResult:
     1. PDF is readable
     2. Page dimensions are letter size
     3. Has at least one page
-    4. Fonts are embedded (or standard PDF fonts)
+    4. Every font used for visible text is embedded
     5. No empty pages
     """
     result = ValidationResult(validator="print_quality", passed=True, checks_run=0)
@@ -106,7 +106,19 @@ def validate_print_quality(pdf_path: str) -> ValidationResult:
             message="PDF contains no extractable text — text may be rasterized",
         )
 
-    # Check 6: Text-image overlap detection
+    # Check 6: Every font used for visible text is embedded. Ignore unused
+    # base-font resources and the renderer's invisible searchable text layer.
+    result.checks_run += 1
+    for i in range(doc.page_count):
+        page = doc[i]
+        unembedded = _unembedded_visible_fonts(page)
+        for font_name in unembedded:
+            result.add_violation(
+                check="font_embedding",
+                message=f"Page {i + 1}: visible font {font_name!r} is not embedded",
+            )
+
+    # Check 7: Text-image overlap detection
     result.checks_run += 1
     for i in range(doc.page_count):
         page = doc[i]
@@ -122,6 +134,29 @@ def validate_print_quality(pdf_path: str) -> ValidationResult:
 
     doc.close()
     return result
+
+
+def _unembedded_visible_fonts(page: fitz.Page) -> list[str]:
+    """Return visible-text font names whose PDF resources are not embedded."""
+    used: set[str] = set()
+    text_dict = page.get_text("dict")
+    for block in text_dict.get("blocks", []):
+        if block.get("type") != 0:
+            continue
+        for line in block.get("lines", []):
+            for span in line.get("spans", []):
+                if span.get("size", 0) < INVISIBLE_TEXT_MAX_FONT_SIZE:
+                    continue
+                if str(span.get("text", "")).strip() and span.get("font"):
+                    used.add(str(span["font"]))
+
+    resources: dict[str, str] = {}
+    for font in page.get_fonts(full=True):
+        extension = str(font[1]).casefold()
+        base_name = str(font[3]).split("+", 1)[-1]
+        resources[base_name] = extension
+
+    return sorted(font_name for font_name in used if resources.get(font_name, "n/a") in {"", "n/a"})
 
 
 def _check_text_image_overlap(page: fitz.Page) -> list[tuple[float, float]]:

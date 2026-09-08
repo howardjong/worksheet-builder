@@ -22,7 +22,8 @@ import re
 from pydantic import BaseModel, Field
 
 from adapt.feedback import build_feedback_panel
-from adapt.rules import AccommodationRules, build_rules, llm_adapt_enabled
+from adapt.instruction_clarity import ensure_clear_instructions
+from adapt.rules import BRAIN_BREAK_PROMPTS, AccommodationRules, build_rules, llm_adapt_enabled
 from adapt.schema import (
     ActivityChunk,
     ActivityItem,
@@ -140,6 +141,10 @@ Response format preferences: {profile.accommodations.response_format_prefs}
 - Allowed response formats: {rules.allowed_response_formats}
 - First activity MUST have a worked example
 - Use brain breaks between worksheets
+- Write instructions that a child and grown-up can follow without guessing.
+  Every step must name the observable action, its exact object, and any count
+  or repetition. For example, write "Read the entire list aloud three times,"
+  never "Try the list three times" or "Read those again."
 
 ## Your Task
 
@@ -286,7 +291,10 @@ def _translate_plan(
                 for i, text in enumerate(activity.instructions[: rules.instruction_max_steps])
             ]
             if not instructions:
-                instructions = [Step(number=1, text="Complete the activity below.")]
+                instructions = [
+                    Step(number=1, text="Read each printed prompt."),
+                    Step(number=2, text="Complete the printed action for each prompt."),
+                ]
 
             # Build worked example (only the first chunk shows one, and only if
             # it actually models a correct answer — see _is_clean_worked_example).
@@ -297,7 +305,7 @@ def _translate_plan(
                 and _is_clean_worked_example(activity.worked_example)
             ):
                 worked_example = Example(
-                    instruction="Watch how I do the first one:",
+                    instruction="Read the completed example before you begin:",
                     content=activity.worked_example,
                 )
 
@@ -352,21 +360,14 @@ def _translate_plan(
                 worksheet_count=len(plan.worksheets),
                 worksheet_title=ws_plan.title,
                 break_prompt=(
-                    _BRAIN_BREAKS[ws_idx % len(_BRAIN_BREAKS)]
+                    BRAIN_BREAK_PROMPTS[ws_idx % len(BRAIN_BREAK_PROMPTS)]
                     if ws_idx < len(plan.worksheets) - 1
                     else None
                 ),
             )
         )
 
-    return worksheets
-
-
-_BRAIN_BREAKS = [
-    "Stand up and stretch!",
-    "Do 5 jumping jacks!",
-    "Get a drink of water!",
-]
+    return ensure_clear_instructions(worksheets)
 
 
 # Formats whose renderer/evidence contracts (shuffled picture options, phoneme
@@ -447,30 +448,33 @@ def _build_items_from_activity(
     max_items = rules.max_items_per_chunk
 
     if activity.activity_type == "word_chain":
-        # Parse chains into build/change steps. Suffix lessons take the
-        # add-the-ending parser (D1 parity with adapt/engine.py:1061-1068 —
-        # letter-substitution parsing yields 0 steps for length-changing
-        # pairs like "quick → quickly"). Item construction is shared with
-        # the deterministic engine's own chain builder so both authoring
-        # paths render the identical student-facing form.
-        from adapt.engine import (
-            _letter_step_item,
-            _parse_chain_steps,
-            _parse_suffix_chain_steps,
-            _suffix_step_item,
-        )
-        from skill.taxonomy import is_suffix_skill, suffixes_for_skill
+        # Model-authored prose is never trusted as the operation. Analyze the
+        # supplied word pairs with the same objective contract used by the
+        # deterministic path, then compile only replay-verified steps.
+        from adapt.transformation_compiler import activity_item_for
+        from skill.contract import contract_for_skill_id
+        from skill.transformation import analyze_chain, verify_step
 
-        if is_suffix_skill(skill.specific_skill):
-            for suffix_step in _parse_suffix_chain_steps(
-                activity.words, suffixes_for_skill(skill.specific_skill)
-            )[:max_items]:
-                item_id += 1
-                items.append(_suffix_step_item(item_id, suffix_step))
-        else:
-            for step in _parse_chain_steps(activity.words)[:max_items]:
-                item_id += 1
-                items.append(_letter_step_item(item_id, step))
+        contract = contract_for_skill_id(skill.specific_skill)
+        if contract is None:
+            contract = contract_for_skill_id("letter_chain")
+        assert contract is not None
+        steps = [
+            step
+            for chain in activity.words
+            for step in analyze_chain(chain, contract)
+            if verify_step(step)
+        ]
+        seen: set[tuple[str, str, str]] = set()
+        for step in steps:
+            key = (step.rule_id, step.from_word, step.to_word)
+            if key in seen:
+                continue
+            seen.add(key)
+            item_id += 1
+            items.append(activity_item_for(step, item_id))
+            if len(items) >= max_items:
+                break
 
     elif activity.activity_type == "match":
         from adapt.engine import _shuffled_mismatch, _word_to_picture_prompt

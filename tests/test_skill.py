@@ -421,6 +421,39 @@ class TestExtractGeneric:
         )
         assert model.grade_level in ("K", "1", "2", "3")
 
+    def test_unknown_template_preserves_explicit_transformation_objective(self) -> None:
+        source = SourceWorksheetModel(
+            source_image_hash="generic-drop-e",
+            pipeline_version=PIPELINE_VERSION,
+            template_type="unknown",
+            regions=[
+                SourceRegion(
+                    type="concept_label",
+                    content="Drop E Rule",
+                    bbox=(0, 0, 100, 20),
+                    confidence=0.96,
+                    metadata={},
+                ),
+                SourceRegion(
+                    type="word_chain",
+                    content="smile -> smiled -> smiling",
+                    bbox=(0, 30, 200, 60),
+                    confidence=0.94,
+                    metadata={},
+                ),
+            ],
+            raw_text="Drop E Rule\nsmile -> smiled -> smiling",
+            ocr_engine="tesseract",
+            low_confidence_flags=[],
+        )
+
+        model = extract_skill(source)
+
+        assert model.specific_skill == "drop_e_rule"
+        chain = next(item for item in model.source_items if item.item_type == "word_chain")
+        assert [step.to_word for step in chain.transformations] == ["smiled", "smiling"]
+        assert all(step.verification_status == "verified" for step in chain.transformations)
+
 
 # --- Schema Validation Tests ---
 

@@ -51,11 +51,11 @@ FORMAT_RENDERING: dict[str, dict[str, str]] = {
 
 # Brain break prompts (one per worksheet transition)
 BRAIN_BREAK_PROMPTS: list[str] = [
-    "Stand up and stretch!",
-    "Do 5 jumping jacks!",
-    "Get a drink of water!",
-    "Touch your toes 3 times!",
-    "Take 3 deep breaths!",
+    "Stand up and stretch both arms overhead.",
+    "Do five jumping jacks, and then sit down.",
+    "Get a drink of water, and then return to your seat.",
+    "Touch your toes three times, and then sit down.",
+    "Take three slow breaths, and then begin the next page.",
 ]
 
 # Instruction constraints by grade

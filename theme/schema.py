@@ -8,8 +8,8 @@ from pydantic import BaseModel, Field
 class ThemeFonts(BaseModel):
     """Font configuration for a theme."""
 
-    primary: str = "Helvetica"
-    heading: str = "Helvetica-Bold"
+    primary: str = "Lexend"
+    heading: str = "Fredoka"
 
 
 class ThemeColors(BaseModel):

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pydantic import BaseModel, Field
 
+from skill.transformation import TransformationStep
+
 
 class Step(BaseModel):
     """A single instruction step."""
@@ -29,6 +31,7 @@ class ActivityItem(BaseModel):
     options: list[str] | None = None  # choices for circle/match/fill_blank activities
     answer: str | None = None  # correct answer for fill_blank/circle
     picture_prompt: str | None = None  # description for AI to generate a matching illustration
+    transformation: TransformationStep | None = None
 
 
 class ActivityChunk(BaseModel):
@@ -52,6 +55,12 @@ class ScaffoldConfig(BaseModel):
     hint_level: str = "full"  # "full" | "partial" | "none"
 
 
+class AdaptationCapabilities(BaseModel):
+    """Capabilities guaranteed after adaptation, independent of provider intent."""
+
+    picture_assets_guaranteed: bool = False
+
+
 class FeedbackPanel(BaseModel):
     """Print-only feedback capture (spec 2026-07-10; quick-log-only per D3, 2026-07-13).
 
@@ -62,7 +71,7 @@ class FeedbackPanel(BaseModel):
     """
 
     goal_statement: str  # child-friendly "I can..." goal; also the page banner ribbon
-    parent_log_title: str = "Grown-up quick log"
+    parent_log_title: str = "Grown-up quick log — circle one choice in each pair"
     show_decision_hint: bool = False
 
 

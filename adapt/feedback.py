@@ -3,14 +3,21 @@
 from __future__ import annotations
 
 from adapt.schema import FeedbackPanel
+from skill.contract import contract_for_skill, contract_for_skill_id
 
-# Next-step hint for the grown-up, printed on the package's last sheet.
-# Thresholds: Betts reading levels + UFLI-aligned practice (spec 2026-07-10).
+# Calm, learning-objective-oriented next-step hint for the grown-up. It avoids
+# score thresholds, color judgments, and curriculum navigation assumptions.
+PARENT_LOG_INSTRUCTION = "Circle one progress choice and one help choice for each part."
+
 DECISION_HINT = (
-    "Mostly green + 9 of 10 right + no help: move on. "
-    "Mixed or some help: practice again with fresh words. "
-    "Mostly red or lots of help: step back one lesson."
+    "If progress is steady with little help, choose a new objective next time. "
+    "If progress is still building, practice this objective again with new words."
 )
+
+
+def feedback_log_row(part_number: int) -> str:
+    """Return one non-punitive observation row for print and image renderers."""
+    return f"Part {part_number}: steady / still building   help: none / some / lots"
 
 
 def _display_skill(specific_skill: str) -> str:
@@ -25,10 +32,15 @@ def _display_skill(specific_skill: str) -> str:
 
 def learning_goal_statement(domain: str, specific_skill: str) -> str:
     """Child-friendly 'I can...' goal shown in page banners and feedback strips."""
+    transformation_contract = contract_for_skill_id(specific_skill)
+    if transformation_contract is not None:
+        return transformation_contract.goal_statement
     if specific_skill.startswith("suffix_"):
+        contract = contract_for_skill(specific_skill)
+        if contract is not None:
+            return contract.goal_statement
+        # Unregistered combined slug: keep the generic joiner as a fallback.
         endings = specific_skill.removeprefix("suffix_").split("_")
-        if endings == ["er", "est"]:
-            return "I can add -er and -est to compare things"
         joined = " and ".join(f"-{e}" for e in endings)
         return f"I can add {joined} to words"
     if domain == "phonics":

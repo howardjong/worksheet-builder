@@ -17,7 +17,7 @@ from adapt.schema import (
 from companion.schema import Accommodations, LearnerProfile, Preferences
 from skill.schema import LiteracySkillModel, SourceItem
 from validate.adhd_compliance import validate_adhd_compliance
-from validate.ai_review import _apply_suggestions, review_adapted_worksheet
+from validate.ai_review import _apply_suggestions, _build_review_prompt, review_adapted_worksheet
 from validate.schema import ValidationResult
 from validate.skill_parity import validate_age_band, validate_skill_parity
 
@@ -338,6 +338,30 @@ class TestAdhdCompliance:
 
 
 class TestAiReview:
+    def test_review_prompt_includes_choice_options_and_answer(self) -> None:
+        adapted = _make_adapted(response_format="circle")
+        adapted.chunks[0].items[0] = (
+            adapted.chunks[0]
+            .items[0]
+            .model_copy(update={"options": ["baked", "cat"], "answer": "baked"})
+        )
+
+        prompt = _build_review_prompt(adapted)
+
+        assert "options=['baked', 'cat']" in prompt
+        assert "answer='baked'" in prompt
+
+    def test_remove_item_refuses_to_leave_empty_chunk(self) -> None:
+        adapted = _make_adapted(items_per_chunk=1)
+        original = adapted.chunks[0].items[0]
+
+        fixed = _apply_suggestions(
+            adapted,
+            [{"chunk_id": "1", "item_id": "1", "action": "remove_item"}],
+        )
+
+        assert fixed.chunks[0].items == [original]
+
     def test_no_api_key_review_records_skipped_pass_through(
         self,
         monkeypatch: pytest.MonkeyPatch,

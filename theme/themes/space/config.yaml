@@ -2,8 +2,8 @@ name: "Space Adventure"
 style: calm
 multi_worksheet: true
 fonts:
-  primary: "Helvetica"
-  heading: "Helvetica-Bold"
+  primary: "Lexend"
+  heading: "Fredoka"
 colors:
   directions: "#2563EB"
   examples: "#059669"
