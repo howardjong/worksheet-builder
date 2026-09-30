@@ -44,6 +44,24 @@ def judge_character_consistency(
             issues=["missing reference or generated image bytes"],
         )
 
+    from ai import openrouter
+
+    if openrouter.enabled():
+        raw = openrouter.complete_json(
+            _build_judge_prompt(criteria),
+            images=[reference_bytes, generated_bytes],
+            role="vision",
+            validate=lambda value: (
+                isinstance(value.get("approved"), bool) and isinstance(value.get("issues"), list)
+            ),
+        )
+        return (
+            _coerce_result(raw, "openrouter")
+            if raw is not None
+            else CharacterJudgeResult(
+                available=False, approved=False, issues=["no OpenRouter judge available"]
+            )
+        )
     result = _judge_with_gemini(reference_bytes, generated_bytes, criteria)
     if result is not None:
         return result

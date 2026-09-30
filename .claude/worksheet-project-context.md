@@ -8,6 +8,54 @@
 
 ## Current State
 
+### Session 68 — 2026-09-30 (OpenRouter migration and image resilience branch)
+
+**Published baseline:** PR #2 is merged. Remote `main` is `3c426d6`; the
+published tree exactly matched the tested content/instruction/scene revision.
+The earlier command-line push failed for missing GitHub credentials, so the
+connected GitHub app published the same tree. Local main was fast-forwarded.
+
+**Owner scope:** New branch `codex/openrouter-model-resilience` from that main.
+The owner explicitly selected all production image, text, and vision calls,
+and automatic simpler PDF fallback after all image options fail, clearly reported.
+This supersedes Session 67's opt-in-only fallback policy. OpenAI-specific key
+creation is no longer required for this migration.
+
+**Implementation:**
+- `ai/openrouter.py` centralizes explicit role/model chains, HTTP transport,
+  MIME-correct vision/reference inputs, bounded transient retries, redacted
+  errors, schema-aware JSON fallbacks, and validated PNG output.
+- Image default: GPT Image 2.5 Sunburst → Gemini 3 Pro Image → Seedream 5 Pro
+  → Gemini 3.1 Flash Image. All four support reference inputs and portrait 3:4.
+  The dedicated `/images` API is used, not the older chat image format.
+- Text and vision use GPT-5.5 with Claude Sonnet 4.6 / Gemini 3.1 Pro fallback.
+  Character web research uses Sonar Pro → Sonar through the same router.
+- Extraction/AI assist, legacy adaptation, both planners/judges, review,
+  character judging/research, reference packs, buddy variants, classic assets,
+  and full-page image generation support an OpenRouter-only credential.
+- Full-page quality gates remain mandatory for every image model. Unexpected
+  provider errors advance to the next model; auth/credit failure stops the
+  image chain. Updated image model configuration invalidates page caches.
+- Automatic `pdf_classic` fallback writes `image_gen_fallback.json` and logs
+  a warning; `WORKSHEET_ALLOW_PDF_FALLBACK=0` restores fail-closed rendering.
+- `docs/openrouter.md` documents knobs, maximum attempt budget, legacy opt-in,
+  and live acceptance. The dated catalog snapshot records selected capabilities.
+
+**Verification:** Full suite: 978 passed, 23 skipped (optional absent corpus and
+existing skips), including the semantic golden. Lint and strict typecheck pass
+(203 source files). Offline tests cover transient transport errors, missing and
+corrupt image payloads, JSON/schema failures, credential failure without secret
+logging, reference inputs, router-only extraction/planning/judging, cache changes,
+unexpected provider errors, and a real deterministic PDF after image exhaustion.
+The real-PDF fallback test verifies the worksheet still contains its learning word.
+
+**Remaining live check:** No OpenRouter key is configured here; no billed
+OpenRouter request was made. Catalog checks establish supported API contracts,
+not worksheet quality. Configure `OPENROUTER_API_KEY` securely and compare
+real worksheets using the actual private learner profile before merging this
+branch. RAG embeddings retain their Gemini/Vertex backend and vector dimensions;
+experimental audio evaluation remains separate. Main stays at the reviewed baseline.
+
 ### Session 67 — 2026-09-30 (default learning scenes and main promotion)
 
 **Owner scope:** Promote the content/instruction revision to `main`, retaining

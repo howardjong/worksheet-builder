@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+from dataclasses import replace
 from pathlib import Path
 
 import fitz
@@ -170,7 +171,7 @@ def test_falls_back_to_pdf_classic_when_all_attempts_fail(
 ) -> None:
     import render.image_gen as image_gen
 
-    monkeypatch.setenv("WORKSHEET_ALLOW_PDF_FALLBACK", "1")
+    monkeypatch.delenv("WORKSHEET_ALLOW_PDF_FALLBACK", raising=False)
 
     provider = _StubProvider("stub", [_png_bytes()] * 3)
     monkeypatch.setattr(image_gen, "evaluate_page", lambda *args, **kwargs: _gate_report(False))
@@ -224,12 +225,87 @@ def test_resolve_render_strategy_knows_image_gen() -> None:
     assert strategy.experimental is True
 
 
-def test_default_failure_does_not_silently_produce_plain_pdf(
+def test_no_image_provider_produces_real_pdf_with_fallback_report(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from adapt.schema import AdaptedActivityModel
+
+    monkeypatch.delenv("WORKSHEET_ALLOW_PDF_FALLBACK", raising=False)
+    context = _context(tmp_path)
+    adapted = AdaptedActivityModel.model_validate(
+        {
+            "source_hash": "source",
+            "skill_model_hash": "skill",
+            "learner_profile_hash": "profile",
+            "grade_level": "1",
+            "domain": "phonics",
+            "specific_skill": "vowel_teams",
+            "theme_id": "roblox_obby",
+            "decoration_zones": [],
+            "scaffolding": {},
+            "chunks": [
+                {
+                    "chunk_id": 1,
+                    "micro_goal": "Read and write one word",
+                    "instructions": [{"number": 1, "text": "Write each word on its line."}],
+                    "items": [{"item_id": 1, "content": "rain", "response_format": "write"}],
+                    "response_format": "write",
+                    "time_estimate": "About 1 minute",
+                }
+            ],
+        }
+    )
+    context = replace(context, adapted=adapted)
+    result = _renderer([], tmp_path / "cache", monkeypatch).render(context)
+    assert result.renderer_id == "pdf_classic"
+    with fitz.open(result.pdf_path) as document:
+        assert document.page_count >= 1
+        assert "rain" in document[0].get_text()
+    assert (context.artifacts_dir / "image_gen_fallback.json").exists()
+
+
+def test_unexpected_provider_error_uses_next_model(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import render.image_gen as image_gen
+
+    class Broken(_StubProvider):
+        def generate(self, prompt: str, reference_png: bytes | None) -> bytes | None:
+            raise RuntimeError("unexpected provider failure")
+
+    broken = Broken("broken", [])
+    working = _StubProvider("working", [_png_bytes()])
+    monkeypatch.setattr(image_gen, "evaluate_page", lambda *args, **kwargs: _gate_report(True))
+    result = _renderer([broken, working], tmp_path / "cache", monkeypatch).render(
+        _context(tmp_path)
+    )
+    assert result.renderer_id == "image_gen"
+    assert working.calls == 1
+
+
+def test_model_chain_change_invalidates_page_cache(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import render.image_gen as image_gen
+
+    provider = _StubProvider("stub", [_png_bytes(), _png_bytes()])
+    monkeypatch.setattr(image_gen, "evaluate_page", lambda *args, **kwargs: _gate_report(True))
+    renderer = _renderer([provider], tmp_path / "cache", monkeypatch)
+    renderer.render(_context(tmp_path))
+    monkeypatch.setenv("WORKSHEET_OPENROUTER_IMAGE_MODELS", "new-model")
+    renderer.render(_context(tmp_path))
+    assert provider.calls == 2
+
+
+def test_opt_out_of_pdf_fallback_reports_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("WORKSHEET_SKIP_ASSET_GEN", raising=False)
-    monkeypatch.delenv("WORKSHEET_ALLOW_PDF_FALLBACK", raising=False)
+    monkeypatch.setenv("WORKSHEET_ALLOW_PDF_FALLBACK", "0")
     renderer = _renderer([], tmp_path / "cache", monkeypatch)
     with pytest.raises(RuntimeError, match="substantial learning scene"):
         renderer.render(_context(tmp_path))

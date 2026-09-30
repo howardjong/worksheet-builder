@@ -74,7 +74,10 @@ def research_character_style(
     ref_dir = ""
     if not skip_images:
         ref_dir = _generate_reference_pack(
-            character_block, spec, profile.name, theme_id,
+            character_block,
+            spec,
+            profile.name,
+            theme_id,
         )
 
     return CharacterStyleSheet(
@@ -101,7 +104,18 @@ def _research_theme_visuals(
 
     Returns an enriched CharacterSpec, or None if research is unavailable.
     """
-    # Try perplexity via direct API (simpler than MCP in non-interactive context)
+    from ai import openrouter
+
+    if openrouter.enabled():
+        result = openrouter.complete(
+            f"Research the defining visual characteristics of {theme_name} characters and "
+            "environments: body proportions, face, clothing, palette, and rendering style. "
+            "Give concrete descriptions for a faithful, calm children's worksheet illustration.",
+            role="research",
+            max_tokens=1500,
+        )
+        return _parse_research_into_spec(result.text, existing_spec) if result else None
+    # Legacy direct research provider.
     api_key = os.environ.get("PERPLEXITY_API_KEY", "")
     if not api_key:
         logger.info("  PERPLEXITY_API_KEY not set — skipping theme research")
@@ -151,7 +165,29 @@ def _parse_research_into_spec(
     existing_spec: CharacterSpec,
 ) -> CharacterSpec | None:
     """Use Gemini to parse research text into structured CharacterSpec fields."""
+    from ai import openrouter
+
     api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+    if openrouter.enabled():
+        raw = openrouter.complete_json(
+            "Extract style_description, body_description, face_description, "
+            "scene_environment, and color_palette from this visual research. Return JSON.\n"
+            + research_text,
+        )
+        if raw is None:
+            return None
+        updates = {
+            key: str(raw[key])
+            for key in (
+                "style_description",
+                "body_description",
+                "face_description",
+                "scene_environment",
+                "color_palette",
+            )
+            if raw.get(key) and not getattr(existing_spec, key)
+        }
+        return existing_spec.model_copy(update=updates)
     if not api_key:
         return None
 
@@ -166,13 +202,13 @@ def _parse_research_into_spec(
             "visual style, extract structured fields for AI image generation.\n\n"
             f"Research:\n{research_text}\n\n"
             "Return ONLY JSON (no markdown fences) with these fields:\n"
-            '{\n'
+            "{\n"
             '  "style_description": "detailed art style for prompts",\n'
             '  "body_description": "body proportions and shapes",\n'
             '  "face_description": "face rendering style",\n'
             '  "scene_environment": "environment description",\n'
             '  "color_palette": "color palette description"\n'
-            '}'
+            "}"
         )
 
         response = client.models.generate_content(
@@ -183,10 +219,7 @@ def _parse_research_into_spec(
         text = (response.text or "").strip()
         if text.startswith("```"):
             lines = text.split("\n")
-            text = "\n".join(
-                line for line in lines
-                if not line.strip().startswith("```")
-            )
+            text = "\n".join(line for line in lines if not line.strip().startswith("```"))
 
         parsed: dict[str, Any] = json.loads(text)
 
@@ -194,26 +227,15 @@ def _parse_research_into_spec(
         return CharacterSpec(
             art_style=existing_spec.art_style or parsed.get("art_style", ""),
             style_description=(
-                existing_spec.style_description
-                or parsed.get("style_description", "")
+                existing_spec.style_description or parsed.get("style_description", "")
             ),
-            body_description=(
-                existing_spec.body_description
-                or parsed.get("body_description", "")
-            ),
-            face_description=(
-                existing_spec.face_description
-                or parsed.get("face_description", "")
-            ),
+            body_description=(existing_spec.body_description or parsed.get("body_description", "")),
+            face_description=(existing_spec.face_description or parsed.get("face_description", "")),
             scene_environment=(
-                existing_spec.scene_environment
-                or parsed.get("scene_environment", "")
+                existing_spec.scene_environment or parsed.get("scene_environment", "")
             ),
             scene_elements=existing_spec.scene_elements or [],
-            color_palette=(
-                existing_spec.color_palette
-                or parsed.get("color_palette", "")
-            ),
+            color_palette=(existing_spec.color_palette or parsed.get("color_palette", "")),
             reference_keywords=existing_spec.reference_keywords,
             judge_criteria=existing_spec.judge_criteria,
         )
@@ -310,6 +332,30 @@ def _generate_reference_pack(
 
     Returns the directory path, or empty string if generation fails.
     """
+    from ai import openrouter
+
+    if openrouter.enabled():
+        ref_dir = _STYLE_SHEETS_DIR / f"{profile_name.lower().replace(' ', '_')}_{theme_id}"
+        ref_dir.mkdir(parents=True, exist_ok=True)
+        base_path = _ASSETS_DIR / "characters" / "rainbow_roblox.png"
+        reference = base_path.read_bytes() if base_path.exists() else None
+        for pose, action in [
+            ("front", "standing facing forward"),
+            ("happy", "jumping happily"),
+            ("reading", "reading a storybook"),
+        ]:
+            path = ref_dir / f"ref_{pose}.png"
+            if path.exists():
+                continue
+            png = openrouter.generate_with_fallbacks(
+                f"{character_block}. {action}. Full body, clean white background, no text.",
+                reference,
+                aspect_ratio="1:1",
+            )
+            if png:
+                path.write_bytes(png)
+                reference = png  # Keep subsequent poses consistent with the first reference.
+        return str(ref_dir) if list(ref_dir.glob("ref_*.png")) else ""
     api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
     if not api_key:
         logger.info("  No Gemini API key — skipping reference image generation")
@@ -364,7 +410,8 @@ def _generate_reference_pack(
                 contents.append(
                     types.Part(
                         inline_data=types.Blob(
-                            mime_type="image/png", data=ref_bytes,
+                            mime_type="image/png",
+                            data=ref_bytes,
                         ),
                     ),
                 )
@@ -398,6 +445,7 @@ def _generate_reference_pack(
 
 # --- CLI entry point ---
 
+
 def main() -> None:
     """CLI for character research."""
     import argparse
@@ -409,17 +457,23 @@ def main() -> None:
         description="Research theme visuals and generate style sheet",
     )
     parser.add_argument(
-        "--profile", required=True, help="Path to learner profile YAML",
+        "--profile",
+        required=True,
+        help="Path to learner profile YAML",
     )
     parser.add_argument(
-        "--theme", required=True, help="Theme ID (e.g., roblox_obby)",
+        "--theme",
+        required=True,
+        help="Theme ID (e.g., roblox_obby)",
     )
     parser.add_argument(
-        "--skip-images", action="store_true",
+        "--skip-images",
+        action="store_true",
         help="Skip reference image generation",
     )
     parser.add_argument(
-        "--skip-research", action="store_true",
+        "--skip-research",
+        action="store_true",
         help="Skip MCP research (use static spec only)",
     )
     args = parser.parse_args()
@@ -429,6 +483,7 @@ def main() -> None:
     # Load .env
     try:
         from dotenv import load_dotenv
+
         load_dotenv()
     except ImportError:
         pass
@@ -449,6 +504,7 @@ def main() -> None:
     # Persist to profile
     if profile.avatar is None:
         from companion.schema import AvatarConfig
+
         profile.avatar = AvatarConfig()
     profile.avatar.style_sheet = style_sheet
 

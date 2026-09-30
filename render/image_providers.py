@@ -13,6 +13,8 @@ import logging
 import os
 from typing import Protocol
 
+from ai import openrouter
+
 logger = logging.getLogger(__name__)
 
 # Owner decision 2026-06-12 (D29): OpenAI first, then Gemini. Across all live
@@ -21,7 +23,21 @@ logger = logging.getLogger(__name__)
 # image model.
 GEMINI_IMAGE_MODEL = "gemini-3-pro-image"
 DEFAULT_OPENAI_IMAGE_MODEL = "gpt-image-2-2026-04-21"
-DEFAULT_PROVIDER_ORDER = "openai,gemini"
+DEFAULT_PROVIDER_ORDER = "openrouter"
+
+
+class OpenRouterImageProvider:
+    """One explicit model in the quality-gated OpenRouter image chain."""
+
+    def __init__(self, model_id: str) -> None:
+        self.model_id = model_id
+        self.provider_id = "openrouter_" + model_id.replace("/", "_")
+
+    def available(self) -> bool:
+        return openrouter.available()
+
+    def generate(self, prompt: str, reference_png: bytes | None) -> bytes | None:
+        return openrouter.generate_image(prompt, reference_png, model=self.model_id)
 
 
 class ImageProvider(Protocol):
@@ -129,8 +145,8 @@ def resolve_provider_chain() -> list[ImageProvider]:
     """Resolve the configured provider fallback chain, available providers only.
 
     Order comes from WORKSHEET_IMAGE_PROVIDERS (comma-separated), default
-    "openai,gemini" (see DEFAULT_PROVIDER_ORDER / decision D29). Unknown names
-    are ignored.
+    "openrouter". Each configured OpenRouter image model becomes one entry.
+    Legacy SDK names remain explicit options. Unknown names are ignored.
     """
     order = os.environ.get("WORKSHEET_IMAGE_PROVIDERS", DEFAULT_PROVIDER_ORDER)
     registry: dict[str, ImageProvider] = {
@@ -139,6 +155,13 @@ def resolve_provider_chain() -> list[ImageProvider]:
     }
     chain: list[ImageProvider] = []
     for name in order.split(","):
+        if name.strip().lower() == "openrouter":
+            chain.extend(
+                OpenRouterImageProvider(model)
+                for model in openrouter.models("image")
+                if openrouter.available()
+            )
+            continue
         provider = registry.get(name.strip().lower())
         if provider is not None and provider.available():
             chain.append(provider)

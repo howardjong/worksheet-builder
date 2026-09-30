@@ -53,7 +53,7 @@ _FALLBACK_CHARACTER_DESC = (
 _ITEM_DESCRIPTIONS: dict[str, str] = {
     "white_sneakers": "wearing white sneakers instead of orange sneakers",
     "red_hoodie": (
-        "wearing a bright red hoodie sweatshirt " "instead of the blue lightning bolt t-shirt"
+        "wearing a bright red hoodie sweatshirt instead of the blue lightning bolt t-shirt"
     ),
     "blue_jeans": "wearing blue denim jeans instead of brown pants",
     "green_backpack": "wearing a small green backpack on his back",
@@ -111,6 +111,14 @@ def _generate_single_variant(
     reference_bytes: bytes | None = None,
 ) -> bytes | None:
     """Generate a single character variant image, returning raw PNG bytes."""
+    from ai import openrouter
+
+    if openrouter.enabled():
+        return openrouter.generate_with_fallbacks(
+            _build_variant_prompt(equipped_items, style_sheet),
+            reference_bytes or _BASE_PATH.read_bytes(),
+            aspect_ratio="1:1",
+        )
     api_key = os.environ.get("GEMINI_API_KEY", "")
     if not api_key:
         logger.warning("GEMINI_API_KEY not set")

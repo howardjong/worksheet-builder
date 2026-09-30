@@ -6,8 +6,8 @@ Flow per worksheet page:
    generate -> run page gates -> accept on pass, regenerate on fail.
 3. Accepted PNG is cached and wrapped as a US Letter PDF with an invisible
    searchable text layer (satisfies validate/print_checks.py vector-text gate).
-4. If everything fails, report failure. A deterministic PDF fallback requires
-   explicit opt-in and writes an image_gen_fallback.json marker.
+4. If everything fails, produce a deterministic PDF and an explicit fallback
+   marker. WORKSHEET_ALLOW_PDF_FALLBACK=0 instead makes failure stop the run.
 """
 
 from __future__ import annotations
@@ -20,6 +20,7 @@ from pathlib import Path
 
 import fitz  # PyMuPDF
 
+from ai import openrouter
 from render.design_spec import WorksheetDesignSpec
 from render.image_prompt_builder import PROMPT_VERSION, build_page_prompt
 from render.image_providers import ImageProvider, resolve_provider_chain
@@ -43,7 +44,7 @@ def _attempts_per_provider() -> int:
 
     Cost guardrail: each attempt is one image-generation call plus up to 4
     gate calls (text readback, learning scene, character judge, and match alignment when a
-    match section is present), across up to two providers per page. Dial
+    match section is present), across four default models per page. Dial
     down to 1-2 to cap spend on runs where retry-until-the-gate-passes
     isn't worth the API cost.
     """
@@ -123,7 +124,15 @@ class ImageGenRenderer:
                     attempt,
                     self._max_attempts,
                 )
-                png = provider.generate(prompt, ref_bytes)
+                try:
+                    png = provider.generate(prompt, ref_bytes)
+                except openrouter.CredentialsUnavailableError:
+                    return self._fallback(
+                        context, reason="OpenRouter credentials or credit unavailable"
+                    )
+                except Exception:
+                    logger.warning("Image provider %s raised an error", provider.provider_id)
+                    break
                 if png is None:
                     logger.warning(
                         "  Provider %s failed to return an image; trying next provider",
@@ -174,7 +183,15 @@ class ImageGenRenderer:
         identity_version = (
             getattr(identity, "identity_version", "no_identity") if identity else "no_identity"
         )
-        payload = "|".join([spec.model_dump_json(), identity_version, PROMPT_VERSION, prompt])
+        model_config = json.dumps(
+            {
+                "providers": os.environ.get("WORKSHEET_IMAGE_PROVIDERS", "openrouter"),
+                "models": openrouter.models("image"),
+            }
+        )
+        payload = "|".join(
+            [spec.model_dump_json(), identity_version, PROMPT_VERSION, prompt, model_config]
+        )
         return hashlib.sha256(payload.encode()).hexdigest()[:16]
 
     def _success_result(self, context: RenderContext, cached_png: Path) -> RenderResult:
@@ -206,7 +223,7 @@ class ImageGenRenderer:
         context.artifacts_dir.mkdir(parents=True, exist_ok=True)
         if not (
             os.environ.get("WORKSHEET_SKIP_ASSET_GEN") == "1"
-            or os.environ.get("WORKSHEET_ALLOW_PDF_FALLBACK") == "1"
+            or os.environ.get("WORKSHEET_ALLOW_PDF_FALLBACK", "1") == "1"
         ):
             (context.artifacts_dir / "image_gen_failure.json").write_text(
                 json.dumps({"reason": reason, "required_learning_scene": True}, indent=2)

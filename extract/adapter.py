@@ -75,17 +75,13 @@ class AIResult(BaseModel):
 class ModelAdapter(Protocol):
     """Protocol for AI assist providers. All methods are optional-use."""
 
-    def tag_regions(
-        self, image_path: str, source: SourceWorksheetModel
-    ) -> list[RegionTag]: ...
+    def tag_regions(self, image_path: str, source: SourceWorksheetModel) -> list[RegionTag]: ...
 
     def infer_skill(self, source: SourceWorksheetModel) -> SkillInference | None: ...
 
     def review_ocr(self, regions: list[SourceRegion]) -> list[OCRCorrection]: ...
 
-    def suggest_adaptations(
-        self, source: SourceWorksheetModel
-    ) -> list[AdaptationSuggestion]: ...
+    def suggest_adaptations(self, source: SourceWorksheetModel) -> list[AdaptationSuggestion]: ...
 
 
 # --- No-op adapter (always available, deterministic baseline) ---
@@ -94,9 +90,7 @@ class ModelAdapter(Protocol):
 class NoOpAdapter:
     """Default adapter when AI is disabled. Returns empty results."""
 
-    def tag_regions(
-        self, image_path: str, source: SourceWorksheetModel
-    ) -> list[RegionTag]:
+    def tag_regions(self, image_path: str, source: SourceWorksheetModel) -> list[RegionTag]:
         return []
 
     def infer_skill(self, source: SourceWorksheetModel) -> SkillInference | None:
@@ -105,9 +99,7 @@ class NoOpAdapter:
     def review_ocr(self, regions: list[SourceRegion]) -> list[OCRCorrection]:
         return []
 
-    def suggest_adaptations(
-        self, source: SourceWorksheetModel
-    ) -> list[AdaptationSuggestion]:
+    def suggest_adaptations(self, source: SourceWorksheetModel) -> list[AdaptationSuggestion]:
         return []
 
 
@@ -117,9 +109,7 @@ class NoOpAdapter:
 class ClaudeAdapter:
     """AI assist via Anthropic Claude API."""
 
-    def __init__(
-        self, api_key: str | None = None, model: str = "claude-sonnet-4-20250514"
-    ) -> None:
+    def __init__(self, api_key: str | None = None, model: str = "claude-sonnet-4-20250514") -> None:
         self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
         self.model = model
         self._client: Any = None
@@ -141,9 +131,7 @@ class ClaudeAdapter:
         )
         return str(response.content[0].text)
 
-    def tag_regions(
-        self, image_path: str, source: SourceWorksheetModel
-    ) -> list[RegionTag]:
+    def tag_regions(self, image_path: str, source: SourceWorksheetModel) -> list[RegionTag]:
         try:
             text = self._call(_build_tag_prompt(source), max_tokens=1024)
             data = json.loads(text)
@@ -173,9 +161,7 @@ class ClaudeAdapter:
             logger.warning(f"Claude review_ocr failed: {e}")
             return []
 
-    def suggest_adaptations(
-        self, source: SourceWorksheetModel
-    ) -> list[AdaptationSuggestion]:
+    def suggest_adaptations(self, source: SourceWorksheetModel) -> list[AdaptationSuggestion]:
         try:
             text = self._call(_build_adaptation_prompt(source))
             data = json.loads(text)
@@ -191,9 +177,7 @@ class ClaudeAdapter:
 class OpenAIAdapter:
     """AI assist via OpenAI API (GPT-5.4 primary)."""
 
-    def __init__(
-        self, api_key: str | None = None, model: str = "gpt-5.4"
-    ) -> None:
+    def __init__(self, api_key: str | None = None, model: str = "gpt-5.4") -> None:
         self.api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
         self.model = model
         self._client: Any = None
@@ -214,9 +198,7 @@ class OpenAIAdapter:
         )
         return str(response.choices[0].message.content or "")
 
-    def tag_regions(
-        self, image_path: str, source: SourceWorksheetModel
-    ) -> list[RegionTag]:
+    def tag_regions(self, image_path: str, source: SourceWorksheetModel) -> list[RegionTag]:
         try:
             prompt = _build_tag_prompt(source)
             text = self._call(prompt, max_tokens=1024)
@@ -248,9 +230,7 @@ class OpenAIAdapter:
             logger.warning(f"OpenAI review_ocr failed: {e}")
             return []
 
-    def suggest_adaptations(
-        self, source: SourceWorksheetModel
-    ) -> list[AdaptationSuggestion]:
+    def suggest_adaptations(self, source: SourceWorksheetModel) -> list[AdaptationSuggestion]:
         try:
             prompt = _build_adaptation_prompt(source)
             text = self._call(prompt)
@@ -377,9 +357,7 @@ class GeminiAdapter:
             logger.warning(f"Gemini image generation failed: {e}")
             return None
 
-    def tag_regions(
-        self, image_path: str, source: SourceWorksheetModel
-    ) -> list[RegionTag]:
+    def tag_regions(self, image_path: str, source: SourceWorksheetModel) -> list[RegionTag]:
         try:
             prompt = _build_tag_prompt(source)
             text = self._call(prompt)
@@ -411,9 +389,7 @@ class GeminiAdapter:
             logger.warning(f"Gemini review_ocr failed: {e}")
             return []
 
-    def suggest_adaptations(
-        self, source: SourceWorksheetModel
-    ) -> list[AdaptationSuggestion]:
+    def suggest_adaptations(self, source: SourceWorksheetModel) -> list[AdaptationSuggestion]:
         try:
             prompt = _build_adaptation_prompt(source)
             text = self._call(prompt)
@@ -422,6 +398,31 @@ class GeminiAdapter:
         except Exception as e:
             logger.warning(f"Gemini suggest_adaptations failed: {e}")
             return []
+
+
+class OpenRouterAdapter(OpenAIAdapter):
+    """Schema-validated AI assist through the shared OpenRouter model chain."""
+
+    def _call(self, prompt: str, max_tokens: int = 512) -> str:
+        from ai import openrouter
+
+        result = openrouter.complete(
+            prompt,
+            max_tokens=max_tokens,
+            accept=lambda text: isinstance(openrouter.json_value(text), (dict, list)),
+        )
+        return json.dumps(openrouter.json_value(result.text)) if result else ""
+
+    def generate_image(self, prompt: str, output_path: str, size: str = "1024x1024") -> str | None:
+        from pathlib import Path
+
+        from ai import openrouter
+
+        result = openrouter.generate_with_fallbacks(prompt, aspect_ratio="1:1")
+        if result:
+            Path(output_path).write_bytes(result)
+            return output_path
+        return None
 
 
 # --- Shared prompt builders ---
@@ -438,7 +439,7 @@ def _build_tag_prompt(source: SourceWorksheetModel) -> str:
         "instruction, question, word_list.\n\nRegions:\n"
     )
     for i, r in enumerate(source.regions):
-        prompt += f"{i}. [{r.type}] \"{r.content[:80]}\"\n"
+        prompt += f'{i}. [{r.type}] "{r.content[:80]}"\n'
     prompt += (
         "\nRespond with ONLY a JSON array: "
         '[{"region_index": 0, "suggested_type": "...", '
@@ -468,7 +469,7 @@ def _build_ocr_prompt(regions: list[SourceRegion]) -> str | None:
         "Suggest corrections where the text looks wrong.\n\n"
     )
     for i, r in low_conf:
-        prompt += f"{i}. \"{r.content}\" (conf: {r.confidence:.2f})\n"
+        prompt += f'{i}. "{r.content}" (conf: {r.confidence:.2f})\n'
     prompt += (
         "\nRespond with ONLY a JSON array: "
         '[{"region_index": 0, "original_text": "...", '
@@ -530,6 +531,10 @@ def get_adapter(provider: str = "auto", **kwargs: str) -> ModelAdapter:
     "none" — deterministic baseline, no AI.
     """
     if provider == "auto":
+        from ai import openrouter
+
+        if openrouter.enabled():
+            return OpenRouterAdapter(**kwargs)
         if os.environ.get("OPENAI_API_KEY"):
             provider = "openai"
         elif os.environ.get("GEMINI_API_KEY"):
@@ -539,6 +544,8 @@ def get_adapter(provider: str = "auto", **kwargs: str) -> ModelAdapter:
         else:
             provider = "none"
 
+    if provider == "openrouter":
+        return OpenRouterAdapter(**kwargs)
     adapter_cls = _PROVIDERS.get(provider)
     if adapter_cls is None:
         logger.warning(f"Unknown AI provider '{provider}', using NoOp")
@@ -596,6 +603,10 @@ def generate_image(prompt: str, output_path: str) -> str | None:
 
     Returns the output path on success, None if both fail or no keys available.
     """
+    from ai import openrouter
+
+    if openrouter.enabled():
+        return OpenRouterAdapter().generate_image(prompt, output_path)
     # Try Gemini first
     if os.environ.get("GEMINI_API_KEY"):
         gemini = GeminiAdapter()

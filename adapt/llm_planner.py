@@ -100,6 +100,11 @@ def _planner_providers() -> list[str]:
 
 def _call_planner(prompt: str) -> tuple[str | None, str]:
     """Walk the provider chain; return (response_text, model_label)."""
+    from ai import openrouter
+
+    if openrouter.enabled():
+        result = openrouter.complete(prompt, max_tokens=PLANNER_MAX_COMPLETION_TOKENS)
+        return (result.text, result.model) if result else (None, "none")
     for provider in _planner_providers():
         if provider == "openai" and os.environ.get("OPENAI_API_KEY"):
             text = _call_openai(prompt, max_completion_tokens=PLANNER_MAX_COMPLETION_TOKENS)
@@ -501,7 +506,13 @@ def plan_lesson_llm(
     if rules is None:
         rules = build_rules(profile)
 
-    if not (os.environ.get("OPENAI_API_KEY") or os.environ.get("GEMINI_API_KEY")):
+    from ai import openrouter
+
+    if not (
+        openrouter.available()
+        or os.environ.get("OPENAI_API_KEY")
+        or os.environ.get("GEMINI_API_KEY")
+    ):
         logger.info("  LLM planner: no API keys, falling back to deterministic")
         return None
 

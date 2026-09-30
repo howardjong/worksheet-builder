@@ -88,7 +88,29 @@ def review_adapted_worksheet(
 
 def _run_review(adapted: AdaptedActivityModel) -> ReviewResult:
     """Send adapted model to AI for quality review."""
-    # Try Gemini first, then OpenAI
+    from ai import openrouter
+
+    if openrouter.enabled():
+        raw = openrouter.complete_json(
+            _build_review_prompt(adapted),
+            validate=lambda value: (
+                isinstance(value.get("passed"), bool)
+                and isinstance(value.get("issues"), list)
+                and isinstance(value.get("suggestions"), list)
+            ),
+        )
+        parsed = _parse_review_response(json.dumps(raw)) if raw is not None else None
+        return parsed or ReviewResult(
+            passed=False,
+            issues=[
+                {
+                    "criterion": "review_unavailable",
+                    "description": "OpenRouter review unavailable",
+                }
+            ],
+            suggestions=[],
+        )
+    # Legacy direct-provider opt-in / pre-migration configuration.
     gemini_key = os.environ.get("GEMINI_API_KEY")
     openai_key = os.environ.get("OPENAI_API_KEY")
 

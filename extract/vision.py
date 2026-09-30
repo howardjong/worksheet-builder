@@ -8,6 +8,7 @@ import os
 import re
 from typing import Any
 
+from ai import openrouter
 from extract.schema import (
     PIPELINE_VERSION,
     OCRResult,
@@ -28,6 +29,8 @@ _VISION_MODEL = "gemini-3-flash-preview"
 
 def _configured_api_key() -> str:
     """Return the configured Gemini API key, supporting both env var names."""
+    if openrouter.enabled():
+        return os.environ.get("OPENROUTER_API_KEY", "")
     return os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or ""
 
 
@@ -70,31 +73,36 @@ def extract_with_vision(
     try:
         from pathlib import Path
 
-        from google import genai
-        from google.genai import types
-
-        client = genai.Client(api_key=api_key)
-
         # Read image
         image_bytes = Path(image_path).read_bytes()
-
         prompt = _build_vision_prompt()
+        provider = "openrouter_vision" if openrouter.enabled() else "gemini_vision"
+        if openrouter.enabled():
+            result = openrouter.complete_json(
+                prompt,
+                images=[image_bytes],
+                role="vision",
+                validate=lambda value: (
+                    isinstance(value.get("regions"), list) and bool(value["regions"])
+                ),
+            )
+            if result is None:
+                return None
+            data = dict(result)
+        else:
+            from google import genai
+            from google.genai import types
 
-        image_part = types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg")
-        text_part = types.Part.from_text(text=prompt)
-        contents: Any = [image_part, text_part]
-
-        response = client.models.generate_content(
-            model=_VISION_MODEL,
-            contents=contents,
-        )
-
-        text = _extract_response_text(response)
-        if not text:
-            logger.warning("Gemini vision returned empty response")
-            return None
-        text = _extract_json_text(text)
-        data = json.loads(text)
+            client = genai.Client(api_key=api_key)
+            contents: Any = [
+                types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
+                types.Part.from_text(text=prompt),
+            ]
+            response = client.models.generate_content(model=_VISION_MODEL, contents=contents)
+            text = _extract_response_text(response)
+            if not text:
+                return None
+            data = json.loads(_extract_json_text(text))
 
         template_type = data.get("template_type", "unknown")
         raw_regions = data.get("regions", [])
@@ -114,7 +122,7 @@ def extract_with_vision(
                     content=content,
                     bbox=(0.0, float(i * 50), 500.0, float(i * 50 + 40)),
                     confidence=0.85,
-                    metadata={"source": "gemini_vision"},
+                    metadata={"source": provider},
                 )
             )
             all_text_parts.append(content)
@@ -145,10 +153,7 @@ def extract_with_vision(
                 for r in regions
             ]
 
-        logger.info(
-            f"Gemini vision: template={template_type}, "
-            f"{len(regions)} regions extracted"
-        )
+        logger.info(f"Gemini vision: template={template_type}, {len(regions)} regions extracted")
 
         return SourceWorksheetModel(
             source_image_hash=source_image_hash,
@@ -156,7 +161,7 @@ def extract_with_vision(
             template_type=template_type,
             regions=regions,
             raw_text="\n".join(all_text_parts),
-            ocr_engine="gemini_vision",
+            ocr_engine=provider,
             low_confidence_flags=[],
         )
 
@@ -280,15 +285,15 @@ def _check_corpus_hallucination(regions: list[SourceRegion]) -> str | None:
                     )
 
     # Check word overlap against corpus content (home practice has word chains)
-    corpus_text = " ".join([
-        result.home_practice_text,
-        result.additional_text,
-        result.decodable_text,
-    ]).lower()
+    corpus_text = " ".join(
+        [
+            result.home_practice_text,
+            result.additional_text,
+            result.decodable_text,
+        ]
+    ).lower()
     if corpus_text.strip() and extracted_words:
-        corpus_words = set(
-            w for w in re.findall(r"[a-z]{3,}", corpus_text)
-        )
+        corpus_words = set(w for w in re.findall(r"[a-z]{3,}", corpus_text))
         if corpus_words:
             overlap = corpus_words & extracted_words
             if not overlap:
@@ -301,9 +306,7 @@ def _check_corpus_hallucination(regions: list[SourceRegion]) -> str | None:
     return None
 
 
-def _validate_template_type(
-    template_type: str, regions: list[SourceRegion]
-) -> str:
+def _validate_template_type(template_type: str, regions: list[SourceRegion]) -> str:
     """Validate and correct template_type based on structural signals in regions.
 
     If Gemini claims word_work but the regions contain a decodable_passage or
