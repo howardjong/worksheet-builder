@@ -191,10 +191,24 @@ def compile_transformation_chunk(
         activity_item_for(step, item_id_start + index)
         for index, step in enumerate(practice, start=1)
     ]
+    instructions = instruction_steps_for(practice[0])
+    if any(instruction_steps_for(step) != instructions for step in practice[1:]):
+        # A mixed chunk must not tell every child to perform the first item's
+        # operation (for example, add -est to a row that explicitly asks for -er).
+        change = (
+            "Add the ending printed in each problem."
+            if all(_operation_kinds(step) == ("append_affix",) for step in practice)
+            else "Follow every spelling operation printed in each problem."
+        )
+        instructions = [
+            Step(number=1, text="Read the starting word in each problem."),
+            Step(number=2, text=change),
+            Step(number=3, text="Write each complete new word on its line."),
+        ]
     return ActivityChunk(
         chunk_id=chunk_id,
         micro_goal=f"Build {len(items)} new words",
-        instructions=instruction_steps_for(practice[0]),
+        instructions=instructions,
         worked_example=worked_example_for(example_step) if example_step else None,
         items=items,
         response_format="write",

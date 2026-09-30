@@ -90,7 +90,6 @@ def test_prompt_damping_block_uses_visual_budget_numbers() -> None:
     assert "at most 4 accent colors" in prompt
     assert "at most 2 intentional, clearly legible theme elements" in prompt
     assert "Omit them entirely rather than rendering token-sized corner stickers" in prompt
-    assert "small purely decorative accents" not in prompt
     assert "calm and tidy" in prompt
     assert "never put patterns, gradients, or scene art behind text" in prompt
 
@@ -107,6 +106,9 @@ def test_prompt_zero_decorations_branch() -> None:
 
     assert "No purely decorative elements" in prompt
     assert "at most 3 accent colors" in prompt
+    assert "never less than 10%" in prompt
+    assert "remains required at low intensity" in prompt
+    assert "Never cover text, shrink practice words" in prompt
 
 
 def test_prompt_includes_character_and_theme_blocks_when_provided() -> None:
@@ -132,7 +134,8 @@ def test_prompt_omits_character_section_without_character_block() -> None:
 
     prompt = build_page_prompt(_spec())
 
-    assert "Learning Buddy" not in prompt
+    assert "## Learning Buddy" not in prompt
+    assert "## Required learning scene" in prompt
 
 
 def test_prompt_high_intensity_branch() -> None:
@@ -181,11 +184,9 @@ def test_feedback_strip_and_parent_log() -> None:
     from render.image_prompt_builder import build_page_prompt
 
     prompt = build_page_prompt(_spec())
-    assert 'titled with exact text: "Grown-up quick log — circle one choice in each pair"' in prompt
-    assert "Circle one progress choice and one help choice for each part." in prompt
-    assert "steady / still building" in prompt
-    assert "new objective" in prompt  # hint present when show_decision_hint=True
-    assert "step back one lesson" not in prompt
+    assert 'titled with exact text: "Grown-up quick log"' in prompt
+    assert "smooth / choppy" in prompt
+    assert "step back one lesson" in prompt  # hint present when show_decision_hint=True
 
 
 def test_page_prompt_renders_quick_log_without_traffic_strip() -> None:
@@ -201,7 +202,7 @@ def test_page_prompt_renders_quick_log_without_traffic_strip() -> None:
 def test_prompt_version_bumped() -> None:
     from render.image_prompt_builder import PROMPT_VERSION
 
-    assert PROMPT_VERSION == "page_prompt_v4"
+    assert PROMPT_VERSION == "page_prompt_v5_learning_scene"
 
 
 def _spec_with_fill_blank_options() -> WorksheetDesignSpec:
@@ -243,7 +244,7 @@ def test_fill_blank_with_options_renders_circle_affordance() -> None:
 def test_prompt_version_bumped_for_uat_fixes() -> None:
     from render.image_prompt_builder import PROMPT_VERSION
 
-    assert PROMPT_VERSION == "page_prompt_v4"
+    assert PROMPT_VERSION == "page_prompt_v5_learning_scene"
 
 
 def _spec_with_match_rows() -> WorksheetDesignSpec:

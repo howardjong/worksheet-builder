@@ -361,9 +361,7 @@ class TestAdaptActivity:
         model = adapt_activity(_phonics_skill(), _grade_1_profile())
         assert model.feedback is not None
         assert model.feedback.goal_statement == "I can read words with the cvc blending pattern"
-        assert model.feedback.parent_log_title == (
-            "Grown-up quick log — circle one choice in each pair"
-        )
+        assert model.feedback.parent_log_title == "Grown-up quick log"
 
     def test_decoration_zones_defined(self) -> None:
         model = adapt_activity(_phonics_skill(), _grade_1_profile())
@@ -617,11 +615,25 @@ class TestAdaptLesson:
         ]
         assert len(match_items) >= 1
 
-    def test_default_capabilities_do_not_author_picture_matching(self) -> None:
+    def test_default_adaptation_preserves_picture_matching(self) -> None:
         worksheets = adapt_lesson(_ufli_59_skill(), _grade_1_profile())
+        items = [item for ws in worksheets for chunk in ws.chunks for item in chunk.items]
+        assert any(item.response_format == "match" for item in items)
+
+    def test_explicit_asset_free_capabilities_do_not_author_picture_matching(self) -> None:
+        from adapt.schema import AdaptationCapabilities
+
+        worksheets = adapt_lesson(
+            _ufli_59_skill(), _grade_1_profile(), capabilities=AdaptationCapabilities()
+        )
         items = [item for ws in worksheets for chunk in ws.chunks for item in chunk.items]
         assert all(item.response_format != "match" for item in items)
         assert all(item.picture_prompt is None for item in items)
+        assert all(
+            chunk.worked_example is None or "picture" not in chunk.worked_example.content
+            for ws in worksheets
+            for chunk in ws.chunks
+        )
         converted = [
             item for item in items if item.metadata.get("curriculum_supported") is not None
         ]

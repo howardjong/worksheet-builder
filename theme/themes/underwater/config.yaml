@@ -2,8 +2,8 @@ name: "Ocean Explorer"
 style: calm
 multi_worksheet: true
 fonts:
-  primary: "Lexend"
-  heading: "Fredoka"
+  primary: "Helvetica"
+  heading: "Helvetica-Bold"
 colors:
   directions: "#0369A1"
   examples: "#059669"

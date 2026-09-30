@@ -48,6 +48,29 @@ def test_change_one_letter_requires_verified_substitution() -> None:
     assert "change" in item.content.casefold()
 
 
+def test_mixed_endings_use_per_problem_directions() -> None:
+    from adapt.transformation_compiler import compile_transformation_chunk
+
+    contract = contract_for_skill_id("suffix_er_est")
+    assert contract is not None
+    steps = [_step("suffix_er_est", chain) for chain in ("slow -> slowest", "long -> longer")]
+    chunk = compile_transformation_chunk(
+        steps,
+        contract,
+        chunk_id=1,
+        item_id_start=0,
+        max_items=4,
+        include_example=False,
+    )
+    assert chunk is not None
+    assert "-est" in chunk.items[0].content and "-er" in chunk.items[1].content
+    assert [step.text for step in chunk.instructions] == [
+        "Read the starting word in each problem.",
+        "Add the ending printed in each problem.",
+        "Write each complete new word on its line.",
+    ]
+
+
 def test_standalone_ness_targets_reconstruct_real_y_base() -> None:
     from adapt.engine import _build_add_ending_chunk
 

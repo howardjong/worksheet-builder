@@ -7,7 +7,37 @@ from typing import Any
 import pytest
 
 from companion.character_judge import CharacterJudgeResult
-from render.page_gates import TextGateReport
+from render.page_gates import LearningSceneReport, TextGateReport
+
+
+@pytest.mark.parametrize(
+    "bounds,supports,clear,available,expected",
+    [
+        ((0.1, 0.1, 0.6, 0.5), True, True, True, True),
+        ((0.01, 0.01, 0.08, 0.08), True, True, True, False),
+        ((0.1, 0.1, 0.6, 0.5), False, True, True, False),
+        ((0.1, 0.1, 0.6, 0.5), True, False, True, False),
+        ((0.1, 0.1, 0.6, 0.5), True, True, False, False),
+        ((0.6, 0.1, 0.1, 0.5), True, True, True, False),
+        ((float("nan"), 0.1, 0.6, 0.5), True, True, True, False),
+        ((0.1, 0.1, 1.6, 0.5), True, True, True, False),
+        (None, True, True, True, False),
+    ],
+)
+def test_scene_requires_large_meaningful_unobstructed_art(
+    bounds: tuple[float, float, float, float] | None,
+    supports: bool,
+    clear: bool,
+    available: bool,
+    expected: bool,
+) -> None:
+    report = LearningSceneReport(
+        bounds=bounds,
+        supports_learning=supports,
+        work_areas_clear=clear,
+        available=available,
+    )
+    assert report.passed is expected
 
 
 def _text_report(**overrides: object) -> TextGateReport:

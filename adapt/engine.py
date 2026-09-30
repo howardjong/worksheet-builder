@@ -11,7 +11,11 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 from adapt.feedback import build_feedback_panel
-from adapt.instruction_clarity import ensure_clear_chunk_instructions, ensure_clear_instructions
+from adapt.instruction_clarity import (
+    ensure_clear_chunk_instructions,
+    ensure_clear_instructions,
+    picture_matching_to_writing,
+)
 from adapt.objective_ledger import ObjectiveCell, build_objective_ledger
 from adapt.rules import (
     BRAIN_BREAK_PROMPTS,
@@ -144,7 +148,7 @@ def _finalize_lesson_package(
     rules: AccommodationRules,
     skill: LiteracySkillModel,
     package_cap: int | None,
-    capabilities: AdaptationCapabilities,
+    capabilities: AdaptationCapabilities | None,
 ) -> list[AdaptedActivityModel]:
     """Apply the section cap (split) then the optional package cap (trim).
 
@@ -152,7 +156,8 @@ def _finalize_lesson_package(
     (lesson mode defaults it to "auto" — the evidence-based workload budget);
     the photo path doesn't set it, keeping split-never-trim there.
     """
-    worksheets = _enforce_adaptation_capabilities(worksheets, skill, capabilities)
+    if capabilities is not None:
+        worksheets = _enforce_adaptation_capabilities(worksheets, capabilities)
     capped = enforce_section_cap(worksheets, rules)
     if package_cap is not None and len(capped) > package_cap:
         capped = enforce_package_cap(
@@ -166,7 +171,6 @@ def _finalize_lesson_package(
 
 def _enforce_adaptation_capabilities(
     worksheets: list[AdaptedActivityModel],
-    skill: LiteracySkillModel,
     capabilities: AdaptationCapabilities,
 ) -> list[AdaptedActivityModel]:
     """Replace asset-dependent practice unless its assets are guaranteed.
@@ -180,32 +184,12 @@ def _enforce_adaptation_capabilities(
     if capabilities.picture_assets_guaranteed:
         return worksheets
     for worksheet in worksheets:
-        for chunk in worksheet.chunks:
-            if not any(item.response_format == "match" for item in chunk.items):
-                continue
-            replacement_items: list[ActivityItem] = []
-            for item in chunk.items:
-                if item.response_format != "match":
-                    replacement_items.append(item)
-                    continue
-                replacement_items.append(
-                    item.model_copy(
-                        update={
-                            "content": item.content,
-                            "response_format": "write",
-                            "options": None,
-                            "answer": item.content,
-                            "picture_prompt": None,
-                        }
-                    )
-                )
-            chunk.items = replacement_items
-            chunk.response_format = "write"
-            chunk.micro_goal = f"Write {len(replacement_items)} target words"
-            chunk.instructions = [
-                Step(number=1, text="Read each printed word aloud."),
-                Step(number=2, text="Write each word on its line."),
-            ]
+        worksheet.chunks = [
+            picture_matching_to_writing(chunk)
+            if any(item.response_format == "match" for item in chunk.items)
+            else chunk
+            for chunk in worksheet.chunks
+        ]
     return worksheets
 
 
@@ -327,7 +311,6 @@ def adapt_lesson(
     """
     if rules is None:
         rules = build_rules(profile)
-    capabilities = capabilities or AdaptationCapabilities()
 
     package_cap = _resolve_lesson_package_cap(skill, profile, rules, artifacts_dir)
 

@@ -167,6 +167,12 @@ class WorksheetDesignSpec(BaseModel):
     answer_zones: list[AnswerZoneSpec] = Field(default_factory=list)
     sections: list[SectionSpec] = Field(default_factory=list)
     learning_goal: str = Field(description="Child-friendly 'I can...' goal for the page banner.")
+    learning_scene_min_area_fraction: float = Field(
+        default=0.10,
+        gt=0,
+        le=0.25,
+        description="Minimum fraction of the whole image page occupied by its learning scene.",
+    )
     feedback: FeedbackPanel | None = None
     break_prompt: str | None = None
 

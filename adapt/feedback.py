@@ -5,19 +5,13 @@ from __future__ import annotations
 from adapt.schema import FeedbackPanel
 from skill.contract import contract_for_skill, contract_for_skill_id
 
-# Calm, learning-objective-oriented next-step hint for the grown-up. It avoids
-# score thresholds, color judgments, and curriculum navigation assumptions.
-PARENT_LOG_INSTRUCTION = "Circle one progress choice and one help choice for each part."
-
+# Next-step hint for the grown-up, printed on the package's last sheet.
+# Thresholds: Betts reading levels + UFLI-aligned practice (spec 2026-07-10).
 DECISION_HINT = (
-    "If progress is steady with little help, choose a new objective next time. "
-    "If progress is still building, practice this objective again with new words."
+    "Mostly green + 9 of 10 right + no help: move on. "
+    "Mixed or some help: practice again with fresh words. "
+    "Mostly red or lots of help: step back one lesson."
 )
-
-
-def feedback_log_row(part_number: int) -> str:
-    """Return one non-punitive observation row for print and image renderers."""
-    return f"Part {part_number}: steady / still building   help: none / some / lots"
 
 
 def _display_skill(specific_skill: str) -> str:

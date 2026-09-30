@@ -2,8 +2,8 @@ name: "Dino Discovery"
 style: calm
 multi_worksheet: true
 fonts:
-  primary: "Lexend"
-  heading: "Fredoka"
+  primary: "Helvetica"
+  heading: "Helvetica-Bold"
 colors:
   directions: "#2563EB"
   examples: "#16A34A"

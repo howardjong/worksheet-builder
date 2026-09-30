@@ -153,10 +153,14 @@ All pipeline stages communicate through strict Pydantic contracts. The pipeline 
 ### Renderer modes and image-model readiness
 
 The production default renderer is `image_gen` (decision D29): a full-page
-AI-generated worksheet, gated by text-fidelity and character-consistency judges,
-cached, and wrapped as a searchable PDF. It degrades to `pdf_classic` whenever no
-image provider is available (no API keys or `WORKSHEET_SKIP_ASSET_GEN=1`), so
-offline runs still produce a deterministic PDF.
+AI-generated worksheet, gated by text fidelity, character consistency, matching
+alignment, and a substantial task-relevant learning scene. Scenes use the child
+profile's character reference and description, target 18–22% of the page, and
+must occupy at least 10% without obstructing text or answer areas. Accepted pages
+are cached and wrapped as searchable PDFs. Tiny corner stickers are omitted.
+Missing providers or failed gates report failure instead of silently changing
+the design. Set `WORKSHEET_ALLOW_PDF_FALLBACK=1` to explicitly allow a simpler
+PDF after failure, or `WORKSHEET_SKIP_ASSET_GEN=1` for a deterministic offline run.
 
 `pdf_classic` remains the explicit opt-out (`--render-mode pdf_classic`): it uses
 deterministic ReportLab vector text, existing scene assets, and PDF validation.

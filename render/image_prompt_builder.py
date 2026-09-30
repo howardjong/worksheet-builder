@@ -9,7 +9,7 @@ as code-enforced prohibitions.
 
 from __future__ import annotations
 
-from adapt.feedback import DECISION_HINT, PARENT_LOG_INSTRUCTION, feedback_log_row
+from adapt.feedback import DECISION_HINT
 from render.design_spec import SectionSpec, WorksheetDesignSpec
 
 # Bump when prompt structure changes — part of the page cache key.
@@ -20,7 +20,7 @@ from render.design_spec import SectionSpec, WorksheetDesignSpec
 # text sizes, per-page buddy action, structured feedback strip + grown-up log.
 # v4: circle-format fill-blanks, per-row match pictures, chunked passages,
 # quick-log-only feedback (spec 2026-07-13)
-PROMPT_VERSION = "page_prompt_v4"
+PROMPT_VERSION = "page_prompt_v5_learning_scene"
 
 _FORMAT_AFFORDANCES: dict[str, str] = {
     "write": "a blank handwriting line wide enough for a child to print the answer",
@@ -101,10 +101,39 @@ def build_page_prompt(
             parts.append(scene_guidelines)
         if buddy_action:
             parts.append(
-                f"In this page's scene the Learning Buddy is {buddy_action}. Keep "
-                "the identity exactly as described; only the pose and action "
-                "change from other pages."
+                f"Optional pose suggestion: {buddy_action}. Use this only if it "
+                "fits the instructional scene below; the buddy must actively "
+                "use learning materials, rather than just point at a banner. "
+                "Keep the identity exactly as described."
             )
+
+    minimum_percent = round(spec.learning_scene_min_area_fraction * 100)
+    parts.append(
+        "## Required learning scene\n"
+        "Include one substantial, clearly visible scene that supports this page's "
+        f'learning goal: "{spec.learning_goal}". Aim for roughly 18-22% of the whole '
+        f"page area, and never less than {minimum_percent}%. This is a dedicated "
+        "illustration area, not a tiny corner sticker, title banner, decorative "
+        "border, or full-page background. Show the Learning Buddy using relevant "
+        "learning materials: reading a book or word card, writing, or working with "
+        "letters as appropriate for the actual activities. Follow the child "
+        "profile's character description and reference image when supplied; do "
+        "not substitute a generic mascot. Keep the scene beside the work or in "
+        "a clearly separated panel. Never cover text, shrink practice words, "
+        "reduce answer space, reveal answers, or introduce extra printed words "
+        "to make room for the scene. The required learning scene is separate "
+        "from the decorative-accent budget and remains required at low intensity. "
+        "Keep the title/header compact: do not turn it into a landscape scene. "
+        "Place the actual learning illustration in its own white-backed panel "
+        "beside an activity, with the buddy reading, writing, or handling letter "
+        "materials. For example, meaningful artwork filling roughly half the "
+        "page width and one third of its height occupies about 16% of the page; "
+        "empty panel space does not count toward the minimum. Keep books and "
+        "cards unlabelled; show no letters or words on illustration props. "
+        "Do not repeat the buddy in the title, corner, break box, or "
+        "grown-up log. No reward coins, lava, collectible stars, or scenery "
+        "unrelated to the learning task."
+    )
 
     parts.append("## Activity sections (render in this order)")
     for section in spec.sections:
@@ -113,7 +142,9 @@ def build_page_prompt(
     if spec.feedback:
         fb = spec.feedback
         log_lines = "\n".join(
-            f'Log row exact text: "{feedback_log_row(s.chunk_id)}"' for s in spec.sections
+            f'Log row exact text: "Part {s.chunk_id}: ___ of {len(s.items)} correct   '
+            'smooth / choppy   help: none / some / lots"'
+            for s in spec.sections
         )
         hint = (
             f'\nLast line in smaller text, exact text: "{DECISION_HINT}"'
@@ -122,9 +153,7 @@ def build_page_prompt(
         )
         parts.append(
             "Final section: a thin outlined box titled with exact text: "
-            f'"{fb.parent_log_title}". Under the title, print this exact instruction: '
-            f'"{PARENT_LOG_INSTRUCTION}" Then include one log row per section:\n'
-            f"{log_lines}{hint}"
+            f'"{fb.parent_log_title}" containing one log row per section:\n{log_lines}{hint}'
         )
     if spec.break_prompt:
         parts.append(

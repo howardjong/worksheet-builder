@@ -8,6 +8,102 @@
 
 ## Current State
 
+### Session 67 — 2026-09-30 (default learning scenes and main promotion)
+
+**Owner scope:** Promote the content/instruction revision to `main`, retaining
+large, customized instructional artwork as the default. Remove tiny corner
+stickers. A temporary grayscale request must not become a permanent default.
+
+**Implementation:**
+- Image prompts require one task-relevant scene using the profile's character
+  identity/reference, target 18–22% page area, minimum 10%. Artwork must support
+  the learning activity and leave practice text and answer spaces clear.
+- A fail-closed vision gate checks scene bounds, instructional relevance, and
+  unobstructed work areas. Accepted cache entries must contain a passing scene
+  verdict. Prompt/spec changes invalidate older page caches.
+- Missing providers or exhausted attempts now report failure. Simpler PDF
+  fallback requires `WORKSHEET_ALLOW_PDF_FALLBACK=1`; explicit `pdf_classic`
+  and `WORKSHEET_SKIP_ASSET_GEN=1` remain available for offline printing.
+- Visual preview iteration tightened compact headers, one buddy only, actual
+  reading/writing materials, unlabelled props, and no unrelated game rewards.
+- Mixed transformation chunks use directions appropriate to every item.
+  In particular, an -er/-est chunk no longer instructs all rows to add -est.
+
+**Verification:** Lint and strict typecheck pass (200 source files). Full suite:
+954 passed, 23 skipped (optional absent corpus and existing skips). Regressions cover
+tiny/decorative scenes, blocked work areas, unavailable judges, missing cached
+scene verdicts, explicit PDF fallback, and mixed-ending directions. Actual
+image previews use the revised prompt, committed Lesson 31 fixture, and the
+repo's Ian learning-buddy reference through the session image tool. They are
+design previews, not results of a live repository provider/judge run. Files
+are outside the repo in `/workspace/worksheet-visual-review/scene-preview/`.
+The final manual preview shows one recognizable buddy reading an unlabelled
+book beside the work; its estimated artwork bounds cover 10.2% of the page.
+The minimum was calibrated to 10% to balance meaningful artwork and handwriting
+space; title scenery and empty panel space are excluded from the estimate.
+
+**Credential status:** The owner chose secure new-key creation for visual
+verification. The picker has not supplied project selection; no key has been
+created or written. The actual `profiles/ian.yaml` is absent from the clone;
+the preview profile is illustrative, not a recovered private learner profile.
+
+**Promotion:** Prepared on `codex/content-and-instructions-only`, including
+PR #2's content fixes and the local revisions. Remote `main` was verified as
+an ancestor and push access was checked without changing the remote. Retain
+PR #1 and its experimental renderer separately. A live pipeline run with the
+actual learner profile remains a follow-up after secure credentials are ready.
+
+### Session 66 — 2026-09-30 (local revision: content correctness and student clarity)
+
+**Owner scope:** Keep PR #2's learning-content fixes and more intuitive student
+instructions. A one-time low-ink request must not become the normal worksheet
+design. The owner has not yet selected whether to publish this revision.
+
+**Local branch:** `codex/content-and-instructions-only`, based on PR #2's
+`60d2f92`. The original `main` checkout is clean and unchanged.
+
+**What changed:**
+- Retained verified learning-objective transformations, spelling-rule repairs,
+  objective coverage, content validation, and explicit student action/object
+  directions from PR #2.
+- Restored `main`'s theme fonts, divider spacing, caregiver log, and print-font
+  policy. There is no new default grayscale/low-ink setting. Owner clarification:
+  keep the removal of useless corner stickers, while retaining larger
+  profile-specific avatars, buddy scenes, and task-supporting pictures. The
+  image prompt omits token-sized decorative stickers; the learning-buddy prompt
+  and profile identity/reference-image path remain unchanged.
+- Normal adaptation preserves matching activities for the image renderer and
+  PDFs with verified picture assets. Explicit asset-free adaptation remains an
+  opt-in. PDFs convert matching to written practice only when their actual
+  picture assets are missing; that fallback drops the obsolete matching example
+  and leaves the source model unchanged.
+- Wrapped numbered PDF directions using font metrics and available column
+  width, with matching height estimates. This fixes the new story-direction
+  margin overflow and protects instructions beside a buddy scene.
+- Added rendered-boundary, scene-overlap, prompt-preservation, fallback-example,
+  and ambiguous-instruction preflight regressions. The optional real-corpus
+  integration checks now skip missing lesson data explicitly; committed Lesson
+  100 and synthetic transformation/content tests still execute.
+
+**Visual evidence:** 25 revised fixture PDFs rendered successfully (Lessons 31,
+49, 74, 90, 100; K/grade-1 learner profiles), totaling 66 pages. All measured
+content text stays inside the right safe print margin; the intentionally low
+footer is excluded. Previews and the original PR review are outside the repo at
+`/workspace/worksheet-visual-review/`. No new AI-generated worksheet was produced.
+The actual learner profile and full curriculum corpus are absent from this clone.
+
+**Checks:** Lint and strict typecheck pass (200 source files). Full suite:
+939 passed, 23 skipped (21 optional missing-corpus cases plus two existing skips).
+Semantic golden: 1 passed. The 10 new prompt/fallback/layout/preflight regressions
+pass, including all supported grade font sizes and scene/no-scene layouts.
+After the owner clarified the corner-sticker policy, the focused render/prompt
+checks were rerun; scene/no-scene checks now also assert that meaningful scene
+images remain while decoration-only pages have no raster images.
+
+**Next:** Review the local revision and choose whether to push a separate branch
+or update PR #2. Before merging, inspect fresh image-generated worksheets using
+the actual learner profile. PR #1 and the experimental renderer remain separate.
+
 ### Session 65 — 2026-09-08 (promotion branch published; safe branch cleanup)
 
 **Status:** The verified production promotion branch

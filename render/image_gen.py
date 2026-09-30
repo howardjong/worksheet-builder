@@ -6,8 +6,8 @@ Flow per worksheet page:
    generate -> run page gates -> accept on pass, regenerate on fail.
 3. Accepted PNG is cached and wrapped as a US Letter PDF with an invisible
    searchable text layer (satisfies validate/print_checks.py vector-text gate).
-4. If everything fails, delegate to the deterministic PdfClassicRenderer and
-   write an image_gen_fallback.json marker into the artifacts directory.
+4. If everything fails, report failure. A deterministic PDF fallback requires
+   explicit opt-in and writes an image_gen_fallback.json marker.
 """
 
 from __future__ import annotations
@@ -41,8 +41,8 @@ PAGE_HEIGHT_PT = 792
 def _attempts_per_provider() -> int:
     """Per-provider generation attempts (WORKSHEET_IMAGE_MAX_ATTEMPTS, min 1).
 
-    Cost guardrail: each attempt is one image-generation call plus up to 3
-    gate calls (text readback, character judge, and match alignment when a
+    Cost guardrail: each attempt is one image-generation call plus up to 4
+    gate calls (text readback, learning scene, character judge, and match alignment when a
     match section is present), across up to two providers per page. Dial
     down to 1-2 to cap spend on runs where retry-until-the-gate-passes
     isn't worth the API cost.
@@ -76,7 +76,7 @@ class ImageGenRenderer:
         from companion.character_identity import CharacterIdentity
         from render.asset_gen import _reference_bytes_from_identity
 
-        if os.environ.get("WORKSHEET_SKIP_ASSET_GEN"):
+        if os.environ.get("WORKSHEET_SKIP_ASSET_GEN") == "1":
             return self._fallback(context, reason="WORKSHEET_SKIP_ASSET_GEN set")
 
         spec = context.design_spec
@@ -105,7 +105,7 @@ class ImageGenRenderer:
         cache_key = self._cache_key(spec, identity, prompt)
         cache_dir = _CACHE_DIR / f"page_{cache_key}"
         cached_png = cache_dir / "page.png"
-        if cached_png.exists() and (cache_dir / "gate_report.json").exists():
+        if cached_png.exists() and _verified_cached_report(cache_dir / "gate_report.json"):
             logger.info("  Page cache hit: %s", cached_png)
             _write_page_pdf(cached_png.read_bytes(), context.output_path, spec.required_text)
             return self._success_result(context, cached_png)
@@ -132,7 +132,12 @@ class ImageGenRenderer:
                     break
 
                 report = evaluate_page(
-                    png, spec.required_text, ref_bytes, criteria, match_rows_from_spec(spec)
+                    png,
+                    spec.required_text,
+                    ref_bytes,
+                    criteria,
+                    match_rows_from_spec(spec),
+                    scene_spec=spec,
                 )
                 report.provider_id = provider.provider_id
                 report.attempt = attempt
@@ -140,7 +145,11 @@ class ImageGenRenderer:
                     context.artifacts_dir, provider.provider_id, attempt, png, report
                 )
 
-                if report.passed:
+                if (
+                    report.passed
+                    and report.learning_scene is not None
+                    and report.learning_scene.passed
+                ):
                     cache_dir.mkdir(parents=True, exist_ok=True)
                     (cache_dir / "gate_report.json").write_text(report.model_dump_json(indent=2))
                     cached_png.write_bytes(png)
@@ -149,13 +158,14 @@ class ImageGenRenderer:
 
                 logger.warning(
                     "  Page rejected (provider=%s attempt=%d): missing=%s "
-                    "misspelled=%s character_issues=%s match_rows_aligned=%s",
+                    "misspelled=%s character_issues=%s match_rows_aligned=%s scene=%s",
                     provider.provider_id,
                     attempt,
                     report.text.missing_text,
                     report.text.misspelled_text,
                     report.character.issues,
                     report.match_alignment.aligned_rows,
+                    report.learning_scene,
                 )
 
         return self._fallback(context, reason="all providers exhausted without a gate-passing page")
@@ -193,12 +203,32 @@ class ImageGenRenderer:
         (artifacts_dir / f"{stem}_gates.json").write_text(report.model_dump_json(indent=2))
 
     def _fallback(self, context: RenderContext, *, reason: str) -> RenderResult:
-        logger.warning("  ImageGenRenderer falling back to pdf_classic: %s", reason)
         context.artifacts_dir.mkdir(parents=True, exist_ok=True)
+        if not (
+            os.environ.get("WORKSHEET_SKIP_ASSET_GEN") == "1"
+            or os.environ.get("WORKSHEET_ALLOW_PDF_FALLBACK") == "1"
+        ):
+            (context.artifacts_dir / "image_gen_failure.json").write_text(
+                json.dumps({"reason": reason, "required_learning_scene": True}, indent=2)
+            )
+            raise RuntimeError(
+                f"No verified worksheet with a substantial learning scene was produced: {reason}. "
+                "Choose --render-mode pdf_classic or WORKSHEET_ALLOW_PDF_FALLBACK=1 "
+                "to explicitly allow a simpler PDF."
+            )
+        logger.warning("  ImageGenRenderer falling back to pdf_classic: %s", reason)
         (context.artifacts_dir / "image_gen_fallback.json").write_text(
             json.dumps({"fallback": True, "reason": reason}, indent=2)
         )
         return PdfClassicRenderer().render(context)
+
+
+def _verified_cached_report(path: Path) -> bool:
+    try:
+        report = PageGateReport.model_validate_json(path.read_text())
+    except (OSError, ValueError):
+        return False
+    return report.passed and report.learning_scene is not None and report.learning_scene.passed
 
 
 def _page_judge_criteria(

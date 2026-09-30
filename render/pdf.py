@@ -13,7 +13,7 @@ from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen.canvas import Canvas
 
-from adapt.feedback import DECISION_HINT, feedback_log_row
+from adapt.feedback import DECISION_HINT
 from adapt.instruction_clarity import instruction_clarity_issues
 from adapt.schema import ActivityChunk, ActivityItem, AdaptedActivityModel
 from theme.schema import AssetManifest, ThemeConfig
@@ -50,7 +50,7 @@ LAYOUT_SPACING: dict[str, float] = {
     "section_gap": 18.0,
     "item_gap": 16.0,
     "box_gap": 32.0,
-    "divider_gap": 12.0,
+    "divider_gap": 22.0,
 }
 
 # Avatar clearance: pts above MARGIN to clear avatar (70pt) + speech bubble (18pt) + gap
@@ -62,53 +62,57 @@ _fonts_registered = False
 
 
 class RenderContractError(RuntimeError):
-    """The adapted model requests a surface the renderer cannot provide."""
+    """The worksheet requests content that cannot be rendered truthfully."""
+
+
+def prepare_pdf_activity(
+    adapted: AdaptedActivityModel, asset_manifest: AssetManifest | None
+) -> AdaptedActivityModel:
+    """Use written practice only where a PDF has no verified matching pictures."""
+    from adapt.instruction_clarity import picture_matching_to_writing
+
+    chunks = []
+    for chunk in adapted.chunks:
+        missing_picture = any(
+            item.response_format == "match"
+            and not (
+                asset_manifest
+                and item.options
+                and (path := asset_manifest.word_picture_paths.get(item.options[0]))
+                and Path(path).is_file()
+            )
+            for item in chunk.items
+        )
+        if missing_picture:
+            logger.info(
+                "Chunk %s: using written practice because matching pictures are missing",
+                chunk.chunk_id,
+            )
+        chunks.append(picture_matching_to_writing(chunk) if missing_picture else chunk)
+    return adapted.model_copy(update={"chunks": chunks})
 
 
 def _validate_render_inputs(
     adapted: AdaptedActivityModel, asset_manifest: AssetManifest | None
 ) -> None:
-    """Fail before opening an output file when a required picture is absent."""
-    unclear: list[str] = []
     for chunk in adapted.chunks:
-        for step in chunk.instructions:
-            issues = instruction_clarity_issues(step.text)
-            if issues:
-                issue_text = ", ".join(issues)
-                unclear.append(
-                    f"chunk {chunk.chunk_id}, step {step.number}: {step.text!r} ({issue_text})"
-                )
-        if chunk.worked_example is not None:
-            issues = instruction_clarity_issues(chunk.worked_example.instruction)
-            if issues:
-                unclear.append(
-                    f"chunk {chunk.chunk_id} worked example: "
-                    f"{chunk.worked_example.instruction!r} ({', '.join(issues)})"
-                )
-    if adapted.break_prompt:
-        issues = instruction_clarity_issues(adapted.break_prompt)
-        if issues:
-            unclear.append(f"break prompt: {adapted.break_prompt!r} ({', '.join(issues)})")
-    if unclear:
-        raise RenderContractError("unclear worksheet instructions: " + "; ".join(unclear))
-
-    missing: list[str] = []
-    for chunk in adapted.chunks:
+        instructions = [step.text for step in chunk.instructions]
+        if chunk.worked_example:
+            instructions.append(chunk.worked_example.instruction)
+        for text in instructions:
+            if instruction_clarity_issues(text):
+                raise RenderContractError(f"unclear worksheet instructions: {text!r}")
         for item in chunk.items:
-            if item.response_format != "match":
-                continue
-            picture_word = item.options[0] if item.options else ""
-            picture_path = (
-                asset_manifest.word_picture_paths.get(picture_word)
-                if asset_manifest is not None and picture_word
-                else None
-            )
-            if not picture_path or not Path(picture_path).is_file():
-                missing.append(picture_word or f"item {item.item_id}")
-    if missing:
-        raise RenderContractError(
-            "picture matching requires verified picture assets; missing: " + ", ".join(missing)
-        )
+            if item.response_format == "match":
+                path = (
+                    asset_manifest.word_picture_paths.get(item.options[0])
+                    if asset_manifest and item.options
+                    else None
+                )
+                if not path or not Path(path).is_file():
+                    raise RenderContractError("picture matching requires verified picture assets")
+    if adapted.break_prompt and instruction_clarity_issues(adapted.break_prompt):
+        raise RenderContractError(f"unclear worksheet break instructions: {adapted.break_prompt!r}")
 
 
 def render_worksheet(
@@ -122,6 +126,7 @@ def render_worksheet(
 
     Returns the output file path.
     """
+    adapted = prepare_pdf_activity(adapted, asset_manifest)
     _validate_render_inputs(adapted, asset_manifest)
     path = Path(output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -149,8 +154,7 @@ def render_worksheet(
     # Page header
     y = _draw_header(c, adapted, theme, sizes, y)
 
-    # Classic print output omits decorative-only raster art. Task-supporting
-    # scenes and word pictures still render through the verified asset manifest.
+    # Profile-specific avatar/scenes remain; omit decorative corner stickers.
     if avatar_image:
         _draw_avatar(c, avatar_image, theme)
 
@@ -171,8 +175,6 @@ def render_worksheet(
     # Render each chunk
     use_scenes = asset_manifest is not None and theme.avatar_position == "integrated"
     for chunk_idx, chunk in enumerate(adapted.chunks):
-        has_tail = bool(adapted.break_prompt or adapted.feedback)
-        draw_divider = not (has_tail and chunk_idx == len(adapted.chunks) - 1)
         # Estimate with scenes first; fall back to full-width if too tall
         chunk_use_scene = use_scenes
         # Passage/read_aloud chunks always use full-width for readability
@@ -213,7 +215,7 @@ def render_worksheet(
         # Only page-break when the chunk header + first item won't fit.
         # Per-item breaks inside _draw_chunk handle overflow for the rest,
         # which avoids stranding headers on blank pages and reduces wasted space.
-        chunk_header_height = _estimate_chunk_header_height(chunk, sizes)
+        chunk_header_height = _estimate_chunk_header_height(chunk, sizes, theme)
         if chunk.items:
             first_item = chunk.items[0]
             col_w = CONTENT_WIDTH
@@ -239,7 +241,6 @@ def render_worksheet(
                 y,
                 asset_manifest,
                 chunk_idx,
-                draw_divider=draw_divider,
             )
         else:
             y = _draw_chunk(
@@ -253,7 +254,6 @@ def render_worksheet(
                 asset_manifest=asset_manifest,
                 page_break_fn=start_new_page,
                 effective_bottom=content_bottom,
-                draw_divider=draw_divider,
             )
 
     # Brain break + feedback panel: treat as a combined block to avoid
@@ -264,10 +264,7 @@ def render_worksheet(
     if adapted.feedback:
         tail_height += _estimate_feedback_panel_height(adapted, sizes)
 
-    # Use the real printable floor for this compact terminal block. Applying
-    # the normal between-item buffer here can orphan a short caregiver log on
-    # an otherwise empty page even though the block fits above the footer.
-    if tail_height > 0 and y - tail_height < content_bottom:
+    if tail_height > 0 and y - tail_height < content_bottom + PAGE_BREAK_BUFFER:
         start_new_page()
 
     if adapted.break_prompt:
@@ -370,6 +367,7 @@ def _draw_writing_line(
 def _estimate_chunk_header_height(
     chunk: ActivityChunk,
     sizes: dict[str, int],
+    theme: ThemeConfig,
 ) -> float:
     """Estimate vertical space for a chunk's header (before items)."""
     body = sizes["body"]
@@ -377,7 +375,7 @@ def _estimate_chunk_header_height(
     height = _line_spacing(body)  # micro_goal
     if chunk.time_estimate:
         height += _line_spacing(small) + 8
-    height += len(chunk.instructions) * _line_spacing(body)
+    height += _instruction_height(chunk, theme, sizes, CONTENT_WIDTH)
     height += LAYOUT_SPACING["section_gap"]
     if chunk.worked_example:
         shaded_box_height = body * 2 + 36
@@ -414,7 +412,7 @@ def _estimate_chunk_height(
     if chunk.time_estimate:
         height += _line_spacing(small) + 8
 
-    height += len(chunk.instructions) * _line_spacing(body)
+    height += _instruction_height(chunk, theme, sizes, col_width)
     height += LAYOUT_SPACING["section_gap"]
 
     if chunk.worked_example:
@@ -532,12 +530,12 @@ def _estimate_feedback_panel_height(adapted: AdaptedActivityModel, sizes: dict[s
     body = sizes["body"]
     small = sizes["small"]
     rows = len(adapted.chunks)
-    parent = body + 6 + rows * (small + 4)
+    parent = body + 10 + rows * (small + 6)
     hint = 0.0
     if adapted.feedback and adapted.feedback.show_decision_hint:
         max_chars = max(1, int((CONTENT_WIDTH - 10) / (small * 0.5)))
-        hint = len(_wrap_text(DECISION_HINT, max_chars)) * (small + 4)
-    return parent + hint
+        hint = len(_wrap_text(DECISION_HINT, max_chars)) * (small + 6)
+    return parent + hint + 20
 
 
 def _draw_header(
@@ -610,7 +608,6 @@ def _draw_chunk(
     asset_manifest: AssetManifest | None = None,
     page_break_fn: Callable[[], None] | None = None,
     effective_bottom: float = CONTENT_BOTTOM,
-    draw_divider: bool = True,
 ) -> float:
     """Draw a single activity chunk.
 
@@ -651,11 +648,13 @@ def _draw_chunk(
         c.setFont(theme.fonts.heading, sizes["body"])
         num_text = f"{step.number}."
         c.drawString(left + 10, y - sizes["body"], num_text)
-        num_w = len(num_text) * sizes["body"] * 0.55 + 4
+        num_w = pdfmetrics.stringWidth(num_text, theme.fonts.heading, body) + 8
         # Regular step text
         c.setFont(theme.fonts.primary, sizes["body"])
-        c.drawString(left + 10 + num_w, y - sizes["body"], f" {step.text}")
-        y -= _line_spacing(sizes["body"])
+        text_left = left + 10 + num_w
+        for line in _wrap_to_width(step.text, theme.fonts.primary, body, right - text_left):
+            c.drawString(text_left, y - body, line)
+            y -= _line_spacing(body)
 
     y -= LAYOUT_SPACING["section_gap"]
 
@@ -864,28 +863,20 @@ def _draw_chunk(
 
             y -= LAYOUT_SPACING["item_gap"]
 
-    if draw_divider:
-        # Chunk divider: three centered dots
-        y -= LAYOUT_SPACING["divider_gap"]
-        c.setFillColor(HexColor(theme_colors.chunk_border))
-        center_x = (left + right) / 2
-        for dx in (-12, 0, 12):
-            c.circle(center_x + dx, y, 2, fill=True, stroke=False)
-        y -= LAYOUT_SPACING["divider_gap"]
-    else:
-        # The terminal block supplies its own heading gap. Extra divider space
-        # here can orphan a short caregiver log on a new sheet.
-        pass
+    # Chunk divider: three centered dots
+    y -= LAYOUT_SPACING["divider_gap"]
+    c.setFillColor(HexColor(theme_colors.chunk_border))
+    center_x = (left + right) / 2
+    for dx in (-12, 0, 12):
+        c.circle(center_x + dx, y, 2, fill=True, stroke=False)
+    y -= LAYOUT_SPACING["divider_gap"]
 
     return y
 
 
 def _wrap_text(text: str, max_chars: int) -> list[str]:
     """Wrap text into lines that fit within max_chars."""
-    # The embedded worksheet fonts do not consistently carry Unicode arrow
-    # and dash glyphs. Normalize only at the render boundary so model/evidence
-    # content retains its canonical notation.
-    text = text.replace("→", "->").replace("—", "-").replace("–", "-")
+    text = _printable_text(text)
     if len(text) <= max_chars:
         return [text]
 
@@ -906,6 +897,62 @@ def _wrap_text(text: str, max_chars: int) -> list[str]:
         lines.append(current_line)
 
     return lines if lines else [text]
+
+
+def _printable_text(text: str) -> str:
+    return text.replace("→", "->").replace("—", "-").replace("–", "-")
+
+
+def _wrap_to_width(text: str, font: str, size: int, width: float) -> list[str]:
+    """Wrap using the rendered font, including the renderer's extra spacing."""
+
+    def fits(line: str) -> bool:
+        return bool(
+            pdfmetrics.stringWidth(line, font, size)
+            + max(0, len(line) - 1) * ADHD_SPACING["char_space_body"]
+            + line.count(" ") * ADHD_SPACING["word_space"]
+            <= width
+        )
+
+    lines: list[str] = []
+    line = ""
+    for word in _printable_text(text).split():
+        candidate = f"{line} {word}" if line else word
+        if line and not fits(candidate):
+            lines.append(line)
+            line = ""
+        if not fits(word):
+            for char in word:
+                if line and not fits(line + char):
+                    lines.append(line)
+                    line = ""
+                line += char
+        else:
+            line = f"{line} {word}" if line else word
+    if line:
+        lines.append(line)
+    return lines or [""]
+
+
+def _instruction_height(
+    chunk: ActivityChunk, theme: ThemeConfig, sizes: dict[str, int], width: float
+) -> float:
+    body = sizes["body"]
+    return sum(
+        len(
+            _wrap_to_width(
+                step.text,
+                theme.fonts.primary,
+                body,
+                width
+                - 10
+                - pdfmetrics.stringWidth(f"{step.number}.", theme.fonts.heading, body)
+                - 8,
+            )
+        )
+        * _line_spacing(body)
+        for step in chunk.instructions
+    )
 
 
 def _draw_chain_step_item(
@@ -1009,8 +1056,6 @@ def _draw_match_group(
                     logger.warning(f"Failed to draw word pic: {e}")
 
         if not word_drawn:
-            # Preflight should make this unreachable; keep the draw boundary
-            # fail-closed in case the file disappears between checks.
             raise RenderContractError(f"picture asset became unavailable: {pic_word}")
 
     # Draw dotted connecting area between word and picture columns
@@ -1313,7 +1358,6 @@ def _draw_chunk_with_scene(
     y: float,
     asset_manifest: AssetManifest,
     chunk_idx: int,
-    draw_divider: bool = True,
 ) -> float:
     """Draw chunk with two-column layout: content (60%) + scene (40%).
 
@@ -1333,7 +1377,6 @@ def _draw_chunk_with_scene(
             colors,
             y,
             asset_manifest=asset_manifest,
-            draw_divider=draw_divider,
         )
 
     # Layout: even chunks = scene right, odd = scene left
@@ -1378,7 +1421,6 @@ def _draw_chunk_with_scene(
         content_left=content_left,
         content_right=content_right,
         asset_manifest=asset_manifest,
-        draw_divider=draw_divider,
     )
 
     # Ensure we move past the scene height
@@ -1401,37 +1443,28 @@ def _draw_feedback_panel(
         return y
     body = sizes["body"]
     small = sizes["small"]
-    panel_height = _estimate_feedback_panel_height(adapted, sizes)
-    if y - panel_height < effective_bottom:
+    if y - _estimate_feedback_panel_height(adapted, sizes) < effective_bottom:
         c.showPage()
         y = CONTENT_TOP
-
-    # Clear any low-priority decoration under the dense caregiver text block.
-    c.setFillColor(HexColor(theme.colors.background))
-    c.rect(
-        MARGIN - 2,
-        y - panel_height,
-        CONTENT_WIDTH + 4,
-        panel_height + 4,
-        fill=True,
-        stroke=False,
-    )
 
     c.setFont(theme.fonts.heading, body)
     c.setFillColor(HexColor(theme.colors.directions))
     c.drawString(MARGIN, y - body, panel.parent_log_title)
-    y -= body + 6
+    y -= body + 10
     c.setFont(theme.fonts.primary, small)
     c.setFillColor(HexColor(theme.colors.text))
     for chunk in adapted.chunks:
-        line = feedback_log_row(chunk.chunk_id)
+        line = (
+            f"Part {chunk.chunk_id}: ___ of {len(chunk.items)} correct   "
+            "smooth / choppy   help: none / some / lots"
+        )
         c.drawString(MARGIN + 10, y - small, line)
-        y -= small + 4
+        y -= small + 6
     if panel.show_decision_hint:
         max_chars = max(1, int((CONTENT_WIDTH - 10) / (small * 0.5)))
         for ln in _wrap_text(DECISION_HINT, max_chars):
             c.drawString(MARGIN + 10, y - small, ln)
-            y -= small + 4
+            y -= small + 6
     return y
 
 

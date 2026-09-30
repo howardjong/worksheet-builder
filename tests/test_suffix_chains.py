@@ -61,11 +61,13 @@ def test_suffix_chain_items_hide_answers() -> None:
         assert item.answer, "every chain item carries its answer"
         assert item.answer not in item.content, "answer must never be printed"
         assert "______" in item.content
-    # Worked example consumed one hop; instructions name the exact suffix.
+    # Worked example consumed one hop; mixed suffixes follow each printed row.
     chain_chunks = [
         c for c in chunks if any(i.metadata.get("display") == "chain_step" for i in c.items)
     ]
-    assert any("Add -er" in s.text or "Add -est" in s.text for s in chain_chunks[0].instructions)
+    assert any(
+        "Add the ending printed in each problem." == s.text for s in chain_chunks[0].instructions
+    )
 
 
 def test_duplicate_chains_produce_no_duplicate_chunks_or_items() -> None:

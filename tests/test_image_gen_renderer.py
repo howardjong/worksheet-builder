@@ -18,7 +18,7 @@ from render.design_spec import (
 )
 from render.image_gen import ImageGenRenderer
 from render.image_providers import ImageProvider
-from render.page_gates import PageGateReport, TextGateReport
+from render.page_gates import LearningSceneReport, PageGateReport, TextGateReport
 from render.strategies import RenderContext, RenderResult
 
 
@@ -86,6 +86,12 @@ def _gate_report(passed: bool) -> PageGateReport:
         passed=passed,
         text=TextGateReport(available=True, passed=passed),
         character=CharacterJudgeResult(available=True, approved=passed, score=8),
+        learning_scene=LearningSceneReport(
+            available=True,
+            bounds=(0.1, 0.1, 0.6, 0.5),
+            supports_learning=passed,
+            work_areas_clear=True,
+        ),
     )
 
 
@@ -164,6 +170,8 @@ def test_falls_back_to_pdf_classic_when_all_attempts_fail(
 ) -> None:
     import render.image_gen as image_gen
 
+    monkeypatch.setenv("WORKSHEET_ALLOW_PDF_FALLBACK", "1")
+
     provider = _StubProvider("stub", [_png_bytes()] * 3)
     monkeypatch.setattr(image_gen, "evaluate_page", lambda *args, **kwargs: _gate_report(False))
 
@@ -216,6 +224,70 @@ def test_resolve_render_strategy_knows_image_gen() -> None:
     assert strategy.experimental is True
 
 
+def test_default_failure_does_not_silently_produce_plain_pdf(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("WORKSHEET_SKIP_ASSET_GEN", raising=False)
+    monkeypatch.delenv("WORKSHEET_ALLOW_PDF_FALLBACK", raising=False)
+    renderer = _renderer([], tmp_path / "cache", monkeypatch)
+    with pytest.raises(RuntimeError, match="substantial learning scene"):
+        renderer.render(_context(tmp_path))
+    assert not (tmp_path / "worksheet.pdf").exists()
+    assert (tmp_path / "artifacts" / "image_gen_failure.json").exists()
+
+
+def test_cached_page_with_missing_scene_verdict_is_regenerated(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import render.image_gen as image_gen
+
+    provider = _StubProvider("stub", [_png_bytes(), _png_bytes()])
+    monkeypatch.setattr(image_gen, "evaluate_page", lambda *args, **kwargs: _gate_report(True))
+    renderer = _renderer([provider], tmp_path / "cache", monkeypatch)
+    renderer.render(_context(tmp_path))
+    report_path = next((tmp_path / "cache").glob("page_*/gate_report.json"))
+    report = _gate_report(True)
+    report.learning_scene = None
+    report_path.write_text(report.model_dump_json())
+    renderer.render(_context(tmp_path))
+    assert provider.calls == 2
+
+
+def test_scene_gate_blocks_page_despite_correct_text(monkeypatch: pytest.MonkeyPatch) -> None:
+    import render.page_gates as gates
+
+    monkeypatch.setattr(
+        gates,
+        "evaluate_page_text",
+        lambda *args: TextGateReport(
+            available=True,
+            passed=True,
+        ),
+    )
+    monkeypatch.setattr(
+        gates,
+        "evaluate_learning_scene",
+        lambda *args: LearningSceneReport(
+            available=True,
+            bounds=(0.01, 0.01, 0.08, 0.08),
+            supports_learning=True,
+            work_areas_clear=True,
+        ),
+    )
+    report = gates.evaluate_page(b"png", ["rain"], None, [], scene_spec=_spec())
+    assert report.text.passed
+    assert not report.passed
+
+
+def test_unavailable_scene_judge_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
+    import render.page_gates as gates
+
+    monkeypatch.setattr(gates, "_learning_scene_with_provider", lambda *args: None)
+    assert not gates.evaluate_learning_scene(b"png", _spec()).passed
+
+
 def test_theme_art_change_busts_cache(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import render.image_gen as image_gen
     from render.strategies import RenderContext
@@ -265,6 +337,8 @@ def test_cache_hit_requires_gate_report(tmp_path: Path, monkeypatch: pytest.Monk
 
 def test_cache_not_written_on_gate_failure(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     import render.image_gen as image_gen
+
+    monkeypatch.setenv("WORKSHEET_ALLOW_PDF_FALLBACK", "1")
 
     provider = _StubProvider("stub", [_png_bytes()] * 3)
     monkeypatch.setattr(image_gen, "evaluate_page", lambda *args, **kwargs: _gate_report(False))

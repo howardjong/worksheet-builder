@@ -1,5 +1,6 @@
 import pytest
 
+from corpus.ufli.lookup import lookup_lesson
 from skill.lesson_loader import skill_model_from_lesson
 from skill.taxonomy import match_phonics_pattern
 from skill.transformation import verify_step
@@ -64,7 +65,9 @@ def test_sound_patterns_are_not_misclassified_as_affixes() -> None:
 def test_corpus_examples_resolve_to_verified_objective_contracts(
     lesson_number: int, expected_skill: str
 ) -> None:
-    """The current corpus is a fixture set, not a source-specific code path."""
+    """Check available corpus entries; private curriculum data is optional."""
+    if lookup_lesson(lesson_number) is None:
+        pytest.skip(f"Lesson {lesson_number} requires the optional local UFLI corpus")
     model = skill_model_from_lesson(lesson_number)
     transformations = [step for item in model.source_items for step in item.transformations]
 

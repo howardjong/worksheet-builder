@@ -183,6 +183,42 @@ def ensure_clear_chunk_instructions(chunk: ActivityChunk) -> ActivityChunk:
     return chunk.model_copy(update={"instructions": instructions, "worked_example": worked_example})
 
 
+def picture_matching_to_writing(chunk: ActivityChunk) -> ActivityChunk:
+    """Replace an unavailable picture task without retaining its match example."""
+    items = [
+        item.model_copy(
+            update={
+                "response_format": "write",
+                "options": None,
+                "answer": item.content,
+                "picture_prompt": None,
+            }
+        )
+        if item.response_format == "match"
+        else item
+        for item in chunk.items
+    ]
+    converted = chunk.model_copy(
+        update={
+            "items": items,
+            "response_format": "write",
+            "micro_goal": f"Write {len(items)} target words",
+            "worked_example": None,
+        }
+    )
+    texts = ["Read each printed word aloud.", "Write each word on its line."]
+    if any(item.response_format != "write" for item in items):
+        texts = []
+        for fmt in dict.fromkeys(item.response_format for item in items):
+            group = converted.model_copy(
+                update={"items": [item for item in items if item.response_format == fmt]}
+            )
+            texts.extend(canonical_instruction_texts(group))
+        converted.micro_goal = "Practice the target words"
+    converted.instructions = [Step(number=n, text=text) for n, text in enumerate(texts, 1)]
+    return converted
+
+
 def ensure_clear_instructions(
     worksheets: list[AdaptedActivityModel],
 ) -> list[AdaptedActivityModel]:
