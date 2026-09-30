@@ -418,7 +418,11 @@ def _write_scene_rejection_diagnostics(
 
 def _has_api_key() -> bool:
     """Check if a Gemini API key is available."""
-    return bool(os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY"))
+    from ai import openrouter
+
+    return openrouter.available() or bool(
+        os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
+    )
 
 
 def _generate_scene(
@@ -435,6 +439,19 @@ def _generate_scene(
     Uses the profile's CharacterStyleSheet for theme-accurate prompts when
     available, falling back to the generic description otherwise.
     """
+    from ai import openrouter
+
+    if openrouter.enabled():
+        full_prompt = (
+            _build_scene_generation_prompt(prompt, identity, character_spec)
+            if identity
+            else prompt + " Clean white background. No text or letters."
+        )
+        png = openrouter.generate_with_fallbacks(full_prompt, ref_bytes, aspect_ratio="4:3")
+        if png:
+            Path(output_path).write_bytes(png)
+            return output_path
+        return None
     try:
         from google import genai
         from google.genai import types
@@ -505,6 +522,14 @@ def _generate_word_picture(
     output_path: str,
 ) -> str | None:
     """Generate a small word picture icon (no reference character needed)."""
+    from ai import openrouter
+
+    if openrouter.enabled():
+        png = openrouter.generate_with_fallbacks(prompt, aspect_ratio="1:1")
+        if png:
+            Path(output_path).write_bytes(png)
+            return output_path
+        return None
     try:
         from google import genai
         from google.genai import types

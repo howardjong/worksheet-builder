@@ -78,15 +78,19 @@ profile = create_profile(name="Ian", grade_level="1", base_character="robot")
 
 ### Optional: AI assist
 
-Set an API key in your environment (or `.env` file) to enable AI-enhanced extraction:
+Set `OPENROUTER_API_KEY` in your environment or ignored `.env` file. One key
+routes production text, vision, character research, and image generation through
+OpenRouter. No separate OpenAI, Google, or Anthropic key is required for those calls.
 
 ```bash
-export OPENAI_API_KEY="your-key"      # Primary — GPT-5.4 for text tasks
-export GEMINI_API_KEY="your-key"      # Gemini 3.1 Flash Lite for text + image generation
-export ANTHROPIC_API_KEY="your-key"   # Claude as fallback
+export WORKSHEET_AI_PROVIDER=openrouter
+export WORKSHEET_IMAGE_PROVIDERS=openrouter
 ```
 
-Extraction priority: **Gemini vision (primary) > OCR fallback**. Quality review: **Gemini 2.5 Flash (primary) > GPT-5.4 fallback**. No keys = OCR-only mode (still works).
+Configure the key through your local secret settings; never commit it. Without
+an image key the builder produces an explicitly reported deterministic PDF.
+Photo extraction can fall back to OCR. See [OpenRouter configuration](docs/openrouter.md)
+for model choices, bounded retries, legacy-provider opt-in, and live verification.
 
 ### AI image generation
 
@@ -95,7 +99,7 @@ Generate custom avatar items and theme assets:
 ```python
 from extract.adapter import generate_image
 
-# Tries Gemini first, falls back to OpenAI, returns None if no keys
+# Uses the configured OpenRouter image-model chain; returns None on failure
 path = generate_image(
     "A friendly robot character, flat color, white background",
     "assets/robot.png"
@@ -158,9 +162,9 @@ alignment, and a substantial task-relevant learning scene. Scenes use the child
 profile's character reference and description, target 18–22% of the page, and
 must occupy at least 10% without obstructing text or answer areas. Accepted pages
 are cached and wrapped as searchable PDFs. Tiny corner stickers are omitted.
-Missing providers or failed gates report failure instead of silently changing
-the design. Set `WORKSHEET_ALLOW_PDF_FALLBACK=1` to explicitly allow a simpler
-PDF after failure, or `WORKSHEET_SKIP_ASSET_GEN=1` for a deterministic offline run.
+Missing providers or exhausted image attempts produce a simpler PDF and an
+`image_gen_fallback.json` report with the reason. Set `WORKSHEET_ALLOW_PDF_FALLBACK=0`
+to stop instead. `WORKSHEET_SKIP_ASSET_GEN=1` requests a deterministic offline run.
 
 `pdf_classic` remains the explicit opt-out (`--render-mode pdf_classic`): it uses
 deterministic ReportLab vector text, existing scene assets, and PDF validation.

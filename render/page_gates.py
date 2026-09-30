@@ -21,6 +21,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from ai import openrouter
 from companion.character_judge import (
     CharacterJudgeResult,
     _parse_json_response,  # noqa: PLC2701  # accepted repo idiom: mirrors character_judge structure
@@ -205,6 +206,23 @@ def _coerce_scene_report(
 
 def evaluate_learning_scene(page_png: bytes, spec: WorksheetDesignSpec) -> LearningSceneReport:
     """Fail closed when a meaningful, adequately sized scene cannot be verified."""
+    if openrouter.enabled():
+        raw = openrouter.complete_json(
+            _learning_scene_prompt(spec),
+            images=[page_png],
+            role="vision",
+            validate=lambda value: (
+                isinstance(value.get("supports_learning"), bool)
+                and isinstance(value.get("work_areas_clear"), bool)
+                and isinstance(value.get("issues"), list)
+                and "bounds" in value
+            ),
+        )
+        return (
+            _coerce_scene_report(raw, spec, "openrouter")
+            if raw is not None
+            else LearningSceneReport(min_area_fraction=spec.learning_scene_min_area_fraction)
+        )
     for provider in ("gemini", "openai"):
         raw = _learning_scene_with_provider(page_png, spec, provider)
         if raw is not None:
@@ -282,6 +300,20 @@ def match_rows_from_spec(spec: WorksheetDesignSpec) -> list[str]:
 
 def evaluate_page_text(page_png: bytes, required_text: list[str]) -> TextGateReport:
     """Vision readback: verify every required string appears, spelled exactly."""
+    if openrouter.enabled():
+        raw = openrouter.complete_json(
+            _build_text_gate_prompt(required_text),
+            images=[page_png],
+            role="vision",
+            validate=lambda value: all(
+                isinstance(value.get(key), list) for key in ("missing", "misspelled")
+            ),
+        )
+        return (
+            _coerce_text_report(raw, "openrouter")
+            if raw is not None
+            else TextGateReport(available=False, passed=False)
+        )
     report = _text_gate_with_gemini(page_png, required_text)
     if report is not None:
         return report
@@ -381,6 +413,18 @@ def _text_gate_with_openai(page_png: bytes, required_text: list[str]) -> TextGat
 
 def _evaluate_match_alignment(page_png: bytes, match_rows: list[str]) -> MatchAlignmentReport:
     """Vision check: does any match-row picture depict its own row's word?"""
+    if openrouter.enabled():
+        raw = openrouter.complete_json(
+            _build_match_alignment_prompt(match_rows),
+            images=[page_png],
+            role="vision",
+            validate=lambda value: isinstance(value.get("aligned"), list),
+        )
+        return (
+            _coerce_match_alignment_report(raw, "openrouter")
+            if raw is not None
+            else MatchAlignmentReport(available=False)
+        )
     report = _match_alignment_with_gemini(page_png, match_rows)
     if report is not None:
         return report

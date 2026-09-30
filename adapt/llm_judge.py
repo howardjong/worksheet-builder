@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 
 from adapt.objective_ledger import EvidenceItem, ObjectiveLedger, build_objective_ledger
 from adapt.schema import AdaptedActivityModel
+from ai import openrouter
 from skill.schema import LiteracySkillModel
 from validate.blocking_gates import BlockingGateResult, run_blocking_gates
 from validate.objective_coverage import (
@@ -150,11 +151,20 @@ def openai_text_model() -> str:
     One knob for both call sites so a poorly-performing or overpriced model can
     be swapped without a code change.
     """
+    if openrouter.enabled():
+        return next(iter(openrouter.models("text")), "none")
     return os.environ.get("WORKSHEET_OPENAI_TEXT_MODEL", DEFAULT_OPENAI_TEXT_MODEL)
 
 
 def _call_openai(prompt: str, max_completion_tokens: int = 1024) -> str | None:
     """Call the configured OpenAI text model and return the response text."""
+    if openrouter.enabled():
+        result = openrouter.complete(
+            prompt,
+            max_tokens=max_completion_tokens,
+            accept=lambda text: isinstance(openrouter.json_value(text), dict),
+        )
+        return result.text if result else None
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
         return None
@@ -213,13 +223,13 @@ def judge_adaptation(
     Returns a JudgeVerdict on success, or None if the judge is unavailable.
     The caller decides what to do with a failing verdict (retry, fallback, etc.).
     """
-    if not os.environ.get("OPENAI_API_KEY"):
+    if not (openrouter.available() or os.environ.get("OPENAI_API_KEY")):
         logger.info("  Pedagogical judge: no OPENAI_API_KEY, skipping")
         return None
 
     prompt = _build_judge_prompt(skill, worksheets)
 
-    logger.info("  Pedagogical judge: calling GPT 5.4...")
+    logger.info("  Pedagogical judge: calling configured model %s...", openai_text_model())
     response_text = _call_openai(prompt)
     if response_text is None:
         return None
@@ -666,7 +676,7 @@ def judge_objective_adaptation(
     Returns an ObjectiveJudgeVerdict on success, or None if the judge is
     unavailable (no key), the call fails, or the response cannot be parsed.
     """
-    if not os.environ.get("OPENAI_API_KEY"):
+    if not (openrouter.available() or os.environ.get("OPENAI_API_KEY")):
         logger.info("  Objective judge: no OPENAI_API_KEY, skipping")
         return None
 
@@ -674,7 +684,7 @@ def judge_objective_adaptation(
         ledger, blocking_gates, deterministic_coverage, worksheets, evidence
     )
 
-    logger.info("  Objective judge: calling GPT 5.4...")
+    logger.info("  Objective judge: calling configured model %s...", openai_text_model())
     response_text = _call_openai(prompt, max_completion_tokens=4096)
     if response_text is None:
         return None

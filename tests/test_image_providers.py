@@ -10,7 +10,7 @@ def test_chain_default_order_with_both_keys(monkeypatch: pytest.MonkeyPatch) -> 
 
     monkeypatch.setenv("GEMINI_API_KEY", "g-key")
     monkeypatch.setenv("OPENAI_API_KEY", "o-key")
-    monkeypatch.delenv("WORKSHEET_IMAGE_PROVIDERS", raising=False)
+    monkeypatch.setenv("WORKSHEET_IMAGE_PROVIDERS", "openai,gemini")
 
     chain = resolve_provider_chain()
 
@@ -23,7 +23,7 @@ def test_chain_skips_unavailable_providers(monkeypatch: pytest.MonkeyPatch) -> N
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
     monkeypatch.setenv("OPENAI_API_KEY", "o-key")
-    monkeypatch.delenv("WORKSHEET_IMAGE_PROVIDERS", raising=False)
+    monkeypatch.setenv("WORKSHEET_IMAGE_PROVIDERS", "openai,gemini")
 
     chain = resolve_provider_chain()
 
