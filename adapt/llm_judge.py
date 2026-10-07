@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import statistics
 from typing import Literal
 
@@ -20,6 +19,7 @@ from pydantic import BaseModel, Field
 
 from adapt.objective_ledger import EvidenceItem, ObjectiveLedger, build_objective_ledger
 from adapt.schema import AdaptedActivityModel
+from ai import openrouter
 from skill.schema import LiteracySkillModel
 from validate.blocking_gates import BlockingGateResult, run_blocking_gates
 from validate.objective_coverage import (
@@ -141,38 +141,19 @@ Approve if overall_score >= 0.7 and no criterion is below 0.5.
 Be rigorous but fair — the worksheets should teach the concept effectively."""
 
 
-DEFAULT_OPENAI_TEXT_MODEL = "gpt-5.4"
-
-
 def openai_text_model() -> str:
-    """OpenAI model for judge + planner text calls (WORKSHEET_OPENAI_TEXT_MODEL).
-
-    One knob for both call sites so a poorly-performing or overpriced model can
-    be swapped without a code change.
-    """
-    return os.environ.get("WORKSHEET_OPENAI_TEXT_MODEL", DEFAULT_OPENAI_TEXT_MODEL)
+    """Return the first configured OpenRouter text model (legacy helper name)."""
+    return next(iter(openrouter.models("text")), "none")
 
 
 def _call_openai(prompt: str, max_completion_tokens: int = 1024) -> str | None:
     """Call the configured OpenAI text model and return the response text."""
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        return None
-
-    model = openai_text_model()
-    try:
-        from openai import OpenAI
-
-        client = OpenAI(api_key=api_key)
-        response = client.chat.completions.create(
-            model=model,
-            messages=[{"role": "user", "content": prompt}],
-            max_completion_tokens=max_completion_tokens,
-        )
-        return response.choices[0].message.content or ""
-    except Exception as e:
-        logger.warning("OpenAI %s call failed: %s", model, e)
-        return None
+    result = openrouter.complete(
+        prompt,
+        max_tokens=max_completion_tokens,
+        accept=lambda text: isinstance(openrouter.json_value(text), dict),
+    )
+    return result.text if result else None
 
 
 def _extract_json(text: str) -> str:
@@ -213,13 +194,13 @@ def judge_adaptation(
     Returns a JudgeVerdict on success, or None if the judge is unavailable.
     The caller decides what to do with a failing verdict (retry, fallback, etc.).
     """
-    if not os.environ.get("OPENAI_API_KEY"):
-        logger.info("  Pedagogical judge: no OPENAI_API_KEY, skipping")
+    if not (openrouter.available()):
+        logger.info("  Pedagogical judge: no OPENROUTER_API_KEY, skipping")
         return None
 
     prompt = _build_judge_prompt(skill, worksheets)
 
-    logger.info("  Pedagogical judge: calling GPT 5.4...")
+    logger.info("  Pedagogical judge: calling configured model %s...", openai_text_model())
     response_text = _call_openai(prompt)
     if response_text is None:
         return None
@@ -666,15 +647,15 @@ def judge_objective_adaptation(
     Returns an ObjectiveJudgeVerdict on success, or None if the judge is
     unavailable (no key), the call fails, or the response cannot be parsed.
     """
-    if not os.environ.get("OPENAI_API_KEY"):
-        logger.info("  Objective judge: no OPENAI_API_KEY, skipping")
+    if not (openrouter.available()):
+        logger.info("  Objective judge: no OPENROUTER_API_KEY, skipping")
         return None
 
     prompt = _build_objective_judge_prompt(
         ledger, blocking_gates, deterministic_coverage, worksheets, evidence
     )
 
-    logger.info("  Objective judge: calling GPT 5.4...")
+    logger.info("  Objective judge: calling configured model %s...", openai_text_model())
     response_text = _call_openai(prompt, max_completion_tokens=4096)
     if response_text is None:
         return None

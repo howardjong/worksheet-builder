@@ -31,8 +31,6 @@ module = [
     "reportlab.*",
     "fitz.*",
     "pytesseract.*",
-    "anthropic.*",
-    "openai.*",
     "google.*",
     "google.genai.*",
     "chromadb.*",

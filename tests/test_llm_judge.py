@@ -93,12 +93,12 @@ def _worksheet() -> AdaptedActivityModel:
 
 
 def test_openai_text_model_defaults_and_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
-    """One knob (WORKSHEET_OPENAI_TEXT_MODEL) swaps the judge/planner/review model."""
-    monkeypatch.delenv("WORKSHEET_OPENAI_TEXT_MODEL", raising=False)
-    assert openai_text_model() == "gpt-5.4"
-
-    monkeypatch.setenv("WORKSHEET_OPENAI_TEXT_MODEL", "gpt-6-mini")
-    assert openai_text_model() == "gpt-6-mini"
+    monkeypatch.delenv("WORKSHEET_OPENROUTER_TEXT_MODELS", raising=False)
+    assert openai_text_model() == "openai/gpt-5.5"
+    monkeypatch.setenv(
+        "WORKSHEET_OPENROUTER_TEXT_MODELS", "anthropic/claude-sonnet-4.6,openai/gpt-5.5"
+    )
+    assert openai_text_model() == "anthropic/claude-sonnet-4.6"
 
 
 def test_judge_prompt_carries_full_item_text() -> None:
@@ -841,7 +841,7 @@ def test_objective_output_format_section_names_required_fields() -> None:
 def test_judge_package_objective_returns_verdict(monkeypatch: pytest.MonkeyPatch) -> None:
     from adapt.llm_judge import judge_package_objective
 
-    monkeypatch.setenv("OPENAI_API_KEY", "fake")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fake")
     skill = _obj_skill()
     ledger = build_objective_ledger(skill, corpus_lookup=fixture_corpus_lookup)
     decode = next(o for o in ledger.objectives if o.objective_id == "obj_decode")
@@ -881,7 +881,7 @@ def test_judge_package_objective_returns_verdict(monkeypatch: pytest.MonkeyPatch
 def test_judge_package_objective_none_on_api_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     from adapt.llm_judge import judge_package_objective
 
-    monkeypatch.setenv("OPENAI_API_KEY", "fake")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fake")
     skill = _obj_skill()
     ledger = build_objective_ledger(skill, corpus_lookup=fixture_corpus_lookup)
     decode = next(o for o in ledger.objectives if o.objective_id == "obj_decode")
@@ -909,7 +909,7 @@ def test_judge_package_objective_none_on_api_failure(monkeypatch: pytest.MonkeyP
 def test_objective_judge_retries_once_on_parse_failure(monkeypatch: pytest.MonkeyPatch) -> None:
     from adapt.llm_judge import judge_objective_adaptation
 
-    monkeypatch.setenv("OPENAI_API_KEY", "fake")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fake")
     skill = _obj_skill()
     ledger = build_objective_ledger(skill, corpus_lookup=fixture_corpus_lookup)
     decode = next(o for o in ledger.objectives if o.objective_id == "obj_decode")
@@ -961,7 +961,7 @@ def test_objective_judge_gives_up_after_second_parse_failure(
 ) -> None:
     from adapt.llm_judge import judge_objective_adaptation
 
-    monkeypatch.setenv("OPENAI_API_KEY", "fake")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fake")
     skill = _obj_skill()
     ledger = build_objective_ledger(skill, corpus_lookup=fixture_corpus_lookup)
     decode = next(o for o in ledger.objectives if o.objective_id == "obj_decode")

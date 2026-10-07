@@ -198,7 +198,7 @@ def test_live_synthesizes_and_replaces_when_improved(
         )
 
     monkeypatch.setattr(
-        "experiments.corpus_ufli.audio_judge._judge_clip_with_gemini",
+        "experiments.corpus_ufli.audio_judge._judge_clip_with_openrouter",
         _fake_judge,
     )
 
@@ -276,7 +276,7 @@ def test_keeps_original_when_not_improved(
         )
 
     monkeypatch.setattr(
-        "experiments.corpus_ufli.audio_judge._judge_clip_with_gemini",
+        "experiments.corpus_ufli.audio_judge._judge_clip_with_openrouter",
         _judge_revise,
     )
 

@@ -136,8 +136,8 @@ class TestGeminiApprovedFirstTry:
         tmp_path: Path,
     ) -> None:
         monkeypatch.setenv("WORKSHEET_LLM_ADAPT", "1")
-        monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
-        monkeypatch.setenv("OPENAI_API_KEY", "fake-key")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
 
         with (
             patch(_PATCH_GEMINI, return_value=_GEMINI_PLAN_JSON),
@@ -167,8 +167,8 @@ class TestGeminiRetryApproved:
         tmp_path: Path,
     ) -> None:
         monkeypatch.setenv("WORKSHEET_LLM_ADAPT", "1")
-        monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
-        monkeypatch.setenv("OPENAI_API_KEY", "fake-key")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
 
         verdicts = iter([_rejected_verdict(), _approved_verdict()])
 
@@ -197,8 +197,8 @@ class TestGPTTakeover:
         tmp_path: Path,
     ) -> None:
         monkeypatch.setenv("WORKSHEET_LLM_ADAPT", "1")
-        monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
-        monkeypatch.setenv("OPENAI_API_KEY", "fake-key")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
 
         verdicts = iter([_rejected_verdict(), _rejected_verdict()])
 
@@ -238,10 +238,13 @@ class TestGeminiOnlyNoJudge:
         tmp_path: Path,
     ) -> None:
         monkeypatch.setenv("WORKSHEET_LLM_ADAPT", "1")
-        monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
 
-        with patch(_PATCH_GEMINI, return_value=_GEMINI_PLAN_JSON):
+        with (
+            patch(_PATCH_GEMINI, return_value=_GEMINI_PLAN_JSON),
+            patch(_PATCH_JUDGE, return_value=None),
+        ):
             result = orchestrate_llm_adaptation(
                 _skill(),
                 _profile(),
@@ -266,9 +269,13 @@ class TestGPTOnlyNoGemini:
     ) -> None:
         monkeypatch.setenv("WORKSHEET_LLM_ADAPT", "1")
         monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-        monkeypatch.setenv("OPENAI_API_KEY", "fake-key")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
 
-        with patch(_PATCH_GPT, return_value=_GEMINI_PLAN_JSON):
+        with (
+            patch(_PATCH_GPT, return_value=_GEMINI_PLAN_JSON),
+            patch(_PATCH_GEMINI, return_value=None),
+            patch(_PATCH_JUDGE, return_value=None),
+        ):
             result = orchestrate_llm_adaptation(
                 _skill(),
                 _profile(),
@@ -280,7 +287,7 @@ class TestGPTOnlyNoGemini:
         log_path = tmp_path / "llm_adaptation_log.jsonl"
         entry = json.loads(log_path.read_text().strip())
         assert entry["outcome"] == "gpt_takeover_unjudged"
-        assert entry["gemini_attempts"] == 0
+        assert entry["gemini_attempts"] == 2
         assert entry["final_output_judged"] is False
         assert entry["final_judge_status"] == "unjudged"
 
@@ -426,8 +433,8 @@ class TestJudgeVerdictWritten:
         tmp_path: Path,
     ) -> None:
         monkeypatch.setenv("WORKSHEET_LLM_ADAPT", "1")
-        monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
-        monkeypatch.setenv("OPENAI_API_KEY", "fake-key")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
 
         with (
             patch(_PATCH_GEMINI, return_value=_GEMINI_PLAN_JSON),
@@ -471,8 +478,8 @@ class TestGeminiParseFailure:
         tmp_path: Path,
     ) -> None:
         monkeypatch.setenv("WORKSHEET_LLM_ADAPT", "1")
-        monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
-        monkeypatch.setenv("OPENAI_API_KEY", "fake-key")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
 
         with (
             patch(_PATCH_GEMINI, return_value="not valid json at all"),
@@ -497,8 +504,8 @@ def test_orchestrator_never_writes_global_log_under_pytest(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
     monkeypatch.setenv("WORKSHEET_LLM_ADAPT", "1")
-    monkeypatch.setenv("GEMINI_API_KEY", "fake-key")
-    monkeypatch.setenv("OPENAI_API_KEY", "fake-key")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fake-key")
     monkeypatch.chdir(tmp_path)
 
     with (

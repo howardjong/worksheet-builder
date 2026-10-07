@@ -8,6 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from ai import openrouter
+
 pytest.importorskip("chromadb")
 
 from experiments.corpus_ufli.audio_companion import (
@@ -20,7 +22,7 @@ from experiments.corpus_ufli.audio_companion_schema import (
     JudgeRecommendation,
 )
 from experiments.corpus_ufli.audio_judge import (
-    _judge_clip_with_gemini,
+    _judge_clip_with_openrouter,
     _parse_judge_response,
     apply_judge_verdicts,
     judge_audio_companion,
@@ -125,9 +127,8 @@ def test_judge_audio_companion_writes_reports_with_stubbed_judge(
         bundle.model_dump_json(indent=2)
     )
 
-    monkeypatch.setattr("experiments.corpus_ufli.audio_judge.get_rag_client", lambda: object())
     monkeypatch.setattr(
-        "experiments.corpus_ufli.audio_judge._judge_clip_with_gemini",
+        "experiments.corpus_ufli.audio_judge._judge_clip_with_openrouter",
         lambda **kwargs: AudioJudgeClipResult(
             voice_profile="dorothy",
             lesson_id=kwargs["clip"].lesson_id,
@@ -221,14 +222,13 @@ def test_judge_clip_uses_audio_pacing_and_clarity_guardrails(
             }
         )
     )
-    fake_client = SimpleNamespace(
-        models=SimpleNamespace(
-            generate_content=lambda **_kwargs: fake_response,
-        )
+    monkeypatch.setattr(
+        openrouter,
+        "complete",
+        lambda *a, **k: openrouter.Completion(fake_response.text, "google/gemini-3-flash-preview"),
     )
 
-    result = _judge_clip_with_gemini(
-        client=fake_client,
+    result = _judge_clip_with_openrouter(
         judge_model="gemini-3-flash-preview",
         companion_dir=tmp_path / "companion",
         lesson=LessonContent(
@@ -300,12 +300,13 @@ def test_judge_short_word_model_clip_avoids_pacing_false_positive(
             }
         )
     )
-    fake_client = SimpleNamespace(
-        models=SimpleNamespace(generate_content=lambda **_kwargs: fake_response)
+    monkeypatch.setattr(
+        openrouter,
+        "complete",
+        lambda *a, **k: openrouter.Completion(fake_response.text, "google/gemini-3-flash-preview"),
     )
 
-    result = _judge_clip_with_gemini(
-        client=fake_client,
+    result = _judge_clip_with_openrouter(
         judge_model="gemini-3-flash-preview",
         companion_dir=tmp_path / "companion",
         lesson=LessonContent(

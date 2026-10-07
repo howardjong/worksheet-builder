@@ -7,11 +7,11 @@ upstream (prompt) and downstream (gates, PDF wrap) is provider-agnostic.
 
 from __future__ import annotations
 
-import base64
-import io
 import logging
 import os
 from typing import Protocol
+
+from ai import openrouter
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +21,21 @@ logger = logging.getLogger(__name__)
 # image model.
 GEMINI_IMAGE_MODEL = "gemini-3-pro-image"
 DEFAULT_OPENAI_IMAGE_MODEL = "gpt-image-2-2026-04-21"
-DEFAULT_PROVIDER_ORDER = "openai,gemini"
+DEFAULT_PROVIDER_ORDER = "openrouter"
+
+
+class OpenRouterImageProvider:
+    """One explicit model in the quality-gated OpenRouter image chain."""
+
+    def __init__(self, model_id: str) -> None:
+        self.model_id = model_id
+        self.provider_id = "openrouter_" + model_id.replace("/", "_")
+
+    def available(self) -> bool:
+        return openrouter.available()
+
+    def generate(self, prompt: str, reference_png: bytes | None) -> bytes | None:
+        return openrouter.generate_image(prompt, reference_png, model=self.model_id)
 
 
 class ImageProvider(Protocol):
@@ -37,100 +51,30 @@ class ImageProvider(Protocol):
         """Generate one page image. Returns PNG bytes or None on failure."""
 
 
-class GeminiImageProvider:
-    """Gemini image generation (same pattern as render/asset_gen._generate_scene)."""
-
-    provider_id = "gemini"
+class GeminiImageProvider(OpenRouterImageProvider):
+    """Legacy name for a Google image model hosted through OpenRouter."""
 
     def __init__(self) -> None:
-        self.model_id = os.environ.get("WORKSHEET_GEMINI_IMAGE_MODEL", GEMINI_IMAGE_MODEL)
-
-    def available(self) -> bool:
-        return bool(os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY"))
-
-    def generate(self, prompt: str, reference_png: bytes | None) -> bytes | None:
-        api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-        if not api_key:
-            return None
-        try:
-            from google import genai
-            from google.genai import types
-
-            client = genai.Client(api_key=api_key)
-            contents: list[types.Part] = [types.Part(text=prompt)]
-            if reference_png:
-                contents.append(
-                    types.Part(
-                        inline_data=types.Blob(mime_type="image/png", data=reference_png),
-                    ),
-                )
-            response = client.models.generate_content(
-                model=self.model_id,
-                contents=contents,  # type: ignore[arg-type]
-                config=types.GenerateContentConfig(response_modalities=["TEXT", "IMAGE"]),
-            )
-            for part in response.candidates[0].content.parts:  # type: ignore[index,union-attr]
-                if part.inline_data and part.inline_data.data:
-                    return bytes(part.inline_data.data)
-            logger.warning("Gemini image response contained no image part")
-            return None
-        except Exception as exc:
-            logger.warning("Gemini image generation failed: %s", exc)
-            return None
+        model = os.environ.get("WORKSHEET_GEMINI_IMAGE_MODEL", GEMINI_IMAGE_MODEL)
+        super().__init__(model if "/" in model else "google/" + model)
 
 
-class OpenAIImageProvider:
-    """OpenAI gpt-image generation with reference conditioning via images.edit.
-
-    Note: gpt-image models return b64_json by default and reject the
-    response_format param (see gotcha G8 in the project context doc).
-    """
-
-    provider_id = "openai"
+class OpenAIImageProvider(OpenRouterImageProvider):
+    """Legacy name for an OpenAI image model hosted through OpenRouter."""
 
     def __init__(self) -> None:
-        self.model_id = os.environ.get("WORKSHEET_OPENAI_IMAGE_MODEL", DEFAULT_OPENAI_IMAGE_MODEL)
-
-    def available(self) -> bool:
-        return bool(os.environ.get("OPENAI_API_KEY"))
-
-    def generate(self, prompt: str, reference_png: bytes | None) -> bytes | None:
-        api_key = os.environ.get("OPENAI_API_KEY")
-        if not api_key:
-            return None
-        try:
-            from openai import OpenAI
-
-            client = OpenAI(api_key=api_key)
-            if reference_png:
-                result = client.images.edit(
-                    model=self.model_id,
-                    image=[("reference.png", io.BytesIO(reference_png), "image/png")],
-                    prompt=prompt,
-                    size="1024x1536",
-                )
-            else:
-                result = client.images.generate(
-                    model=self.model_id,
-                    prompt=prompt,
-                    size="1024x1536",
-                )
-            b64 = result.data[0].b64_json if result.data else None
-            if not b64:
-                logger.warning("OpenAI image response contained no b64_json payload")
-                return None
-            return base64.b64decode(b64)
-        except Exception as exc:
-            logger.warning("OpenAI image generation failed: %s", exc)
-            return None
+        model = os.environ.get(
+            "WORKSHEET_OPENAI_IMAGE_MODEL", openrouter.DEFAULT_MODELS["image"][0]
+        )
+        super().__init__(model if "/" in model else "openai/" + model)
 
 
 def resolve_provider_chain() -> list[ImageProvider]:
     """Resolve the configured provider fallback chain, available providers only.
 
     Order comes from WORKSHEET_IMAGE_PROVIDERS (comma-separated), default
-    "openai,gemini" (see DEFAULT_PROVIDER_ORDER / decision D29). Unknown names
-    are ignored.
+    "openrouter". Each configured OpenRouter image model becomes one entry.
+    Legacy provider names are OpenRouter model aliases. Unknown names are ignored.
     """
     order = os.environ.get("WORKSHEET_IMAGE_PROVIDERS", DEFAULT_PROVIDER_ORDER)
     registry: dict[str, ImageProvider] = {
@@ -139,6 +83,13 @@ def resolve_provider_chain() -> list[ImageProvider]:
     }
     chain: list[ImageProvider] = []
     for name in order.split(","):
+        if name.strip().lower() == "openrouter":
+            chain.extend(
+                OpenRouterImageProvider(model)
+                for model in openrouter.models("image")
+                if openrouter.available()
+            )
+            continue
         provider = registry.get(name.strip().lower())
         if provider is not None and provider.available():
             chain.append(provider)

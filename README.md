@@ -78,15 +78,18 @@ profile = create_profile(name="Ian", grade_level="1", base_character="robot")
 
 ### Optional: AI assist
 
-Set an API key in your environment (or `.env` file) to enable AI-enhanced extraction:
+Set `OPENROUTER_API_KEY` in your environment or ignored `.env` file. One key
+routes text, vision, character research, audio judging, and image generation through
+OpenRouter. No separate OpenAI, Google, or Anthropic key is required for those calls.
 
 ```bash
-export OPENAI_API_KEY="your-key"      # Primary — GPT-5.4 for text tasks
-export GEMINI_API_KEY="your-key"      # Gemini 3.1 Flash Lite for text + image generation
-export ANTHROPIC_API_KEY="your-key"   # Claude as fallback
+export WORKSHEET_IMAGE_PROVIDERS=openrouter
 ```
 
-Extraction priority: **Gemini vision (primary) > OCR fallback**. Quality review: **Gemini 2.5 Flash (primary) > GPT-5.4 fallback**. No keys = OCR-only mode (still works).
+Configure the key through your local secret settings; never commit it. Without
+an image key the builder produces an explicitly reported deterministic PDF.
+Photo extraction can fall back to OCR. See [OpenRouter configuration](docs/openrouter.md)
+for model choices, bounded retries, compatibility aliases, and live verification.
 
 ### AI image generation
 
@@ -95,7 +98,7 @@ Generate custom avatar items and theme assets:
 ```python
 from extract.adapter import generate_image
 
-# Tries Gemini first, falls back to OpenAI, returns None if no keys
+# Uses the configured OpenRouter image-model chain; returns None on failure
 path = generate_image(
     "A friendly robot character, flat color, white background",
     "assets/robot.png"
@@ -158,9 +161,9 @@ alignment, and a substantial task-relevant learning scene. Scenes use the child
 profile's character reference and description, target 18–22% of the page, and
 must occupy at least 10% without obstructing text or answer areas. Accepted pages
 are cached and wrapped as searchable PDFs. Tiny corner stickers are omitted.
-Missing providers or failed gates report failure instead of silently changing
-the design. Set `WORKSHEET_ALLOW_PDF_FALLBACK=1` to explicitly allow a simpler
-PDF after failure, or `WORKSHEET_SKIP_ASSET_GEN=1` for a deterministic offline run.
+Missing providers or exhausted image attempts produce a simpler PDF and an
+`image_gen_fallback.json` report with the reason. Set `WORKSHEET_ALLOW_PDF_FALLBACK=0`
+to stop instead. `WORKSHEET_SKIP_ASSET_GEN=1` requests a deterministic offline run.
 
 `pdf_classic` remains the explicit opt-out (`--render-mode pdf_classic`): it uses
 deterministic ReportLab vector text, existing scene assets, and PDF validation.
@@ -188,37 +191,31 @@ fails the print-ready promotion gate until a real provider output is validated.
 
 ### AI assist boundary
 
-All AI calls go through `extract/adapter.py` behind a `ModelAdapter` protocol. Three providers included:
-
-- **OpenAIAdapter** — GPT-5.4 for text tasks (primary)
-- **GeminiAdapter** — Gemini 3.1 Flash Lite for text tasks + Gemini 3.1 Flash Image Preview for asset generation
-- **ClaudeAdapter** — Anthropic Claude API
-- **NoOpAdapter** — deterministic baseline (default when no keys set)
-
-AI outputs are schema-validated before entering the pipeline. The pipeline produces valid, complete results with or without AI.
+All LLM inference uses `ai/openrouter.py`, which owns credential handling,
+model chains, bounded retries, and HTTP requests. `extract/adapter.py` retains
+the `ModelAdapter` protocol with `OpenRouterAdapter` and `NoOpAdapter`.
+The old `OpenAIAdapter`, `GeminiAdapter`, and `ClaudeAdapter` import names are
+compatibility aliases for `OpenRouterAdapter` and cannot call vendor SDKs.
+AI outputs are schema-validated before entering the pipeline.
 
 ### AI vision extraction
 
-Gemini vision is the primary extraction mode. The pipeline sends the worksheet photo directly to Gemini 3.1 Flash Lite, which analyzes the image and returns structured regions (concept labels, word chains, sentences, etc.). OCR (PaddleOCR/Tesseract) is only used as a fallback when no API key is available.
+The worksheet photo goes to the configured OpenRouter vision-model chain,
+which returns structured regions such as word chains and sentences.
+OCR (PaddleOCR/Tesseract) remains the deterministic fallback.
 
-```
-Photo → Gemini vision (primary) → SourceWorksheetModel
-      → OCR fallback (no API key) → heuristics → SourceWorksheetModel
-```
-
-Tested on a real UFLI Lesson 59 phone photo (two-page spread):
-- OCR alone: 113 fragments, wrong template, wrong skill, 8-page PDF
-- Gemini vision: 10 clean regions, correct template, correct skill, 2-page PDF
+The historical pre-migration test on a real UFLI Lesson 59 phone photo found
+that OCR alone produced 113 fragments and an eight-page PDF, while Gemini
+vision produced ten regions and a two-page PDF. That comparison predates the
+current model chain and is not a live OpenRouter acceptance result.
 
 ### AI quality review
 
-After ADHD adaptation (Stage 5), the pipeline sends the adapted worksheet to AI for iterative quality review (up to 3 iterations). The reviewer checks for structural issues — truncated text, formatting artifacts, ADHD anti-patterns — while preserving the original source content.
-
-```
-Adapted model → AI review → fix issues → re-review → ... → final adapted model
-```
-
-The review is conservative: it flags structural problems but never substitutes the source words (which are the learning targets from the original worksheet). Review uses Gemini 2.5 Flash (primary) with GPT-5.4 as fallback.
+After adaptation, the configured OpenRouter text-model chain reviews the
+worksheet for structural issues and ADHD anti-patterns, with up to three
+review/fix iterations. Review preserves the source learning words. A missing
+credential records a skipped review; a failed configured review does not
+count as approval. See [configuration and validation](docs/openrouter.md).
 
 ### Multi-worksheet mode
 
@@ -429,7 +426,7 @@ python -m experiments.corpus_ufli.ingest index-audio \
   --voice-profile dorothy \
   --granularity both
 
-# Judge generated clips with Gemini
+# Judge generated clips through OpenRouter
 python -m experiments.corpus_ufli.ingest judge-audio \
   --voice-profile dorothy
 
@@ -555,8 +552,8 @@ tests/test_smoke.py        1 test  — all packages importable
 
 | Package | Purpose |
 |---------|---------|
-| `openai` | GPT-5.4 text tasks + gpt-image-1.5 image generation |
-| `google-genai` | Gemini 3.1 Flash Lite text + Flash Image Preview generation |
+| `httpx` | Shared OpenRouter text, vision, research, audio, and image transport |
+| `google-genai` | Existing Gemini/Vertex RAG embeddings |
 | `python-dotenv` | Load API keys from `.env` file |
 
 ### Dev

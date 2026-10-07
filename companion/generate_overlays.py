@@ -1,8 +1,8 @@
-"""Generate character variant images using Gemini character-consistent image generation.
+"""Generate character variants through the shared OpenRouter image chain.
 
 Instead of generating separate overlay PNGs, this module generates complete character
 images with items integrated naturally by passing the base character as a reference
-image to Gemini 3.1 Flash Image (Nano Banana 2).
+image to each configured image model.
 
 An AI judge validates each generated image for character consistency and quality,
 retrying up to MAX_JUDGE_RETRIES times if the result is poor.
@@ -11,9 +11,7 @@ retrying up to MAX_JUDGE_RETRIES times if the result is poor.
 from __future__ import annotations
 
 import io
-import json
 import logging
-import os
 from pathlib import Path
 from typing import Any
 
@@ -31,13 +29,6 @@ _ASSETS_DIR = Path(__file__).parent.parent / "assets"
 _BASE_PATH = _ASSETS_DIR / "characters" / "rainbow_roblox.png"
 _VARIANTS_DIR = _ASSETS_DIR / "variants"
 
-# Gemini model for character-consistent image generation
-_IMAGE_MODEL = "gemini-3.1-flash-image-preview"
-
-# Judge models (Gemini primary, GPT fallback)
-_JUDGE_MODEL_GEMINI = "gemini-3-flash-preview"
-_JUDGE_MODEL_OPENAI = "gpt-5.4"
-
 MAX_JUDGE_RETRIES = 5
 
 # Fallback character description — used only when no style sheet is available
@@ -53,7 +44,7 @@ _FALLBACK_CHARACTER_DESC = (
 _ITEM_DESCRIPTIONS: dict[str, str] = {
     "white_sneakers": "wearing white sneakers instead of orange sneakers",
     "red_hoodie": (
-        "wearing a bright red hoodie sweatshirt " "instead of the blue lightning bolt t-shirt"
+        "wearing a bright red hoodie sweatshirt instead of the blue lightning bolt t-shirt"
     ),
     "blue_jeans": "wearing blue denim jeans instead of brown pants",
     "green_backpack": "wearing a small green backpack on his back",
@@ -111,46 +102,13 @@ def _generate_single_variant(
     reference_bytes: bytes | None = None,
 ) -> bytes | None:
     """Generate a single character variant image, returning raw PNG bytes."""
-    api_key = os.environ.get("GEMINI_API_KEY", "")
-    if not api_key:
-        logger.warning("GEMINI_API_KEY not set")
-        return None
+    from ai import openrouter
 
-    try:
-        from google import genai
-        from google.genai import types
-
-        client = genai.Client(api_key=api_key)
-
-        ref_bytes = reference_bytes or _BASE_PATH.read_bytes()
-
-        prompt = _build_variant_prompt(equipped_items, style_sheet)
-
-        contents = [
-            types.Part(text=prompt),
-            types.Part(
-                inline_data=types.Blob(mime_type="image/png", data=ref_bytes),
-            ),
-        ]
-
-        response = client.models.generate_content(
-            model=_IMAGE_MODEL,
-            contents=contents,  # type: ignore[arg-type]
-            config=types.GenerateContentConfig(
-                response_modalities=["TEXT", "IMAGE"],
-            ),
-        )
-
-        for part in response.candidates[0].content.parts:  # type: ignore[index,union-attr]
-            if part.inline_data:
-                return part.inline_data.data
-
-        logger.warning("Gemini returned no image in response")
-        return None
-
-    except Exception as e:
-        logger.error(f"Image generation failed: {e}")
-        return None
+    return openrouter.generate_with_fallbacks(
+        _build_variant_prompt(equipped_items, style_sheet),
+        reference_bytes or _BASE_PATH.read_bytes(),
+        aspect_ratio="1:1",
+    )
 
 
 def _build_judge_prompt(
@@ -197,106 +155,6 @@ def _build_judge_prompt(
         "Score 7+ means acceptable. Be strict about character consistency, "
         "theme fidelity, and clean output."
     )
-
-
-def _judge_with_gemini(
-    ref_bytes: bytes,
-    generated_bytes: bytes,
-    equipped_items: dict[str, str],
-    character_spec: CharacterSpec | None = None,
-) -> dict[str, Any] | None:
-    """Judge using Gemini 3.1 Flash Lite."""
-    api_key = os.environ.get("GEMINI_API_KEY", "")
-    if not api_key:
-        return None
-
-    try:
-        from google import genai
-        from google.genai import types
-
-        client = genai.Client(api_key=api_key)
-        prompt = _build_judge_prompt(equipped_items, character_spec)
-
-        contents = [
-            types.Part(text=prompt),
-            types.Part(
-                inline_data=types.Blob(mime_type="image/png", data=ref_bytes),
-            ),
-            types.Part(
-                inline_data=types.Blob(mime_type="image/png", data=generated_bytes),
-            ),
-        ]
-
-        response = client.models.generate_content(
-            model=_JUDGE_MODEL_GEMINI,
-            contents=contents,  # type: ignore[arg-type]
-        )
-
-        text = response.text or ""
-        text = _extract_json(text)
-        result: dict[str, Any] = json.loads(text)
-        return result
-
-    except Exception as e:
-        logger.warning(f"Gemini judge failed: {e}")
-        return None
-
-
-def _judge_with_openai(
-    ref_bytes: bytes,
-    generated_bytes: bytes,
-    equipped_items: dict[str, str],
-    character_spec: CharacterSpec | None = None,
-) -> dict[str, Any] | None:
-    """Judge using OpenAI GPT-5.4 as fallback."""
-    import base64
-
-    api_key = os.environ.get("OPENAI_API_KEY", "")
-    if not api_key:
-        return None
-
-    try:
-        import openai
-
-        client = openai.OpenAI(api_key=api_key)
-        prompt = _build_judge_prompt(equipped_items, character_spec)
-
-        ref_b64 = base64.b64encode(ref_bytes).decode("utf-8")
-        gen_b64 = base64.b64encode(generated_bytes).decode("utf-8")
-
-        response = client.chat.completions.create(
-            model=_JUDGE_MODEL_OPENAI,
-            max_completion_tokens=256,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/png;base64,{ref_b64}",
-                            },
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {
-                                "url": f"data:image/png;base64,{gen_b64}",
-                            },
-                        },
-                    ],
-                }
-            ],
-        )
-
-        text = response.choices[0].message.content or ""
-        text = _extract_json(text)
-        result: dict[str, Any] = json.loads(text)
-        return result
-
-    except Exception as e:
-        logger.warning(f"OpenAI judge failed: {e}")
-        return None
 
 
 def _judge_variant(

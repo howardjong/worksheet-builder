@@ -198,9 +198,6 @@ def test_run_audio_probe_matrix_writes_probe_artifacts(
         "experiments.corpus_ufli.audio_diagnostics._judge_probe_variant",
         _fake_judge_probe_variant,
     )
-    monkeypatch.setattr(
-        "experiments.corpus_ufli.audio_diagnostics.get_rag_client", lambda: object()
-    )
 
     summary = run_audio_probe_matrix(
         data_dir=str(tmp_path),
@@ -288,9 +285,6 @@ def test_run_audio_probe_matrix_soft_fails_google_variant_and_skips_judging_it(
     monkeypatch.setattr(
         "experiments.corpus_ufli.audio_diagnostics._judge_probe_variant",
         _fake_judge_probe_variant,
-    )
-    monkeypatch.setattr(
-        "experiments.corpus_ufli.audio_diagnostics.get_rag_client", lambda: object()
     )
 
     summary = run_audio_probe_matrix(

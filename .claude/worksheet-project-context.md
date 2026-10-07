@@ -8,6 +8,93 @@
 
 ## Current State
 
+### Session 69 — 2026-10-07 (complete OpenRouter routing and tested promotion)
+
+**Owner scope:** Check out `codex/openrouter-model-resilience`, ensure all LLM
+calls use OpenRouter, run tests, then merge the passing branch into `main`.
+This authorizes promotion after the audit and tests; Session 68's live visual
+comparison remains follow-up work. No OpenRouter credential is configured here.
+
+**Audit and implementation:**
+- Removed direct OpenAI, Gemini, Anthropic, and Perplexity inference transports
+  and vendor-key readiness checks. All text/vision/image/research calls now use
+  `ai/openrouter.py`. Legacy adapter imports and image-provider selectors are
+  router-only compatibility aliases. Missing router credentials use the existing
+  deterministic/OCR/PDF behavior; failed configured quality review is not approval.
+- Migrated experimental audio judging, its diagnostic/fallback callers, and the
+  historical `render.fal_eval` image-evaluation CLI to the same gateway.
+- Added an audio role and waveform-preserving `input_audio` support. Missing,
+  empty, or unsupported audio fails instead of falling back to a text-only judge.
+- RAG embeddings keep their existing Gemini/Vertex backend and vector dimensions;
+  ElevenLabs and Google Cloud speech synthesis remain separate services.
+- Removed unused direct-inference SDK dependencies and obsolete planner knobs.
+  Updated configuration/architecture docs and CI to include corpus experiment
+  tests and the semantic golden through `make test-all`.
+- Tests isolate inherited keys and block unmocked HTTP inference. A source audit
+  regression rejects direct vendor inference calls/imports in production and
+  less-used scripts. Regression coverage includes legacy keys/direct settings,
+  actual audio bytes, router image evaluation, and output-directory creation.
+
+**Verification:** `make lint` and strict `make typecheck` pass (204 source files).
+`make test-all`: 1,081 passed, 23 skipped (optional private corpus and existing
+skips); includes semantic golden and audio guardrails. One existing Pillow
+getdata deprecation warning remains. Default text/vision/audio and image models
+were checked against OpenRouter's public catalogs; no billed inference or actual
+private-learner visual acceptance was run.
+
+**Publication:** Apply the tested tree to PR #3 through the connected GitHub app
+(the terminal has no push credentials), verify matching tree hashes and checks,
+then merge under the owner's explicit instruction. Follow-up: configure the
+router key securely and inspect live worksheets with the actual learner profile.
+
+### Session 68 — 2026-09-30 (OpenRouter migration and image resilience branch)
+
+**Published baseline:** PR #2 is merged. Remote `main` is `3c426d6`; the
+published tree exactly matched the tested content/instruction/scene revision.
+The earlier command-line push failed for missing GitHub credentials, so the
+connected GitHub app published the same tree. Local main was fast-forwarded.
+
+**Owner scope:** New branch `codex/openrouter-model-resilience` from that main.
+The owner explicitly selected all production image, text, and vision calls,
+and automatic simpler PDF fallback after all image options fail, clearly reported.
+This supersedes Session 67's opt-in-only fallback policy. OpenAI-specific key
+creation is no longer required for this migration.
+
+**Implementation:**
+- `ai/openrouter.py` centralizes explicit role/model chains, HTTP transport,
+  MIME-correct vision/reference inputs, bounded transient retries, redacted
+  errors, schema-aware JSON fallbacks, and validated PNG output.
+- Image default: GPT Image 2.5 Sunburst → Gemini 3 Pro Image → Seedream 5 Pro
+  → Gemini 3.1 Flash Image. All four support reference inputs and portrait 3:4.
+  The dedicated `/images` API is used, not the older chat image format.
+- Text and vision use GPT-5.5 with Claude Sonnet 4.6 / Gemini 3.1 Pro fallback.
+  Character web research uses Sonar Pro → Sonar through the same router.
+- Extraction/AI assist, legacy adaptation, both planners/judges, review,
+  character judging/research, reference packs, buddy variants, classic assets,
+  and full-page image generation support an OpenRouter-only credential.
+- Full-page quality gates remain mandatory for every image model. Unexpected
+  provider errors advance to the next model; auth/credit failure stops the
+  image chain. Updated image model configuration invalidates page caches.
+- Automatic `pdf_classic` fallback writes `image_gen_fallback.json` and logs
+  a warning; `WORKSHEET_ALLOW_PDF_FALLBACK=0` restores fail-closed rendering.
+- `docs/openrouter.md` documents knobs, maximum attempt budget, legacy opt-in,
+  and live acceptance. The dated catalog snapshot records selected capabilities.
+
+**Verification:** Full suite: 978 passed, 23 skipped (optional absent corpus and
+existing skips), including the semantic golden. Lint and strict typecheck pass
+(203 source files). Offline tests cover transient transport errors, missing and
+corrupt image payloads, JSON/schema failures, credential failure without secret
+logging, reference inputs, router-only extraction/planning/judging, cache changes,
+unexpected provider errors, and a real deterministic PDF after image exhaustion.
+The real-PDF fallback test verifies the worksheet still contains its learning word.
+
+**Remaining live check:** No OpenRouter key is configured here; no billed
+OpenRouter request was made. Catalog checks establish supported API contracts,
+not worksheet quality. Configure `OPENROUTER_API_KEY` securely and compare
+real worksheets using the actual private learner profile before merging this
+branch. RAG embeddings retain their Gemini/Vertex backend and vector dimensions;
+experimental audio evaluation remains separate. Main stays at the reviewed baseline.
+
 ### Session 67 — 2026-09-30 (default learning scenes and main promotion)
 
 **Owner scope:** Promote the content/instruction revision to `main`, retaining

@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 
 from pydantic import BaseModel, Field
@@ -191,22 +190,10 @@ Respond with ONLY this JSON (no markdown fences):
 
 def _call_gemini(prompt: str, model: str = "gemini-3-flash-preview") -> str | None:
     """Call Gemini and return the response text."""
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        return None
+    from ai import openrouter
 
-    try:
-        from google import genai
-
-        client = genai.Client(api_key=api_key)
-        response = client.models.generate_content(
-            model=model,
-            contents=prompt,
-        )
-        return str(response.text)
-    except Exception as e:
-        logger.warning("Gemini adaptation call failed: %s", e)
-        return None
+    result = openrouter.complete(prompt, accept=lambda text: _parse_lesson_plan(text) is not None)
+    return result.text if result else None
 
 
 def _extract_json(text: str) -> str:

@@ -10,10 +10,10 @@ import pytest
 def test_fal_model_aliases_expand_to_model_ids() -> None:
     from render.fal_eval import expand_model_ids
 
-    assert expand_model_ids(["gemini-3-pro-image", "recraft-v4", "qwen-image-2512"]) == [
-        "fal-ai/gemini-3-pro-image-preview",
-        "fal-ai/recraft/v4/text-to-image",
-        "fal-ai/qwen-image-2512",
+    assert expand_model_ids(["gemini-3-pro-image", "recraft-v4", "krea-v2-large"]) == [
+        "google/gemini-3-pro-image",
+        "recraft/recraft-v4",
+        "krea/krea-2-large",
     ]
 
 
@@ -52,12 +52,12 @@ def test_load_fal_env_accepts_fal_api_key_alias(
     from render.fal_eval import load_fal_env
 
     env_path = tmp_path / ".env"
-    env_path.write_text("FAL_API_KEY=from-alias\n")
+    env_path.write_text("OPENROUTER_API_KEY=from-env\n")
     monkeypatch.delenv("FAL_KEY", raising=False)
     monkeypatch.delenv("FAL_API_KEY", raising=False)
 
     assert load_fal_env(env_path)
-    assert os_environ("FAL_KEY") == "from-alias"
+    assert os_environ("OPENROUTER_API_KEY") == "from-env"
 
 
 def test_extract_image_url_handles_common_fal_shapes() -> None:

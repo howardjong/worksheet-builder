@@ -39,7 +39,7 @@ from experiments.corpus_ufli.audio_companion_schema import (
     PronunciationLexicon,
     VoiceProfile,
 )
-from experiments.corpus_ufli.audio_judge import DEFAULT_JUDGE_MODEL, _judge_clip_with_gemini
+from experiments.corpus_ufli.audio_judge import DEFAULT_JUDGE_MODEL, _judge_clip_with_openrouter
 from experiments.corpus_ufli.extract import LessonContent
 from experiments.corpus_ufli.google_tts_client import (
     GoogleTtsRequestContext,
@@ -47,7 +47,6 @@ from experiments.corpus_ufli.google_tts_client import (
     build_google_tts_request_context,
     synthesize_google_tts_audio,
 )
-from rag.client import get_rag_client
 
 _DEFAULT_PROBE_SEGMENTS = (
     "lesson_001_phoneme_01_a",
@@ -191,14 +190,12 @@ def run_audio_probe_matrix(
             variant.generation_status = "generated"
 
     if judge:
-        client = get_rag_client()
         for variant in variants:
             if variant.generation_status != "generated":
                 continue
             bundle, source_clip = segment_map[variant.source_segment_id]
             lesson = lessons[source_clip.lesson_id]
             variant.judge_result = _judge_probe_variant(
-                client=client,
                 judge_model=judge_model,
                 lesson=lesson,
                 bundle=bundle,
@@ -453,7 +450,6 @@ def _synthesize_probe_variant(
 
 
 def _judge_probe_variant(
-    client: object,
     judge_model: str,
     lesson: LessonContent,
     bundle: LessonAudioBundle,
@@ -468,8 +464,7 @@ def _judge_probe_variant(
     probe_clip.audio_path = variant.audio_path
     probe_clip.voice_profile = variant.voice_profile
     probe_clip.speaker = variant.voice_profile
-    return _judge_clip_with_gemini(
-        client=client,
+    return _judge_clip_with_openrouter(
         judge_model=judge_model,
         lesson=lesson,
         bundle=bundle,

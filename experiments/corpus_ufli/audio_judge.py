@@ -14,6 +14,7 @@ from pathlib import Path
 from statistics import median
 from typing import Any
 
+from ai import openrouter
 from experiments.corpus_ufli.audio_companion import (
     _estimate_duration_ms,
     _load_lessons,
@@ -40,11 +41,10 @@ from experiments.corpus_ufli.pacing import (
     SANE_SINGLE_WORD_MAX_MS,
     SANE_SINGLE_WORD_MIN_MS,
 )
-from rag.client import get_rag_client
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_JUDGE_MODEL = os.environ.get("UFLI_AUDIO_JUDGE_MODEL", "gemini-3-flash-preview")
+DEFAULT_JUDGE_MODEL = os.environ.get("UFLI_AUDIO_JUDGE_MODEL", "")
 _BUNDLE_DIR = "lessons"
 _PILOT_LESSONS = "pilot_lessons.yaml"
 _VOICE_PROFILES = "voice_profiles.yaml"
@@ -121,15 +121,13 @@ def judge_audio_companion(
             "Run generate-audio --live first."
         )
 
-    client = get_rag_client()
     clip_results: list[AudioJudgeClipResult] = []
     for bundle, clip in generated_clips:
         lesson = lessons.get(bundle.lesson_id)
         if lesson is None:
             continue
         clip_results.append(
-            _judge_clip_with_gemini(
-                client=client,
+            _judge_clip_with_openrouter(
                 judge_model=judge_model,
                 companion_dir=companion_dir,
                 lesson=lesson,
@@ -158,7 +156,7 @@ def judge_audio_companion(
 
     summary = AudioJudgeSummary(
         generated_at=datetime.now(tz=UTC).isoformat(),
-        judge_model=judge_model,
+        judge_model=judge_model or ",".join(openrouter.models("audio")),
         data_dir=str(base),
         output_dir=str(report_dir),
         voice_profile=selected_voice,
@@ -228,8 +226,7 @@ def apply_judge_verdicts(
     return updated
 
 
-def _judge_clip_with_gemini(
-    client: Any,
+def _judge_clip_with_openrouter(
     judge_model: str,
     companion_dir: Path,
     lesson: LessonContent,
@@ -243,19 +240,22 @@ def _judge_clip_with_gemini(
         clip=clip,
         pacing_metrics=pacing_metrics,
     )
-    contents = _build_judge_contents(
-        companion_dir=companion_dir,
-        clip=clip,
-        prompt=prompt,
+    model_ids = None
+    if judge_model:
+        model_ids = [judge_model if "/" in judge_model else "google/" + judge_model]
+    response = openrouter.complete(
+        prompt,
+        audio=[_build_judge_audio(companion_dir, clip)],
+        role="audio",
+        model_ids=model_ids,
+        accept=lambda text: bool(_parse_judge_response(text)),
     )
-    response = client.models.generate_content(
-        model=judge_model,
-        contents=contents,
-    )
+    if response is None:
+        raise RuntimeError("OpenRouter audio judge unavailable; clip cannot be approved")
     parsed = _apply_clarity_guardrails(
         _apply_pronunciation_guardrails(
             _apply_pacing_guardrails(
-                _parse_judge_response(str(response.text)),
+                _parse_judge_response(response.text),
                 pacing_metrics=pacing_metrics,
             )
         ),
@@ -371,28 +371,18 @@ def _source_excerpt(lesson: LessonContent, clip: AudioClipDefinition) -> str:
     return "\n\n".join(part for part in parts if part)
 
 
-def _build_judge_contents(
-    companion_dir: Path,
-    clip: AudioClipDefinition,
-    prompt: str,
-) -> Any:
-    audio_path = companion_dir / clip.audio_path if clip.audio_path else None
-    if audio_path is None or not audio_path.exists():
-        return prompt
-
-    try:
-        from google.genai import types
-
-        mime_type = "audio/mpeg" if audio_path.suffix.lower() == ".mp3" else "audio/wav"
-        audio_part = types.Part.from_bytes(
-            data=audio_path.read_bytes(),
-            mime_type=mime_type,
-        )
-        text_part = types.Part.from_text(text=prompt)
-        return [audio_part, text_part]
-    except Exception as exc:
-        logger.warning("Falling back to text-only judge prompt for %s: %s", audio_path, exc)
-        return prompt
+def _build_judge_audio(companion_dir: Path, clip: AudioClipDefinition) -> tuple[bytes, str]:
+    """Send the actual waveform; missing audio must never degrade to text-only judgment."""
+    if not clip.audio_path:
+        raise ValueError("Audio judge requires an audio file")
+    audio_path = companion_dir / clip.audio_path
+    format = audio_path.suffix.lower().lstrip(".")
+    if format not in {"mp3", "wav"}:
+        raise ValueError(f"Unsupported audio judge format: {format}")
+    data = audio_path.read_bytes()
+    if not data:
+        raise ValueError("Audio judge requires a nonempty audio file")
+    return data, format
 
 
 def _clean_excerpt(text: str, limit: int = 600) -> str:
