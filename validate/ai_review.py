@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 
 from adapt.schema import AdaptedActivityModel
 
@@ -90,43 +89,27 @@ def _run_review(adapted: AdaptedActivityModel) -> ReviewResult:
     """Send adapted model to AI for quality review."""
     from ai import openrouter
 
-    if openrouter.enabled():
-        raw = openrouter.complete_json(
-            _build_review_prompt(adapted),
-            validate=lambda value: (
-                isinstance(value.get("passed"), bool)
-                and isinstance(value.get("issues"), list)
-                and isinstance(value.get("suggestions"), list)
-            ),
-        )
-        parsed = _parse_review_response(json.dumps(raw)) if raw is not None else None
-        return parsed or ReviewResult(
-            passed=False,
-            issues=[
-                {
-                    "criterion": "review_unavailable",
-                    "description": "OpenRouter review unavailable",
-                }
-            ],
-            suggestions=[],
-        )
-    # Legacy direct-provider opt-in / pre-migration configuration.
-    gemini_key = os.environ.get("GEMINI_API_KEY")
-    openai_key = os.environ.get("OPENAI_API_KEY")
-
-    if gemini_key:
-        result = _review_with_gemini(adapted, gemini_key)
-        if result is not None:
-            return result
-
-    if openai_key:
-        result = _review_with_openai(adapted, openai_key)
-        if result is not None:
-            return result
-
-    # No AI available — pass through
-    logger.info("  No AI API key available — skipping quality review")
-    return ReviewResult(passed=True, issues=[], suggestions=[], skipped_no_api_key=True)
+    if not openrouter.available():
+        return ReviewResult(passed=True, issues=[], suggestions=[], skipped_no_api_key=True)
+    raw = openrouter.complete_json(
+        _build_review_prompt(adapted),
+        validate=lambda value: (
+            isinstance(value.get("passed"), bool)
+            and isinstance(value.get("issues"), list)
+            and isinstance(value.get("suggestions"), list)
+        ),
+    )
+    parsed = _parse_review_response(json.dumps(raw)) if raw is not None else None
+    return parsed or ReviewResult(
+        passed=False,
+        issues=[
+            {
+                "criterion": "review_unavailable",
+                "description": "OpenRouter review unavailable",
+            }
+        ],
+        suggestions=[],
+    )
 
 
 def _build_review_prompt(adapted: AdaptedActivityModel) -> str:
@@ -232,50 +215,6 @@ def _parse_review_response(text: str) -> ReviewResult | None:
         )
     except (json.JSONDecodeError, KeyError) as e:
         logger.warning(f"Failed to parse AI review response: {e}")
-        return None
-
-
-def _review_with_gemini(adapted: AdaptedActivityModel, api_key: str) -> ReviewResult | None:
-    """Run quality review using Gemini."""
-    try:
-        from google import genai
-
-        client = genai.Client(api_key=api_key)
-        prompt = _build_review_prompt(adapted)
-
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=prompt,
-        )
-
-        return _parse_review_response(str(response.text))
-
-    except Exception as e:
-        logger.warning(f"Gemini review failed: {e}")
-        return None
-
-
-def _review_with_openai(adapted: AdaptedActivityModel, api_key: str) -> ReviewResult | None:
-    """Run quality review using the configured OpenAI text model."""
-    try:
-        from openai import OpenAI
-
-        from adapt.llm_judge import openai_text_model
-
-        client = OpenAI(api_key=api_key)
-        prompt = _build_review_prompt(adapted)
-
-        response = client.chat.completions.create(
-            model=openai_text_model(),
-            messages=[{"role": "user", "content": prompt}],
-            max_completion_tokens=1024,
-        )
-
-        text = response.choices[0].message.content or ""
-        return _parse_review_response(text)
-
-    except Exception as e:
-        logger.warning(f"OpenAI review failed: {e}")
         return None
 
 

@@ -2,19 +2,14 @@
 
 from __future__ import annotations
 
-import base64
 import json
 import logging
-import os
 from collections.abc import Mapping
 from typing import Any
 
 from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
-
-_JUDGE_MODEL_GEMINI = "gemini-3-flash-preview"
-_JUDGE_MODEL_OPENAI = "gpt-5.4"
 
 
 class CharacterJudgeResult(BaseModel):
@@ -46,35 +41,20 @@ def judge_character_consistency(
 
     from ai import openrouter
 
-    if openrouter.enabled():
-        raw = openrouter.complete_json(
-            _build_judge_prompt(criteria),
-            images=[reference_bytes, generated_bytes],
-            role="vision",
-            validate=lambda value: (
-                isinstance(value.get("approved"), bool) and isinstance(value.get("issues"), list)
-            ),
+    raw = openrouter.complete_json(
+        _build_judge_prompt(criteria),
+        images=[reference_bytes, generated_bytes],
+        role="vision",
+        validate=lambda value: (
+            isinstance(value.get("approved"), bool) and isinstance(value.get("issues"), list)
+        ),
+    )
+    return (
+        _coerce_result(raw, "openrouter")
+        if raw is not None
+        else CharacterJudgeResult(
+            available=False, approved=False, issues=["no OpenRouter judge available"]
         )
-        return (
-            _coerce_result(raw, "openrouter")
-            if raw is not None
-            else CharacterJudgeResult(
-                available=False, approved=False, issues=["no OpenRouter judge available"]
-            )
-        )
-    result = _judge_with_gemini(reference_bytes, generated_bytes, criteria)
-    if result is not None:
-        return result
-
-    result = _judge_with_openai(reference_bytes, generated_bytes, criteria)
-    if result is not None:
-        return result
-
-    return CharacterJudgeResult(
-        available=False,
-        approved=False,
-        score=0,
-        issues=["no judge available"],
     )
 
 
@@ -92,82 +72,6 @@ def _build_judge_prompt(criteria: list[str]) -> str:
         "Score 7+ means acceptable. Be strict about character identity, "
         "requested items, style fidelity, and clean printable output."
     )
-
-
-def _judge_with_gemini(
-    reference_bytes: bytes,
-    generated_bytes: bytes,
-    criteria: list[str],
-) -> CharacterJudgeResult | None:
-    api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-    if not api_key:
-        return None
-
-    try:
-        from google import genai
-        from google.genai import types
-
-        client = genai.Client(api_key=api_key)
-        response = client.models.generate_content(
-            model=_JUDGE_MODEL_GEMINI,
-            contents=[
-                types.Part(text=_build_judge_prompt(criteria)),
-                types.Part(
-                    inline_data=types.Blob(mime_type="image/png", data=reference_bytes),
-                ),
-                types.Part(
-                    inline_data=types.Blob(mime_type="image/png", data=generated_bytes),
-                ),
-            ],  # type: ignore[arg-type]
-        )
-        raw = _parse_json_response(response.text or "")
-        return _coerce_result(raw, "gemini")
-    except Exception as exc:
-        logger.warning("Gemini character judge failed: %s", exc)
-        return None
-
-
-def _judge_with_openai(
-    reference_bytes: bytes,
-    generated_bytes: bytes,
-    criteria: list[str],
-) -> CharacterJudgeResult | None:
-    api_key = os.environ.get("OPENAI_API_KEY", "")
-    if not api_key:
-        return None
-
-    try:
-        import openai
-
-        client = openai.OpenAI(api_key=api_key)
-        ref_b64 = base64.b64encode(reference_bytes).decode("utf-8")
-        gen_b64 = base64.b64encode(generated_bytes).decode("utf-8")
-        response = client.chat.completions.create(
-            model=_JUDGE_MODEL_OPENAI,
-            max_completion_tokens=256,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": _build_judge_prompt(criteria)},
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": f"data:image/png;base64,{ref_b64}"},
-                        },
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": f"data:image/png;base64,{gen_b64}"},
-                        },
-                    ],
-                }
-            ],
-        )
-        text = response.choices[0].message.content or ""
-        raw = _parse_json_response(text)
-        return _coerce_result(raw, "openai")
-    except Exception as exc:
-        logger.warning("OpenAI character judge failed: %s", exc)
-        return None
 
 
 def _parse_json_response(text: str) -> Mapping[str, Any]:

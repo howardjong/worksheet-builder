@@ -26,16 +26,25 @@ def _source_model() -> SourceWorksheetModel:
         template_type="ufli_word_work",
         regions=[
             SourceRegion(
-                type="title", content="Lesson 43",
-                bbox=(0, 0, 100, 50), confidence=0.98, metadata={},
+                type="title",
+                content="Lesson 43",
+                bbox=(0, 0, 100, 50),
+                confidence=0.98,
+                metadata={},
             ),
             SourceRegion(
-                type="concept_label", content="New Concept: -all",
-                bbox=(0, 60, 100, 100), confidence=0.95, metadata={},
+                type="concept_label",
+                content="New Concept: -all",
+                bbox=(0, 60, 100, 100),
+                confidence=0.95,
+                metadata={},
             ),
             SourceRegion(
-                type="sample_words", content="tall call wall",
-                bbox=(0, 110, 100, 140), confidence=0.5, metadata={},
+                type="sample_words",
+                content="tall call wall",
+                bbox=(0, 110, 100, 140),
+                confidence=0.5,
+                metadata={},
             ),
         ],
         raw_text="Lesson 43\nNew Concept: -all\ntall call wall",
@@ -50,8 +59,10 @@ def _source_model() -> SourceWorksheetModel:
 class TestSchemaContracts:
     def test_region_tag_validates(self) -> None:
         tag = RegionTag(
-            region_index=0, suggested_type="title",
-            confidence=0.95, rationale="First line",
+            region_index=0,
+            suggested_type="title",
+            confidence=0.95,
+            rationale="First line",
         )
         assert tag.region_index == 0
         json_str = tag.model_dump_json()
@@ -60,15 +71,19 @@ class TestSchemaContracts:
 
     def test_skill_inference_validates(self) -> None:
         inf = SkillInference(
-            domain="phonics", specific_skill="cvc_blending",
-            grade_level="1", confidence=0.9,
+            domain="phonics",
+            specific_skill="cvc_blending",
+            grade_level="1",
+            confidence=0.9,
         )
         assert inf.domain == "phonics"
 
     def test_ocr_correction_validates(self) -> None:
         corr = OCRCorrection(
-            region_index=2, original_text="ta11",
-            corrected_text="tall", confidence=0.85,
+            region_index=2,
+            original_text="ta11",
+            corrected_text="tall",
+            confidence=0.85,
         )
         assert corr.corrected_text == "tall"
 
@@ -88,8 +103,10 @@ class TestSchemaContracts:
                 RegionTag(region_index=0, suggested_type="title", confidence=0.9),
             ],
             skill_inference=SkillInference(
-                domain="phonics", specific_skill="cvc",
-                grade_level="1", confidence=0.85,
+                domain="phonics",
+                specific_skill="cvc",
+                grade_level="1",
+                confidence=0.85,
             ),
         )
         json_str = result.model_dump_json()
@@ -159,59 +176,59 @@ class TestGetAdapter:
                 os.environ["ANTHROPIC_API_KEY"] = old_a
 
     def test_claude_adapter_created(self) -> None:
-        adapter = get_adapter("claude", api_key="test-key")
+        adapter = get_adapter("claude")
         assert isinstance(adapter, ClaudeAdapter)
 
     def test_openai_adapter_created(self) -> None:
-        adapter = get_adapter("openai", api_key="test-key")
+        adapter = get_adapter("openai")
         assert isinstance(adapter, OpenAIAdapter)
 
     def test_gemini_adapter_created(self) -> None:
-        adapter = get_adapter("gemini", api_key="test-key")
+        adapter = get_adapter("gemini")
         assert isinstance(adapter, GeminiAdapter)
 
     def test_claude_implements_protocol(self) -> None:
         from extract.adapter import ModelAdapter
 
-        adapter = ClaudeAdapter(api_key="test")
+        adapter = ClaudeAdapter()
         assert isinstance(adapter, ModelAdapter)
 
     def test_openai_implements_protocol(self) -> None:
         from extract.adapter import ModelAdapter
 
-        adapter = OpenAIAdapter(api_key="test")
+        adapter = OpenAIAdapter()
         assert isinstance(adapter, ModelAdapter)
 
     def test_gemini_implements_protocol(self) -> None:
         from extract.adapter import ModelAdapter
 
-        adapter = GeminiAdapter(api_key="test")
+        adapter = GeminiAdapter()
         assert isinstance(adapter, ModelAdapter)
 
     def test_auto_prefers_openai(self) -> None:
         """OpenAI (GPT-5.4) is the top-priority auto-detected provider."""
         import os
 
-        os.environ["OPENAI_API_KEY"] = "test-key"
-        os.environ["GEMINI_API_KEY"] = "test-key"
+        os.environ["OPENROUTER_API_KEY"] = "test-key"
+        os.environ["OPENROUTER_API_KEY"] = "test-key"
         try:
             adapter = get_adapter("auto")
             assert isinstance(adapter, OpenAIAdapter)
         finally:
-            del os.environ["OPENAI_API_KEY"]
-            del os.environ["GEMINI_API_KEY"]
+            del os.environ["OPENROUTER_API_KEY"]
+            os.environ.pop("OPENROUTER_API_KEY", None)
 
     def test_auto_falls_back_to_gemini(self) -> None:
         import os
 
         old_o = os.environ.pop("OPENAI_API_KEY", None)
         old_a = os.environ.pop("ANTHROPIC_API_KEY", None)
-        os.environ["GEMINI_API_KEY"] = "test-key"
+        os.environ["OPENROUTER_API_KEY"] = "test-key"
         try:
             adapter = get_adapter("auto")
             assert isinstance(adapter, GeminiAdapter)
         finally:
-            del os.environ["GEMINI_API_KEY"]
+            os.environ.pop("OPENROUTER_API_KEY", None)
             if old_o:
                 os.environ["OPENAI_API_KEY"] = old_o
             if old_a:
@@ -223,26 +240,26 @@ class TestGetAdapter:
 
 class TestGeminiImageGen:
     def test_gemini_has_image_model(self) -> None:
-        adapter = GeminiAdapter(api_key="test")
-        assert adapter.IMAGE_MODEL == "gemini-3.1-flash-image-preview"
+        adapter = GeminiAdapter()
+        assert callable(adapter.generate_image)
 
     def test_gemini_has_generate_image_method(self) -> None:
-        adapter = GeminiAdapter(api_key="test")
+        adapter = GeminiAdapter()
         assert hasattr(adapter, "generate_image")
         assert callable(adapter.generate_image)
 
     def test_gemini_text_model_is_lite(self) -> None:
-        adapter = GeminiAdapter(api_key="test")
-        assert adapter.model == "gemini-3-flash-preview"
+        adapter = GeminiAdapter()
+        assert adapter.model == "openai/gpt-5.5"
 
     def test_openai_model_is_gpt54(self) -> None:
-        adapter = OpenAIAdapter(api_key="test")
-        assert adapter.model == "gpt-5.4"
+        adapter = OpenAIAdapter()
+        assert adapter.model == "openai/gpt-5.5"
 
     def test_openai_has_image_generation(self) -> None:
-        adapter = OpenAIAdapter(api_key="test")
+        adapter = OpenAIAdapter()
         assert hasattr(adapter, "generate_image")
-        assert adapter.IMAGE_MODEL == "gpt-image-1.5"
+        assert callable(adapter.generate_image)
 
     def test_generate_image_no_keys_returns_none(self) -> None:
         import os

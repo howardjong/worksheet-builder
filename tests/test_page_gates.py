@@ -232,8 +232,7 @@ def test_evaluate_page_fails_closed_when_match_rows_exist_but_gate_unavailable(
         lambda ref, gen, criteria: CharacterJudgeResult(available=True, approved=True, score=9),
     )
     # Both providers fail (no key / API error / unparseable response) → None.
-    monkeypatch.setattr(page_gates, "_match_alignment_with_gemini", lambda png, rows: None)
-    monkeypatch.setattr(page_gates, "_match_alignment_with_openai", lambda png, rows: None)
+    monkeypatch.setattr("ai.openrouter.complete_json", lambda *args, **kwargs: None)
 
     report = page_gates.evaluate_page(b"png", ["rain"], b"ref", [], match_rows=["grade", "chase"])
 

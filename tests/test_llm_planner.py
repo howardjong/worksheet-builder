@@ -104,62 +104,46 @@ def test_corpus_block_empty_without_lesson_number() -> None:
     assert _corpus_block(_skill(lesson_number=None)) == ""
 
 
-def test_planner_chain_prefers_openai(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_planner_chain_prefers_configured_router_model(monkeypatch: pytest.MonkeyPatch) -> None:
     from adapt import llm_planner
+    from ai import openrouter
 
-    monkeypatch.setenv("OPENAI_API_KEY", "fake")
-    monkeypatch.setenv("GEMINI_API_KEY", "fake")
-    monkeypatch.delenv("WORKSHEET_PLANNER_PROVIDERS", raising=False)
-    calls: list[str] = []
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fake")
+    calls: list[int] = []
 
-    def _fake_openai(prompt: str, max_completion_tokens: int = 1024) -> str:
-        calls.append(f"openai:{max_completion_tokens}")
-        return "{}"
+    def complete(prompt: str, **kwargs: object) -> openrouter.Completion:
+        calls.append(int(str(kwargs["max_tokens"])))
+        return openrouter.Completion("{}", "openai/gpt-5.5")
 
-    monkeypatch.setattr(llm_planner, "_call_openai", _fake_openai)
-
-    text, model = llm_planner._call_planner("prompt")
-
-    assert text == "{}"
-    assert model == "gpt-5.4"
-    assert calls == ["openai:8192"]
+    monkeypatch.setattr(openrouter, "complete", complete)
+    assert llm_planner._call_planner("prompt") == ("{}", "openai/gpt-5.5")
+    assert calls == [8192]
 
 
-def test_planner_chain_falls_back_to_gemini(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_planner_reports_actual_router_fallback_model(monkeypatch: pytest.MonkeyPatch) -> None:
     from adapt import llm_planner
+    from ai import openrouter
 
-    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.setenv("GEMINI_API_KEY", "fake")
-    monkeypatch.delenv("WORKSHEET_PLANNER_PROVIDERS", raising=False)
-    monkeypatch.delenv("WORKSHEET_PLANNER_GEMINI_MODEL", raising=False)
-    seen: list[str] = []
-
-    def _fake_gemini(prompt: str, model: str = "gemini-3-flash-preview") -> str:
-        seen.append(model)
-        return "{}"
-
-    monkeypatch.setattr(llm_planner, "_call_gemini", _fake_gemini)
-
-    text, model = llm_planner._call_planner("prompt")
-
-    assert text == "{}"
-    assert model == "gemini-3.5-flash"
-    assert seen == ["gemini-3.5-flash"]
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fake")
+    monkeypatch.setattr(
+        openrouter,
+        "complete",
+        lambda *a, **k: openrouter.Completion("{}", "google/gemini-3.1-pro-preview"),
+    )
+    assert llm_planner._call_planner("prompt") == ("{}", "google/gemini-3.1-pro-preview")
 
 
-def test_planner_chain_respects_env_order(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_planner_unavailable_does_not_fall_back_to_direct_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     from adapt import llm_planner
+    from ai import openrouter
 
-    monkeypatch.setenv("OPENAI_API_KEY", "fake")
-    monkeypatch.setenv("GEMINI_API_KEY", "fake")
-    monkeypatch.setenv("WORKSHEET_PLANNER_PROVIDERS", "gemini,openai")
-
-    monkeypatch.setattr(llm_planner, "_call_gemini", lambda p, model="": "from-gemini")
-
-    text, model = llm_planner._call_planner("prompt")
-
-    assert text == "from-gemini"
-    assert model == "gemini-3.5-flash"
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fake")
+    monkeypatch.setenv("OPENAI_API_KEY", "fake-direct")
+    monkeypatch.setenv("GEMINI_API_KEY", "fake-direct")
+    monkeypatch.setattr(openrouter, "complete", lambda *a, **k: None)
+    assert llm_planner._call_planner("prompt") == (None, "none")
 
 
 def test_planner_chain_no_keys(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -218,7 +202,7 @@ def _verdict(approved: bool, score: float) -> JudgeVerdict:
 
 def _planner_env(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("WORKSHEET_LLM_ADAPT", "1")
-    monkeypatch.setenv("OPENAI_API_KEY", "fake")
+    monkeypatch.setenv("OPENROUTER_API_KEY", "fake")
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("WORKSHEET_PLANNER_PROVIDERS", raising=False)
 

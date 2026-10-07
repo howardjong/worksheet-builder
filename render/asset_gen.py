@@ -417,12 +417,10 @@ def _write_scene_rejection_diagnostics(
 
 
 def _has_api_key() -> bool:
-    """Check if a Gemini API key is available."""
+    """Whether the shared inference gateway is configured."""
     from ai import openrouter
 
-    return openrouter.available() or bool(
-        os.environ.get("GOOGLE_API_KEY") or os.environ.get("GEMINI_API_KEY")
-    )
+    return openrouter.available()
 
 
 def _generate_scene(
@@ -441,80 +439,16 @@ def _generate_scene(
     """
     from ai import openrouter
 
-    if openrouter.enabled():
-        full_prompt = (
-            _build_scene_generation_prompt(prompt, identity, character_spec)
-            if identity
-            else prompt + " Clean white background. No text or letters."
-        )
-        png = openrouter.generate_with_fallbacks(full_prompt, ref_bytes, aspect_ratio="4:3")
-        if png:
-            Path(output_path).write_bytes(png)
-            return output_path
-        return None
-    try:
-        from google import genai
-        from google.genai import types
-
-        api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-        if not api_key:
-            return None
-
-        client = genai.Client(api_key=api_key)
-
-        if identity:
-            full_prompt = _build_scene_generation_prompt(prompt, identity, character_spec)
-        else:
-            char_desc = (
-                style_sheet.character_block
-                if style_sheet and style_sheet.character_block
-                else _FALLBACK_CHARACTER_DESC
-            )
-            env_context = ""
-            if character_spec and character_spec.scene_environment:
-                env_context = f" The scene is set in {character_spec.scene_environment.strip()}"
-            full_prompt = (
-                f"Generate an image of {char_desc}, "
-                f"{prompt}{env_context} "
-                f"Keep the same character style as the reference image. "
-                f"Bright colors, child-friendly, clean white background. "
-                f"No text, no words, no letters in the image."
-            )
-
-        contents: list[types.Part] = [types.Part(text=full_prompt)]
-        if ref_bytes:
-            contents.append(
-                types.Part(
-                    inline_data=types.Blob(
-                        mime_type="image/png",
-                        data=ref_bytes,
-                    ),
-                ),
-            )
-
-        response = client.models.generate_content(
-            model=_IMAGE_MODEL,
-            contents=contents,  # type: ignore[arg-type]
-            config=types.GenerateContentConfig(
-                response_modalities=["TEXT", "IMAGE"],
-            ),
-        )
-
-        for part in response.candidates[0].content.parts:  # type: ignore[index,union-attr]
-            if part.inline_data and part.inline_data.data:
-                Path(output_path).write_bytes(part.inline_data.data)
-                logger.info(f"  Generated scene: {output_path}")
-                return output_path
-
-        logger.warning(f"  No image in response for: {output_path}")
-        return None
-
-    except ImportError:
-        logger.info("  google-genai not installed")
-        return None
-    except Exception as e:
-        logger.warning(f"  Scene generation failed: {e}")
-        return None
+    full_prompt = (
+        _build_scene_generation_prompt(prompt, identity, character_spec)
+        if identity
+        else prompt + " Clean white background. No text or letters."
+    )
+    png = openrouter.generate_with_fallbacks(full_prompt, ref_bytes, aspect_ratio="4:3")
+    if png:
+        Path(output_path).write_bytes(png)
+        return output_path
+    return None
 
 
 def _generate_word_picture(
@@ -524,45 +458,11 @@ def _generate_word_picture(
     """Generate a small word picture icon (no reference character needed)."""
     from ai import openrouter
 
-    if openrouter.enabled():
-        png = openrouter.generate_with_fallbacks(prompt, aspect_ratio="1:1")
-        if png:
-            Path(output_path).write_bytes(png)
-            return output_path
-        return None
-    try:
-        from google import genai
-        from google.genai import types
-
-        api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-        if not api_key:
-            return None
-
-        client = genai.Client(api_key=api_key)
-
-        response = client.models.generate_content(
-            model=_IMAGE_MODEL,
-            contents=[types.Part(text=prompt)],  # type: ignore[arg-type]
-            config=types.GenerateContentConfig(
-                response_modalities=["TEXT", "IMAGE"],
-            ),
-        )
-
-        for part in response.candidates[0].content.parts:  # type: ignore[index,union-attr]
-            if part.inline_data and part.inline_data.data:
-                Path(output_path).write_bytes(part.inline_data.data)
-                logger.info(f"  Generated word picture: {output_path}")
-                return output_path
-
-        logger.warning(f"  No image in response for: {output_path}")
-        return None
-
-    except ImportError:
-        logger.info("  google-genai not installed")
-        return None
-    except Exception as e:
-        logger.warning(f"  Word picture generation failed: {e}")
-        return None
+    png = openrouter.generate_with_fallbacks(prompt, aspect_ratio="1:1")
+    if png:
+        Path(output_path).write_bytes(png)
+        return output_path
+    return None
 
 
 def _generate_local_scene(

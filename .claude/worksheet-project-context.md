@@ -8,6 +8,45 @@
 
 ## Current State
 
+### Session 69 — 2026-10-07 (complete OpenRouter routing and tested promotion)
+
+**Owner scope:** Check out `codex/openrouter-model-resilience`, ensure all LLM
+calls use OpenRouter, run tests, then merge the passing branch into `main`.
+This authorizes promotion after the audit and tests; Session 68's live visual
+comparison remains follow-up work. No OpenRouter credential is configured here.
+
+**Audit and implementation:**
+- Removed direct OpenAI, Gemini, Anthropic, and Perplexity inference transports
+  and vendor-key readiness checks. All text/vision/image/research calls now use
+  `ai/openrouter.py`. Legacy adapter imports and image-provider selectors are
+  router-only compatibility aliases. Missing router credentials use the existing
+  deterministic/OCR/PDF behavior; failed configured quality review is not approval.
+- Migrated experimental audio judging, its diagnostic/fallback callers, and the
+  historical `render.fal_eval` image-evaluation CLI to the same gateway.
+- Added an audio role and waveform-preserving `input_audio` support. Missing,
+  empty, or unsupported audio fails instead of falling back to a text-only judge.
+- RAG embeddings keep their existing Gemini/Vertex backend and vector dimensions;
+  ElevenLabs and Google Cloud speech synthesis remain separate services.
+- Removed unused direct-inference SDK dependencies and obsolete planner knobs.
+  Updated configuration/architecture docs and CI to include corpus experiment
+  tests and the semantic golden through `make test-all`.
+- Tests isolate inherited keys and block unmocked HTTP inference. A source audit
+  regression rejects direct vendor inference calls/imports in production and
+  less-used scripts. Regression coverage includes legacy keys/direct settings,
+  actual audio bytes, router image evaluation, and output-directory creation.
+
+**Verification:** `make lint` and strict `make typecheck` pass (204 source files).
+`make test-all`: 1,081 passed, 23 skipped (optional private corpus and existing
+skips); includes semantic golden and audio guardrails. One existing Pillow
+getdata deprecation warning remains. Default text/vision/audio and image models
+were checked against OpenRouter's public catalogs; no billed inference or actual
+private-learner visual acceptance was run.
+
+**Publication:** Apply the tested tree to PR #3 through the connected GitHub app
+(the terminal has no push credentials), verify matching tree hashes and checks,
+then merge under the owner's explicit instruction. Follow-up: configure the
+router key securely and inspect live worksheets with the actual learner profile.
+
 ### Session 68 — 2026-09-30 (OpenRouter migration and image resilience branch)
 
 **Published baseline:** PR #2 is merged. Remote `main` is `3c426d6`; the

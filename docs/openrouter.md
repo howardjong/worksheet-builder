@@ -1,13 +1,17 @@
 # OpenRouter configuration
 
-Production image generation, extraction, adaptation/planning, pedagogical and
-objective judging, page gates, quality review, character research, reference
-packs, buddy variants, and classic-renderer image assets support OpenRouter.
+All LLM text, vision, research, and audio evaluation calls use the shared
+`ai/openrouter.py` transport. Worksheet and asset image generation, including
+the historical `render.fal_eval` evaluation CLI, also use OpenRouter.
 Configure `OPENROUTER_API_KEY` through local secret settings or an ignored `.env`.
-The key must never be committed. Set `WORKSHEET_AI_PROVIDER=openrouter` to require
-OpenRouter for text/vision paths. Auto mode prefers OpenRouter when its key exists;
-older direct-key installations retain their legacy text paths until migrated.
-The image renderer defaults to OpenRouter.
+The key must never be committed. Direct OpenAI, Gemini, Anthropic, Perplexity,
+and fal credentials cannot enable or receive inference calls. There is no
+fallback to a vendor SDK when the router fails or its key is missing.
+
+Without the router credential, AI assist uses its deterministic baseline,
+photo extraction can use OCR, and the default image renderer reports a simpler
+PDF fallback. An explicitly skipped quality review is recorded as skipped;
+a failed review request with a configured key is not treated as approval.
 
 | Task | Ordered default models |
 | --- | --- |
@@ -15,6 +19,7 @@ The image renderer defaults to OpenRouter.
 | Text | `openai/gpt-5.5`, `anthropic/claude-sonnet-4.6`, `google/gemini-3.1-pro-preview` |
 | Vision | `openai/gpt-5.5`, `google/gemini-3.1-pro-preview`, `anthropic/claude-sonnet-4.6` |
 | Web research | `perplexity/sonar-pro`, `perplexity/sonar` |
+| Audio judging | `google/gemini-3-flash-preview`, `google/gemini-2.5-flash` |
 
 These slugs and image reference/portrait capabilities were checked against the
 public catalogs on 2026-09-30; [the snapshot](openrouter-models-2026-09-30.json)
@@ -24,7 +29,8 @@ before deciding whether another model should become primary.
 
 Override any ordered chain with comma-separated
 `WORKSHEET_OPENROUTER_IMAGE_MODELS`, `WORKSHEET_OPENROUTER_TEXT_MODELS`,
-`WORKSHEET_OPENROUTER_VISION_MODELS`, or `WORKSHEET_OPENROUTER_RESEARCH_MODELS`.
+`WORKSHEET_OPENROUTER_VISION_MODELS`, `WORKSHEET_OPENROUTER_RESEARCH_MODELS`,
+or `WORKSHEET_OPENROUTER_AUDIO_MODELS`.
 Duplicate entries are removed while preserving order. Empty chains disable that
 role. `OPENROUTER_BASE_URL` defaults to `https://openrouter.ai/api/v1`.
 
@@ -55,13 +61,23 @@ and `image_gen_fallback.json` with the reason, plus a warning. The result identi
 the renderer actually used. `WORKSHEET_ALLOW_PDF_FALLBACK=0` instead stops the run.
 `WORKSHEET_SKIP_ASSET_GEN=1` explicitly requests offline deterministic rendering.
 
-Legacy image SDKs are available with `WORKSHEET_IMAGE_PROVIDERS=openai,gemini`
-and their own keys. `WORKSHEET_AI_PROVIDER=direct` selects legacy text/vision
-paths. RAG embeddings retain their existing Gemini/Vertex backend and vector
-dimensions; experimental audio evaluation also retains its separate backend.
+The legacy adapter import names and `WORKSHEET_IMAGE_PROVIDERS=openai,gemini`
+remain compatibility aliases for models hosted through OpenRouter. They all
+require `OPENROUTER_API_KEY`; `WORKSHEET_AI_PROVIDER=direct` cannot bypass the
+gateway. Configure text-model ordering using the role-specific settings above;
+the former direct-provider planner and text-model settings are obsolete.
+
+Audio judging sends the actual MP3/WAV waveform as base64 `input_audio` through
+[chat completions](https://openrouter.ai/docs/guides/overview/multimodal/audio).
+Missing or empty audio fails instead of becoming a transcript-only judgment.
+An explicit audio `--judge-model` selects an OpenRouter model; without it the
+audio role chain applies. RAG embeddings retain their Gemini/Vertex backend and
+existing vector dimensions. ElevenLabs and Google Cloud speech synthesis are
+separate services and retain their current implementations.
 
 For live acceptance, configure the OpenRouter credential, run a committed lesson
 with the actual learner profile, inspect all PDF pages and attempt gate reports,
 and exercise the fallback chain with the primary image model disabled. Offline
 tests cover API protocol, transient failures, malformed outputs, reference
-conditioning, gate failures, cache invalidation, and deterministic PDF fallback.
+conditioning, gate failures, cache invalidation, and deterministic PDF fallback. Repository tests clear inherited inference
+credentials and block unmocked HTTP inference; no live LLM call is needed to run them.

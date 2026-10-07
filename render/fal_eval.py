@@ -1,12 +1,10 @@
-"""Small fal.ai image-model eval harness for worksheet renderer candidates."""
+"""OpenRouter image-model eval harness (historical module name)."""
 
 from __future__ import annotations
 
 import argparse
 import base64
-import importlib
 import json
-import os
 import re
 import ssl
 import time
@@ -20,27 +18,20 @@ from typing import Any, Literal, cast
 import certifi
 from dotenv import load_dotenv
 
+from ai import openrouter
+
+# Historical module/CLI names are retained; inference now uses OpenRouter exclusively.
 DEFAULT_MODEL_ALIASES: dict[str, str] = {
     "gpt-image-2": "openai/gpt-image-2",
-    "gemini-3-pro-image": "fal-ai/gemini-3-pro-image-preview",
-    "gemini-3-pro-image-preview": "fal-ai/gemini-3-pro-image-preview",
-    "nano-banana-pro": "fal-ai/nano-banana-pro",
-    "recraft-v4": "fal-ai/recraft/v4/text-to-image",
-    "recraft-v4-pro": "fal-ai/recraft/v4/pro/text-to-image",
-    "qwen-image-2512": "fal-ai/qwen-image-2512",
-    "qwen-image": "fal-ai/qwen-image",
-    "wan-v2.7": "fal-ai/wan/v2.7/text-to-image",
-    "flux-2-pro": "fal-ai/flux-2-pro",
-    "ideogram-v4": "fal-ai/ideogram/v4",
-    "krea-v2-large": "fal-ai/krea/v2/large/text-to-image",
+    "gemini-3-pro-image": "google/gemini-3-pro-image",
+    "gemini-3-pro-image-preview": "google/gemini-3-pro-image-preview",
+    "nano-banana-pro": "google/gemini-3-pro-image",
+    "recraft-v4": "recraft/recraft-v4",
+    "recraft-v4-pro": "recraft/recraft-v4-pro",
+    "flux-2-pro": "black-forest-labs/flux.2-pro",
+    "krea-v2-large": "krea/krea-2-large",
 }
-
-DEFAULT_MODELS: tuple[str, ...] = (
-    "gpt-image-2",
-    "recraft-v4",
-    "qwen-image-2512",
-    "wan-v2.7",
-)
+DEFAULT_MODELS: tuple[str, ...] = openrouter.DEFAULT_MODELS["image"]
 
 DEFAULT_PROMPT = "\n".join(
     [
@@ -81,10 +72,7 @@ DEFAULT_PROMPT = "\n".join(
         "",
         "Pip should appear exactly three times only:",
         "1. in the top-right margin, outside the worksheet activity area",
-        (
-            "2. in the left margin halfway down the page, outside all word rows "
-            "and picture choices"
-        ),
+        ("2. in the left margin halfway down the page, outside all word rows and picture choices"),
         "3. in the bottom-left margin, outside the Mission Progress area",
         "",
         (
@@ -148,17 +136,14 @@ class FalRunResult:
 
 
 def load_fal_env(env_path: Path = Path(".env")) -> bool:
-    """Load `.env` and normalize the common FAL_API_KEY alias to FAL_KEY."""
-
+    """Load inference credentials (legacy function name); only OpenRouter is accepted."""
     if env_path.exists():
         load_dotenv(env_path)
-    if not os.environ.get("FAL_KEY") and os.environ.get("FAL_API_KEY"):
-        os.environ["FAL_KEY"] = os.environ["FAL_API_KEY"]
-    return bool(os.environ.get("FAL_KEY"))
+    return openrouter.available()
 
 
 def expand_model_ids(models: list[str]) -> list[str]:
-    """Expand friendly model aliases while preserving explicit fal model IDs."""
+    """Expand friendly model aliases while preserving explicit OpenRouter model IDs."""
 
     expanded: list[str] = []
     for model in models:
@@ -312,7 +297,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--models",
         nargs="+",
         default=list(DEFAULT_MODELS),
-        help="Model aliases or explicit fal model IDs. Defaults to the current finalists.",
+        help="Model aliases or explicit OpenRouter model IDs. Defaults to the current finalists.",
     )
     parser.add_argument(
         "--prompt-file",
@@ -347,7 +332,7 @@ def build_arg_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_arg_parser().parse_args(argv)
     if not load_fal_env():
-        raise SystemExit("FAL_KEY is missing. Add FAL_KEY=... to .env or the shell environment.")
+        raise SystemExit("OPENROUTER_API_KEY is missing. Set it in .env or the shell environment.")
 
     prompt = args.prompt_file.read_text() if args.prompt_file else DEFAULT_PROMPT
     extra_arguments = _parse_extra_arguments(args.extra_arguments)
@@ -371,17 +356,22 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _load_fal_subscribe() -> SubscribeFn:
-    try:
-        fal_client = importlib.import_module("fal_client")
-    except ImportError as exc:
-        raise RuntimeError(
-            "fal-client is not installed. Run `.venv/bin/pip install -r requirements.txt`."
-        ) from exc
+    """Adapt the historical eval callback shape to the shared OpenRouter transport."""
 
-    subscribe = getattr(fal_client, "subscribe", None)
-    if not callable(subscribe):
-        raise RuntimeError("fal_client.subscribe is not available")
-    return cast(SubscribeFn, subscribe)
+    def subscribe(model_id: str, **kwargs: Any) -> Mapping[str, Any]:
+        arguments = kwargs["arguments"]
+        if arguments.get("num_images", 1) != 1:
+            raise ValueError("OpenRouter eval currently generates one image per model")
+        image = openrouter.generate_image(
+            arguments["prompt"],
+            model=model_id,
+            aspect_ratio=arguments.get("aspect_ratio", "3:4"),
+        )
+        if image is None:
+            raise RuntimeError("OpenRouter image evaluation returned no usable image")
+        return {"images": [{"url": "data:image/png;base64," + base64.b64encode(image).decode()}]}
+
+    return subscribe
 
 
 def _queue_logger(update: object) -> None:

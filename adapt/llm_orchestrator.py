@@ -78,8 +78,8 @@ def orchestrate_llm_adaptation(
 
     from ai import openrouter
 
-    gemini_available = openrouter.available() or bool(os.environ.get("GEMINI_API_KEY"))
-    gpt_available = openrouter.available() or bool(os.environ.get("OPENAI_API_KEY"))
+    gemini_available = openrouter.available()
+    gpt_available = openrouter.available()
 
     if not gemini_available and not gpt_available:
         logger.info("  LLM orchestrator: no API keys available, falling back to deterministic")

@@ -708,7 +708,7 @@ class TestMultiWorksheetRender:
         generated_bytes = b"approved ai scene"
         observed: dict[str, bytes] = {}
         monkeypatch.setattr(asset_gen, "_CACHE_DIR", tmp_path / "cache")
-        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
 
         def fake_generate_scene(
             prompt: str,
@@ -764,7 +764,7 @@ class TestMultiWorksheetRender:
         ref_path = tmp_path / "pose_pointing.png"
         ref_path.write_bytes(b"reference bytes")
         monkeypatch.setattr(asset_gen, "_CACHE_DIR", tmp_path / "cache")
-        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
 
         def fake_generate_scene(
             prompt: str,
@@ -831,7 +831,7 @@ class TestMultiWorksheetRender:
         ref_path = tmp_path / "pose_pointing.png"
         ref_path.write_bytes(b"reference bytes")
         monkeypatch.setattr(asset_gen, "_CACHE_DIR", tmp_path / "cache")
-        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
 
         def fake_generate_scene(
             prompt: str,
@@ -898,7 +898,7 @@ class TestMultiWorksheetRender:
         Image.new("RGBA", (4, 4), "#123456").save(pose_ref)
         pose_bytes = pose_ref.read_bytes()
         monkeypatch.setattr(asset_gen, "_CACHE_DIR", tmp_path / "cache")
-        monkeypatch.setenv("GEMINI_API_KEY", "test-key")
+        monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
 
         def fake_generate_scene(
             prompt: str,

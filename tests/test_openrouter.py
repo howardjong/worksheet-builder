@@ -282,3 +282,159 @@ def test_empty_review_is_not_approval(monkeypatch: pytest.MonkeyPatch) -> None:
     result = _run_review(adapted)
     assert not result.passed
     assert len(calls) == 2
+
+
+def test_audio_inputs_preserve_waveform_and_model_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _responses(monkeypatch, [_text('{"heard_text": "ship"}')])
+    result = openrouter.complete_json(
+        "Judge pronunciation",
+        audio=[(b"actual waveform", "wav")],
+        role="audio",
+        model_ids=["google/gemini-3-flash-preview"],
+    )
+    assert result == {"heard_text": "ship"}
+    payload = calls[0]["json"]
+    assert payload["model"] == "google/gemini-3-flash-preview"
+    part = payload["messages"][0]["content"][1]
+    assert part["type"] == "input_audio"
+    assert part["input_audio"]["format"] == "wav"
+    assert base64.b64decode(part["input_audio"]["data"]) == b"actual waveform"
+
+
+def test_legacy_keys_and_direct_setting_cannot_bypass_router(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from adapt.llm_adapt import _call_gemini
+    from adapt.llm_judge import _call_openai
+    from extract.adapter import NoOpAdapter, get_adapter
+    from extract.vision import _configured_api_key
+    from render.asset_gen import _has_api_key
+    from render.image_providers import resolve_provider_chain
+
+    monkeypatch.setenv("WORKSHEET_AI_PROVIDER", "direct")
+    for name in ("OPENAI_API_KEY", "GEMINI_API_KEY", "GOOGLE_API_KEY", "ANTHROPIC_API_KEY"):
+        monkeypatch.setenv(name, "legacy-key")
+    calls = _responses(monkeypatch, [_text("{}")])
+    assert _call_openai("judge") == "{}"
+    assert calls[0]["url"] == "https://openrouter.ai/api/v1/chat/completions"
+    monkeypatch.delenv("OPENROUTER_API_KEY")
+    assert isinstance(get_adapter(), NoOpAdapter)
+    assert _configured_api_key() == ""
+    assert not _has_api_key()
+    assert resolve_provider_chain() == []
+    assert _call_openai("judge") is None
+    assert _call_gemini("adapt") is None
+    assert len(calls) == 1
+
+
+def test_adapter_image_generation_creates_output_directory(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from extract.adapter import OpenRouterAdapter
+
+    png = _image()
+    _responses(
+        monkeypatch,
+        [
+            httpx.Response(
+                200,
+                json={
+                    "data": [{"b64_json": base64.b64encode(png).decode()}],
+                },
+            )
+        ],
+    )
+    path = tmp_path / "new" / "avatar.png"
+    assert OpenRouterAdapter().generate_image("avatar", str(path)) == str(path)
+    assert path.read_bytes().startswith(b"\x89PNG")
+
+
+def test_image_eval_uses_shared_router_transport(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from render.fal_eval import FalEvalConfig, run_one_model
+
+    _responses(
+        monkeypatch,
+        [
+            httpx.Response(
+                200,
+                json={
+                    "data": [{"b64_json": base64.b64encode(_image()).decode()}],
+                },
+            )
+        ],
+    )
+    result = run_one_model(
+        model_id="google/gemini-3-pro-image",
+        prompt="page",
+        config=FalEvalConfig(output_dir=tmp_path),
+    )
+    assert result.status == "success"
+    assert Path(result.image_path or "").read_bytes().startswith(b"\x89PNG")
+
+
+def test_inference_sources_have_no_direct_vendor_transport() -> None:
+    """Catch inference in less-used scripts as well as the production pipeline."""
+    import ast
+
+    root = Path(__file__).parents[1]
+    sources = list(root.glob("*.py"))
+    for folder in (
+        "ai",
+        "adapt",
+        "companion",
+        "extract",
+        "render",
+        "validate",
+        "rag",
+        "experiments",
+        "corpus",
+        "skill",
+        "capture",
+        "theme",
+    ):
+        sources.extend((root / folder).rglob("*.py"))
+    for path in sources:
+        if "tests" in path.relative_to(root).parts:
+            continue
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                call = ast.unparse(node.func)
+                assert not call.endswith(
+                    (
+                        ".generate_content",
+                        ".chat.completions.create",
+                        ".messages.create",
+                        ".responses.create",
+                        ".images.generate",
+                        ".images.edit",
+                    )
+                ), f"Direct inference bypass in {path.relative_to(root)}: {call}"
+            if isinstance(node, (ast.Import, ast.ImportFrom)):
+                modules = (
+                    [alias.name for alias in node.names]
+                    if isinstance(node, ast.Import)
+                    else [node.module or ""]
+                )
+                assert not any(
+                    module.split(".")[0] in {"openai", "anthropic", "fal_client"}
+                    for module in modules
+                ), path
+
+
+def test_audio_judge_cannot_degrade_to_transcript_only(tmp_path: Path) -> None:
+    from experiments.corpus_ufli.audio_companion_schema import AudioClipDefinition
+    from experiments.corpus_ufli.audio_judge import _build_judge_audio
+
+    clip = AudioClipDefinition.model_construct(audio_path="missing.mp3")
+    with pytest.raises(FileNotFoundError):
+        _build_judge_audio(tmp_path, clip)
+    (tmp_path / "missing.mp3").write_bytes(b"")
+    with pytest.raises(ValueError, match="nonempty"):
+        _build_judge_audio(tmp_path, clip)

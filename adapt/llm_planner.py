@@ -1,6 +1,6 @@
 """Single-call LLM lesson planner — replaces the retry/takeover orchestration loop.
 
-One strong planning call (provider chain: gpt-5.4 → gemini-3.5-flash) receives
+One strong planning call through the configured OpenRouter text chain receives
 the FULL source items plus canonical corpus lesson content and authors
 worksheet items directly. Deterministic code clamps the result to ADHD rules
 (adapt/rules.py) and the section cap (adapt/section_cap.py). The GPT judge
@@ -25,16 +25,14 @@ from adapt.coverage_ledger import (
     repair_coverage,
     verify_coverage,
 )
-from adapt.llm_adapt import LessonPlan, _call_gemini, _parse_lesson_plan, _translate_plan
+from adapt.llm_adapt import LessonPlan, _parse_lesson_plan, _translate_plan
 from adapt.llm_judge import (
     JudgeVerdict,
     ObjectiveJudgeVerdict,
-    _call_openai,
     aggregate_objective_verdicts,
     derive_objective_approval,
     judge_adaptation_samples,
     judge_objective_adaptation_samples,
-    openai_text_model,
 )
 from adapt.objective_ledger import (
     ObjectiveCell,
@@ -58,8 +56,6 @@ from validate.objective_coverage import (
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_PLANNER_PROVIDERS = "openai,gemini"
-DEFAULT_PLANNER_GEMINI_MODEL = "gemini-3.5-flash"
 PLANNER_MAX_COMPLETION_TOKENS = 8192
 _CORPUS_FIELD_CHAR_CAP = 2000
 
@@ -93,29 +89,12 @@ def _corpus_block(skill: LiteracySkillModel) -> str:
     return "\n\n".join(parts)
 
 
-def _planner_providers() -> list[str]:
-    order = os.environ.get("WORKSHEET_PLANNER_PROVIDERS", DEFAULT_PLANNER_PROVIDERS)
-    return [p.strip() for p in order.split(",") if p.strip()]
-
-
 def _call_planner(prompt: str) -> tuple[str | None, str]:
     """Walk the provider chain; return (response_text, model_label)."""
     from ai import openrouter
 
-    if openrouter.enabled():
-        result = openrouter.complete(prompt, max_tokens=PLANNER_MAX_COMPLETION_TOKENS)
-        return (result.text, result.model) if result else (None, "none")
-    for provider in _planner_providers():
-        if provider == "openai" and os.environ.get("OPENAI_API_KEY"):
-            text = _call_openai(prompt, max_completion_tokens=PLANNER_MAX_COMPLETION_TOKENS)
-            if text:
-                return text, openai_text_model()
-        elif provider == "gemini" and os.environ.get("GEMINI_API_KEY"):
-            model = os.environ.get("WORKSHEET_PLANNER_GEMINI_MODEL", DEFAULT_PLANNER_GEMINI_MODEL)
-            text = _call_gemini(prompt, model=model)
-            if text:
-                return text, model
-    return None, "none"
+    result = openrouter.complete(prompt, max_tokens=PLANNER_MAX_COMPLETION_TOKENS)
+    return (result.text, result.model) if result else (None, "none")
 
 
 def _slot_contract_enabled() -> bool:
@@ -508,11 +487,7 @@ def plan_lesson_llm(
 
     from ai import openrouter
 
-    if not (
-        openrouter.available()
-        or os.environ.get("OPENAI_API_KEY")
-        or os.environ.get("GEMINI_API_KEY")
-    ):
+    if not (openrouter.available()):
         logger.info("  LLM planner: no API keys, falling back to deterministic")
         return None
 

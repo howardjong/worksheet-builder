@@ -360,7 +360,7 @@ def test_scene_gate_blocks_page_despite_correct_text(monkeypatch: pytest.MonkeyP
 def test_unavailable_scene_judge_fails_closed(monkeypatch: pytest.MonkeyPatch) -> None:
     import render.page_gates as gates
 
-    monkeypatch.setattr(gates, "_learning_scene_with_provider", lambda *args: None)
+    monkeypatch.setattr("ai.openrouter.complete_json", lambda *args, **kwargs: None)
     assert not gates.evaluate_learning_scene(b"png", _spec()).passed
 
 

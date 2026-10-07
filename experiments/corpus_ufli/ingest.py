@@ -412,9 +412,9 @@ def index_audio(
 )
 @click.option(
     "--judge-model",
-    default="gemini-3-flash-preview",
+    default="",
     show_default=True,
-    help="Gemini model used for transcript/script judging.",
+    help="OpenRouter audio model used for transcript/script judging.",
 )
 @click.option(
     "--output-dir",
@@ -548,9 +548,9 @@ def classify_audio_fallback(
 )
 @click.option(
     "--judge-model",
-    default="gemini-3-flash-preview",
+    default="",
     show_default=True,
-    help="Gemini model used for re-judging fallback clips.",
+    help="OpenRouter audio model used for re-judging fallback clips.",
 )
 @click.option(
     "--output-dir",
@@ -636,9 +636,9 @@ def execute_fallback(
 )
 @click.option(
     "--judge-model",
-    default="gemini-3-flash-preview",
+    default="",
     show_default=True,
-    help="Gemini model used for probe judging.",
+    help="OpenRouter audio model used for probe judging.",
 )
 @click.option(
     "--provider-scope",

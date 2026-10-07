@@ -15,7 +15,6 @@ spec's minimum page fraction, without obstructing text or answer areas.
 from __future__ import annotations
 
 import logging
-import os
 from collections.abc import Mapping
 from typing import Any
 
@@ -24,7 +23,6 @@ from pydantic import BaseModel, Field
 from ai import openrouter
 from companion.character_judge import (
     CharacterJudgeResult,
-    _parse_json_response,  # noqa: PLC2701  # accepted repo idiom: mirrors character_judge structure
     judge_character_consistency,
 )
 from render.design_spec import WorksheetDesignSpec
@@ -206,85 +204,22 @@ def _coerce_scene_report(
 
 def evaluate_learning_scene(page_png: bytes, spec: WorksheetDesignSpec) -> LearningSceneReport:
     """Fail closed when a meaningful, adequately sized scene cannot be verified."""
-    if openrouter.enabled():
-        raw = openrouter.complete_json(
-            _learning_scene_prompt(spec),
-            images=[page_png],
-            role="vision",
-            validate=lambda value: (
-                isinstance(value.get("supports_learning"), bool)
-                and isinstance(value.get("work_areas_clear"), bool)
-                and isinstance(value.get("issues"), list)
-                and "bounds" in value
-            ),
-        )
-        return (
-            _coerce_scene_report(raw, spec, "openrouter")
-            if raw is not None
-            else LearningSceneReport(min_area_fraction=spec.learning_scene_min_area_fraction)
-        )
-    for provider in ("gemini", "openai"):
-        raw = _learning_scene_with_provider(page_png, spec, provider)
-        if raw is not None:
-            return _coerce_scene_report(raw, spec, provider)
-    return LearningSceneReport(min_area_fraction=spec.learning_scene_min_area_fraction)
-
-
-def _learning_scene_with_provider(
-    page_png: bytes,
-    spec: WorksheetDesignSpec,
-    provider: str,
-) -> Mapping[str, Any] | None:
-    api_key = (
-        os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-        if provider == "gemini"
-        else os.environ.get("OPENAI_API_KEY")
+    raw = openrouter.complete_json(
+        _learning_scene_prompt(spec),
+        images=[page_png],
+        role="vision",
+        validate=lambda value: (
+            isinstance(value.get("supports_learning"), bool)
+            and isinstance(value.get("work_areas_clear"), bool)
+            and isinstance(value.get("issues"), list)
+            and "bounds" in value
+        ),
     )
-    if not api_key:
-        return None
-    prompt = _learning_scene_prompt(spec)
-    try:
-        if provider == "gemini":
-            from google import genai
-            from google.genai import types
-
-            response = genai.Client(api_key=api_key).models.generate_content(
-                model=_TEXT_GATE_MODEL_GEMINI,
-                contents=[
-                    types.Part(text=prompt),
-                    types.Part(inline_data=types.Blob(mime_type="image/png", data=page_png)),
-                ],  # type: ignore[arg-type]
-            )
-            result_text = response.text or ""
-        else:
-            import base64
-
-            import openai
-
-            result = openai.OpenAI(api_key=api_key).chat.completions.create(
-                model=_TEXT_GATE_MODEL_OPENAI,
-                max_completion_tokens=768,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {"type": "text", "text": prompt},
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": "data:image/png;base64,"
-                                    + base64.b64encode(page_png).decode("utf-8")
-                                },
-                            },
-                        ],
-                    }
-                ],
-            )
-            result_text = result.choices[0].message.content or ""
-        return _parse_json_response(result_text)
-    except Exception as exc:
-        logger.warning("%s learning-scene gate failed: %s", provider, exc)
-        return None
+    return (
+        _coerce_scene_report(raw, spec, "openrouter")
+        if raw is not None
+        else LearningSceneReport(min_area_fraction=spec.learning_scene_min_area_fraction)
+    )
 
 
 def match_rows_from_spec(spec: WorksheetDesignSpec) -> list[str]:
@@ -300,27 +235,19 @@ def match_rows_from_spec(spec: WorksheetDesignSpec) -> list[str]:
 
 def evaluate_page_text(page_png: bytes, required_text: list[str]) -> TextGateReport:
     """Vision readback: verify every required string appears, spelled exactly."""
-    if openrouter.enabled():
-        raw = openrouter.complete_json(
-            _build_text_gate_prompt(required_text),
-            images=[page_png],
-            role="vision",
-            validate=lambda value: all(
-                isinstance(value.get(key), list) for key in ("missing", "misspelled")
-            ),
-        )
-        return (
-            _coerce_text_report(raw, "openrouter")
-            if raw is not None
-            else TextGateReport(available=False, passed=False)
-        )
-    report = _text_gate_with_gemini(page_png, required_text)
-    if report is not None:
-        return report
-    report = _text_gate_with_openai(page_png, required_text)
-    if report is not None:
-        return report
-    return TextGateReport(available=False, passed=False)
+    raw = openrouter.complete_json(
+        _build_text_gate_prompt(required_text),
+        images=[page_png],
+        role="vision",
+        validate=lambda value: all(
+            isinstance(value.get(key), list) for key in ("missing", "misspelled")
+        ),
+    )
+    return (
+        _coerce_text_report(raw, "openrouter")
+        if raw is not None
+        else TextGateReport(available=False, passed=False)
+    )
 
 
 def _build_text_gate_prompt(required_text: list[str]) -> str:
@@ -353,85 +280,19 @@ def _coerce_text_report(raw: Mapping[str, Any], judge: str) -> TextGateReport:
     )
 
 
-def _text_gate_with_gemini(page_png: bytes, required_text: list[str]) -> TextGateReport | None:
-    api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-    if not api_key:
-        return None
-    try:
-        from google import genai
-        from google.genai import types
-
-        client = genai.Client(api_key=api_key)
-        response = client.models.generate_content(
-            model=_TEXT_GATE_MODEL_GEMINI,
-            contents=[
-                types.Part(text=_build_text_gate_prompt(required_text)),
-                types.Part(
-                    inline_data=types.Blob(mime_type="image/png", data=page_png),
-                ),
-            ],  # type: ignore[arg-type]
-        )
-        return _coerce_text_report(_parse_json_response(response.text or ""), judge="gemini")
-    except Exception as exc:
-        logger.warning("Gemini text gate failed: %s", exc)
-        return None
-
-
-def _text_gate_with_openai(page_png: bytes, required_text: list[str]) -> TextGateReport | None:
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        return None
-    try:
-        import base64
-
-        import openai
-
-        client = openai.OpenAI(api_key=api_key)
-        page_b64 = base64.b64encode(page_png).decode("utf-8")
-        response = client.chat.completions.create(
-            model=_TEXT_GATE_MODEL_OPENAI,
-            max_completion_tokens=512,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": _build_text_gate_prompt(required_text)},
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": f"data:image/png;base64,{page_b64}"},
-                        },
-                    ],
-                }
-            ],
-        )
-        text = response.choices[0].message.content or ""
-        return _coerce_text_report(_parse_json_response(text), judge="openai")
-    except Exception as exc:
-        logger.warning("OpenAI text gate failed: %s", exc)
-        return None
-
-
 def _evaluate_match_alignment(page_png: bytes, match_rows: list[str]) -> MatchAlignmentReport:
     """Vision check: does any match-row picture depict its own row's word?"""
-    if openrouter.enabled():
-        raw = openrouter.complete_json(
-            _build_match_alignment_prompt(match_rows),
-            images=[page_png],
-            role="vision",
-            validate=lambda value: isinstance(value.get("aligned"), list),
-        )
-        return (
-            _coerce_match_alignment_report(raw, "openrouter")
-            if raw is not None
-            else MatchAlignmentReport(available=False)
-        )
-    report = _match_alignment_with_gemini(page_png, match_rows)
-    if report is not None:
-        return report
-    report = _match_alignment_with_openai(page_png, match_rows)
-    if report is not None:
-        return report
-    return MatchAlignmentReport(available=False)
+    raw = openrouter.complete_json(
+        _build_match_alignment_prompt(match_rows),
+        images=[page_png],
+        role="vision",
+        validate=lambda value: isinstance(value.get("aligned"), list),
+    )
+    return (
+        _coerce_match_alignment_report(raw, "openrouter")
+        if raw is not None
+        else MatchAlignmentReport(available=False)
+    )
 
 
 def _build_match_alignment_prompt(match_rows: list[str]) -> str:
@@ -454,67 +315,3 @@ def _coerce_match_alignment_report(raw: Mapping[str, Any], judge: str) -> MatchA
     raw_aligned = raw.get("aligned", [])
     aligned = [str(item) for item in raw_aligned] if isinstance(raw_aligned, list) else []
     return MatchAlignmentReport(available=True, aligned_rows=aligned, judge=judge)
-
-
-def _match_alignment_with_gemini(
-    page_png: bytes, match_rows: list[str]
-) -> MatchAlignmentReport | None:
-    api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-    if not api_key:
-        return None
-    try:
-        from google import genai
-        from google.genai import types
-
-        client = genai.Client(api_key=api_key)
-        response = client.models.generate_content(
-            model=_TEXT_GATE_MODEL_GEMINI,
-            contents=[
-                types.Part(text=_build_match_alignment_prompt(match_rows)),
-                types.Part(
-                    inline_data=types.Blob(mime_type="image/png", data=page_png),
-                ),
-            ],  # type: ignore[arg-type]
-        )
-        return _coerce_match_alignment_report(
-            _parse_json_response(response.text or ""), judge="gemini"
-        )
-    except Exception as exc:
-        logger.warning("Gemini match-alignment gate failed: %s", exc)
-        return None
-
-
-def _match_alignment_with_openai(
-    page_png: bytes, match_rows: list[str]
-) -> MatchAlignmentReport | None:
-    api_key = os.environ.get("OPENAI_API_KEY")
-    if not api_key:
-        return None
-    try:
-        import base64
-
-        import openai
-
-        client = openai.OpenAI(api_key=api_key)
-        page_b64 = base64.b64encode(page_png).decode("utf-8")
-        response = client.chat.completions.create(
-            model=_TEXT_GATE_MODEL_OPENAI,
-            max_completion_tokens=512,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": _build_match_alignment_prompt(match_rows)},
-                        {
-                            "type": "image_url",
-                            "image_url": {"url": f"data:image/png;base64,{page_b64}"},
-                        },
-                    ],
-                }
-            ],
-        )
-        text = response.choices[0].message.content or ""
-        return _coerce_match_alignment_report(_parse_json_response(text), judge="openai")
-    except Exception as exc:
-        logger.warning("OpenAI match-alignment gate failed: %s", exc)
-        return None

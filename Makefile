@@ -23,7 +23,7 @@ test-golden:
 	fi
 
 test-all:
-	$(PYTEST) tests/ -v
+	$(PYTEST) tests/ experiments/corpus_ufli/tests/ -v
 
 format:
 	$(RUFF) format .

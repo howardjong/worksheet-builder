@@ -20,8 +20,9 @@ import httpx
 from PIL import Image
 
 logger = logging.getLogger(__name__)
-Role = Literal["text", "vision", "image", "research"]
+Role = Literal["text", "vision", "image", "research", "audio"]
 DEFAULT_MODELS: dict[Role, tuple[str, ...]] = {
+    "audio": ("google/gemini-3-flash-preview", "google/gemini-2.5-flash"),
     "research": ("perplexity/sonar-pro", "perplexity/sonar"),
     "text": ("openai/gpt-5.5", "anthropic/claude-sonnet-4.6", "google/gemini-3.1-pro-preview"),
     "vision": ("openai/gpt-5.5", "google/gemini-3.1-pro-preview", "anthropic/claude-sonnet-4.6"),
@@ -51,9 +52,8 @@ def available() -> bool:
 
 
 def enabled() -> bool:
-    """Prefer OpenRouter when configured; direct SDKs remain a migration option."""
-    provider = os.environ.get("WORKSHEET_AI_PROVIDER", "auto").lower()
-    return provider == "openrouter" or (provider == "auto" and available())
+    """OpenRouter is the only inference transport; no vendor bypass exists."""
+    return available()
 
 
 def models(role: Role) -> list[str]:
@@ -121,13 +121,24 @@ def complete(
     prompt: str,
     *,
     images: Sequence[bytes] = (),
+    audio: Sequence[tuple[bytes, str]] = (),
     role: Role = "text",
+    model_ids: Sequence[str] | None = None,
     max_tokens: int = 4096,
     accept: Callable[[str], bool] | None = None,
 ) -> Completion | None:
+    if not available():
+        return None
     content: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
     content.extend({"type": "image_url", "image_url": {"url": image_url(data)}} for data in images)
-    for model in models(role):
+    content.extend(
+        {
+            "type": "input_audio",
+            "input_audio": {"data": base64.b64encode(data).decode("ascii"), "format": format},
+        }
+        for data, format in audio
+    )
+    for model in models(role) if model_ids is None else model_ids:
         data = _request(
             "/chat/completions",
             {
@@ -168,7 +179,9 @@ def complete_json(
     prompt: str,
     *,
     images: Sequence[bytes] = (),
+    audio: Sequence[tuple[bytes, str]] = (),
     role: Role = "text",
+    model_ids: Sequence[str] | None = None,
     max_tokens: int = 4096,
     validate: Callable[[Mapping[str, Any]], bool] | None = None,
 ) -> Mapping[str, Any] | None:
@@ -176,7 +189,15 @@ def complete_json(
         value = json_value(text)
         return isinstance(value, dict) and (validate is None or validate(value))
 
-    result = complete(prompt, images=images, role=role, max_tokens=max_tokens, accept=accepts)
+    result = complete(
+        prompt,
+        images=images,
+        audio=audio,
+        role=role,
+        model_ids=model_ids,
+        max_tokens=max_tokens,
+        accept=accepts,
+    )
     value = json_value(result.text) if result else None
     return value if isinstance(value, dict) else None
 

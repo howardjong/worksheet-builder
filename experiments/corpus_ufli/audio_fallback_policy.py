@@ -328,7 +328,7 @@ def execute_gemini_fallback(
     voice_profile: str | None = None,
     output_dir: str | None = None,
     dry_run: bool = True,
-    judge_model: str = "gemini-3-flash-preview",
+    judge_model: str = "",
     lesson_set: str = "pilot_micro",
     lesson_id: str | None = None,
     lesson_min: int = 1,
@@ -339,7 +339,7 @@ def execute_gemini_fallback(
 
     Only clips classified as ``gemini_fallback_eligible`` are processed.
     """
-    from experiments.corpus_ufli.audio_judge import _judge_clip_with_gemini
+    from experiments.corpus_ufli.audio_judge import _judge_clip_with_openrouter
     from experiments.corpus_ufli.extract import LessonContent
 
     base = Path(data_dir)
@@ -424,14 +424,12 @@ def execute_gemini_fallback(
         build_google_tts_request_context,
         synthesize_google_tts_audio,
     )
-    from rag.client import get_rag_client
 
     try:
         tts_context = build_google_tts_request_context()
     except Exception as exc:
         raise RuntimeError(f"Google Cloud TTS auth failed: {exc}") from exc
 
-    gemini_client = get_rag_client()
     lessons_by_id: dict[str, LessonContent] = {
         lesson.lesson_id: lesson for lesson in _load_lessons(base / "normalized.jsonl")
     }
@@ -526,8 +524,7 @@ def execute_gemini_fallback(
                 }
             )
             try:
-                judge_result = _judge_clip_with_gemini(
-                    client=gemini_client,
+                judge_result = _judge_clip_with_openrouter(
                     judge_model=judge_model,
                     companion_dir=companion_dir,
                     lesson=lesson,

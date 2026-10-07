@@ -14,12 +14,9 @@ Usage:
 
 from __future__ import annotations
 
-import json
 import logging
-import os
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
 
 from companion.schema import CharacterStyleSheet, LearnerProfile, Preferences
 from theme.schema import CharacterSpec, ThemeConfig
@@ -106,58 +103,14 @@ def _research_theme_visuals(
     """
     from ai import openrouter
 
-    if openrouter.enabled():
-        result = openrouter.complete(
-            f"Research the defining visual characteristics of {theme_name} characters and "
-            "environments: body proportions, face, clothing, palette, and rendering style. "
-            "Give concrete descriptions for a faithful, calm children's worksheet illustration.",
-            role="research",
-            max_tokens=1500,
-        )
-        return _parse_research_into_spec(result.text, existing_spec) if result else None
-    # Legacy direct research provider.
-    api_key = os.environ.get("PERPLEXITY_API_KEY", "")
-    if not api_key:
-        logger.info("  PERPLEXITY_API_KEY not set — skipping theme research")
-        return None
-
-    try:
-        import httpx
-
-        query = (
-            f"What are the defining visual characteristics of {theme_name} "
-            f"characters and environments that make them instantly recognizable? "
-            f"Describe: body proportions, face styles, clothing rendering, "
-            f"environment elements, color palette, and rendering style "
-            f"(low-poly, cell-shaded, etc). Be specific and visual — "
-            f"this will be used for AI image generation prompts."
-        )
-
-        response = httpx.post(
-            "https://api.perplexity.ai/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": "sonar",
-                "messages": [{"role": "user", "content": query}],
-                "max_tokens": 1500,
-            },
-            timeout=30.0,
-        )
-        response.raise_for_status()
-        data = response.json()
-        research_text = data["choices"][0]["message"]["content"]
-
-        logger.info("  Theme research completed via Perplexity")
-
-        # Parse research into spec fields using Gemini
-        return _parse_research_into_spec(research_text, existing_spec)
-
-    except Exception as e:
-        logger.warning(f"  Theme research failed: {e}")
-        return None
+    result = openrouter.complete(
+        f"Research the defining visual characteristics of {theme_name} characters and "
+        "environments: body proportions, face, clothing, palette, and rendering style. "
+        "Give concrete descriptions for a faithful, calm children's worksheet illustration.",
+        role="research",
+        max_tokens=1500,
+    )
+    return _parse_research_into_spec(result.text, existing_spec) if result else None
 
 
 def _parse_research_into_spec(
@@ -167,82 +120,25 @@ def _parse_research_into_spec(
     """Use Gemini to parse research text into structured CharacterSpec fields."""
     from ai import openrouter
 
-    api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-    if openrouter.enabled():
-        raw = openrouter.complete_json(
-            "Extract style_description, body_description, face_description, "
-            "scene_environment, and color_palette from this visual research. Return JSON.\n"
-            + research_text,
-        )
-        if raw is None:
-            return None
-        updates = {
-            key: str(raw[key])
-            for key in (
-                "style_description",
-                "body_description",
-                "face_description",
-                "scene_environment",
-                "color_palette",
-            )
-            if raw.get(key) and not getattr(existing_spec, key)
-        }
-        return existing_spec.model_copy(update=updates)
-    if not api_key:
+    raw = openrouter.complete_json(
+        "Extract style_description, body_description, face_description, "
+        "scene_environment, and color_palette from this visual research. Return JSON.\n"
+        + research_text,
+    )
+    if raw is None:
         return None
-
-    try:
-        from google import genai
-        from google.genai import types
-
-        client = genai.Client(api_key=api_key)
-
-        prompt = (
-            "You are a character design expert. Given this research about a theme's "
-            "visual style, extract structured fields for AI image generation.\n\n"
-            f"Research:\n{research_text}\n\n"
-            "Return ONLY JSON (no markdown fences) with these fields:\n"
-            "{\n"
-            '  "style_description": "detailed art style for prompts",\n'
-            '  "body_description": "body proportions and shapes",\n'
-            '  "face_description": "face rendering style",\n'
-            '  "scene_environment": "environment description",\n'
-            '  "color_palette": "color palette description"\n'
-            "}"
+    updates = {
+        key: str(raw[key])
+        for key in (
+            "style_description",
+            "body_description",
+            "face_description",
+            "scene_environment",
+            "color_palette",
         )
-
-        response = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=[types.Part(text=prompt)],  # type: ignore[arg-type]
-        )
-
-        text = (response.text or "").strip()
-        if text.startswith("```"):
-            lines = text.split("\n")
-            text = "\n".join(line for line in lines if not line.strip().startswith("```"))
-
-        parsed: dict[str, Any] = json.loads(text)
-
-        # Merge with existing spec — research fills gaps, doesn't overwrite
-        return CharacterSpec(
-            art_style=existing_spec.art_style or parsed.get("art_style", ""),
-            style_description=(
-                existing_spec.style_description or parsed.get("style_description", "")
-            ),
-            body_description=(existing_spec.body_description or parsed.get("body_description", "")),
-            face_description=(existing_spec.face_description or parsed.get("face_description", "")),
-            scene_environment=(
-                existing_spec.scene_environment or parsed.get("scene_environment", "")
-            ),
-            scene_elements=existing_spec.scene_elements or [],
-            color_palette=(existing_spec.color_palette or parsed.get("color_palette", "")),
-            reference_keywords=existing_spec.reference_keywords,
-            judge_criteria=existing_spec.judge_criteria,
-        )
-
-    except Exception as e:
-        logger.warning(f"  Research parsing failed: {e}")
-        return None
+        if raw.get(key) and not getattr(existing_spec, key)
+    }
+    return existing_spec.model_copy(update=updates)
 
 
 def _compose_character_block(
@@ -334,112 +230,26 @@ def _generate_reference_pack(
     """
     from ai import openrouter
 
-    if openrouter.enabled():
-        ref_dir = _STYLE_SHEETS_DIR / f"{profile_name.lower().replace(' ', '_')}_{theme_id}"
-        ref_dir.mkdir(parents=True, exist_ok=True)
-        base_path = _ASSETS_DIR / "characters" / "rainbow_roblox.png"
-        reference = base_path.read_bytes() if base_path.exists() else None
-        for pose, action in [
-            ("front", "standing facing forward"),
-            ("happy", "jumping happily"),
-            ("reading", "reading a storybook"),
-        ]:
-            path = ref_dir / f"ref_{pose}.png"
-            if path.exists():
-                continue
-            png = openrouter.generate_with_fallbacks(
-                f"{character_block}. {action}. Full body, clean white background, no text.",
-                reference,
-                aspect_ratio="1:1",
-            )
-            if png:
-                path.write_bytes(png)
-                reference = png  # Keep subsequent poses consistent with the first reference.
-        return str(ref_dir) if list(ref_dir.glob("ref_*.png")) else ""
-    api_key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
-    if not api_key:
-        logger.info("  No Gemini API key — skipping reference image generation")
-        return ""
-
-    safe_name = profile_name.lower().replace(" ", "_")
-    ref_dir = _STYLE_SHEETS_DIR / f"{safe_name}_{theme_id}"
+    ref_dir = _STYLE_SHEETS_DIR / f"{profile_name.lower().replace(' ', '_')}_{theme_id}"
     ref_dir.mkdir(parents=True, exist_ok=True)
-
-    # Check if pack already exists
-    existing = list(ref_dir.glob("ref_*.png"))
-    if len(existing) >= 3:
-        logger.info(f"  Reference pack already exists: {ref_dir}")
-        return str(ref_dir)
-
-    try:
-        from google import genai
-        from google.genai import types
-
-        client = genai.Client(api_key=api_key)
-
-        # Load base character as reference if available
-        base_path = _ASSETS_DIR / "characters" / "rainbow_roblox.png"
-        ref_bytes: bytes | None = None
-        if base_path.exists():
-            ref_bytes = base_path.read_bytes()
-
-        poses = [
-            ("front", "standing facing forward, full body, centered, neutral T-pose"),
-            ("happy", "jumping with arms up, celebrating, happy expression"),
-            ("reading", "sitting and reading a large storybook, focused expression"),
-        ]
-
-        generated = 0
-        for pose_name, pose_desc in poses:
-            out_path = ref_dir / f"ref_{pose_name}.png"
-            if out_path.exists():
-                generated += 1
-                continue
-
-            prompt = (
-                f"Generate an image of {character_block}. "
-                f"The character is {pose_desc}. "
-                f"Clean white background. No text, no words, no letters. "
-                f"Full body visible."
-            )
-            if ref_bytes:
-                prompt += " Keep the same character as the reference image."
-
-            contents: list[types.Part] = [types.Part(text=prompt)]
-            if ref_bytes:
-                contents.append(
-                    types.Part(
-                        inline_data=types.Blob(
-                            mime_type="image/png",
-                            data=ref_bytes,
-                        ),
-                    ),
-                )
-
-            response = client.models.generate_content(
-                model="gemini-3.1-flash-image-preview",
-                contents=contents,  # type: ignore[arg-type]
-                config=types.GenerateContentConfig(
-                    response_modalities=["TEXT", "IMAGE"],
-                ),
-            )
-
-            for part in response.candidates[0].content.parts:  # type: ignore[index,union-attr]
-                if part.inline_data and part.inline_data.data:
-                    out_path.write_bytes(part.inline_data.data)
-                    generated += 1
-                    logger.info(f"  Generated reference: {out_path}")
-                    break
-
-        if generated > 0:
-            logger.info(f"  Reference pack: {generated} images in {ref_dir}")
-            return str(ref_dir)
-
-    except ImportError:
-        logger.info("  google-genai not installed — skipping reference images")
-    except Exception as e:
-        logger.warning(f"  Reference image generation failed: {e}")
-
+    base_path = _ASSETS_DIR / "characters" / "rainbow_roblox.png"
+    reference = base_path.read_bytes() if base_path.exists() else None
+    for pose, action in [
+        ("front", "standing facing forward"),
+        ("happy", "jumping happily"),
+        ("reading", "reading a storybook"),
+    ]:
+        path = ref_dir / f"ref_{pose}.png"
+        if path.exists():
+            continue
+        png = openrouter.generate_with_fallbacks(
+            f"{character_block}. {action}. Full body, clean white background, no text.",
+            reference,
+            aspect_ratio="1:1",
+        )
+        if png:
+            path.write_bytes(png)
+            reference = png  # Keep subsequent poses consistent with the first reference.
     return str(ref_dir) if list(ref_dir.glob("ref_*.png")) else ""
 
 

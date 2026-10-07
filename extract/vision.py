@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import os
 import re
@@ -28,10 +27,8 @@ _VISION_MODEL = "gemini-3-flash-preview"
 
 
 def _configured_api_key() -> str:
-    """Return the configured Gemini API key, supporting both env var names."""
-    if openrouter.enabled():
-        return os.environ.get("OPENROUTER_API_KEY", "")
-    return os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or ""
+    """Return only the OpenRouter inference credential."""
+    return os.environ.get("OPENROUTER_API_KEY", "") if openrouter.available() else ""
 
 
 def ocr_quality_is_poor(ocr_result: OCRResult, source: SourceWorksheetModel) -> bool:
@@ -67,7 +64,7 @@ def extract_with_vision(
     """
     api_key = _configured_api_key()
     if not api_key:
-        logger.info("No GEMINI_API_KEY or GOOGLE_API_KEY — vision fallback unavailable")
+        logger.info("No OPENROUTER_API_KEY — vision fallback unavailable")
         return None
 
     try:
@@ -76,33 +73,18 @@ def extract_with_vision(
         # Read image
         image_bytes = Path(image_path).read_bytes()
         prompt = _build_vision_prompt()
-        provider = "openrouter_vision" if openrouter.enabled() else "gemini_vision"
-        if openrouter.enabled():
-            result = openrouter.complete_json(
-                prompt,
-                images=[image_bytes],
-                role="vision",
-                validate=lambda value: (
-                    isinstance(value.get("regions"), list) and bool(value["regions"])
-                ),
-            )
-            if result is None:
-                return None
-            data = dict(result)
-        else:
-            from google import genai
-            from google.genai import types
-
-            client = genai.Client(api_key=api_key)
-            contents: Any = [
-                types.Part.from_bytes(data=image_bytes, mime_type="image/jpeg"),
-                types.Part.from_text(text=prompt),
-            ]
-            response = client.models.generate_content(model=_VISION_MODEL, contents=contents)
-            text = _extract_response_text(response)
-            if not text:
-                return None
-            data = json.loads(_extract_json_text(text))
+        provider = "openrouter_vision"
+        result = openrouter.complete_json(
+            prompt,
+            images=[image_bytes],
+            role="vision",
+            validate=lambda value: (
+                isinstance(value.get("regions"), list) and bool(value["regions"])
+            ),
+        )
+        if result is None:
+            return None
+        data = dict(result)
 
         template_type = data.get("template_type", "unknown")
         raw_regions = data.get("regions", [])

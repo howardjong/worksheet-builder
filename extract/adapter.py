@@ -8,8 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
-import os
-from typing import Any, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 from pydantic import BaseModel, Field
 
@@ -103,305 +102,14 @@ class NoOpAdapter:
         return []
 
 
-# --- Claude adapter ---
-
-
-class ClaudeAdapter:
-    """AI assist via Anthropic Claude API."""
-
-    def __init__(self, api_key: str | None = None, model: str = "claude-sonnet-4-20250514") -> None:
-        self.api_key = api_key or os.environ.get("ANTHROPIC_API_KEY", "")
-        self.model = model
-        self._client: Any = None
-
-    def _get_client(self) -> Any:
-        if self._client is None:
-            import anthropic
-
-            self._client = anthropic.Anthropic(api_key=self.api_key)
-        return self._client
-
-    def _call(self, prompt: str, max_tokens: int = 512) -> str:
-        """Make an API call and return the text response."""
-        client = self._get_client()
-        response = client.messages.create(
-            model=self.model,
-            max_tokens=max_tokens,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return str(response.content[0].text)
-
-    def tag_regions(self, image_path: str, source: SourceWorksheetModel) -> list[RegionTag]:
-        try:
-            text = self._call(_build_tag_prompt(source), max_tokens=1024)
-            data = json.loads(text)
-            return [RegionTag.model_validate(item) for item in data]
-        except Exception as e:
-            logger.warning(f"Claude tag_regions failed: {e}")
-            return []
-
-    def infer_skill(self, source: SourceWorksheetModel) -> SkillInference | None:
-        try:
-            text = self._call(_build_skill_prompt(source), max_tokens=256)
-            data = json.loads(text)
-            return SkillInference.model_validate(data)
-        except Exception as e:
-            logger.warning(f"Claude infer_skill failed: {e}")
-            return None
-
-    def review_ocr(self, regions: list[SourceRegion]) -> list[OCRCorrection]:
-        try:
-            prompt = _build_ocr_prompt(regions)
-            if prompt is None:
-                return []
-            text = self._call(prompt)
-            data = json.loads(text)
-            return [OCRCorrection.model_validate(item) for item in data]
-        except Exception as e:
-            logger.warning(f"Claude review_ocr failed: {e}")
-            return []
-
-    def suggest_adaptations(self, source: SourceWorksheetModel) -> list[AdaptationSuggestion]:
-        try:
-            text = self._call(_build_adaptation_prompt(source))
-            data = json.loads(text)
-            return [AdaptationSuggestion.model_validate(item) for item in data]
-        except Exception as e:
-            logger.warning(f"Claude suggest_adaptations failed: {e}")
-            return []
-
-
-# --- OpenAI adapter ---
-
-
-class OpenAIAdapter:
-    """AI assist via OpenAI API (GPT-5.4 primary)."""
-
-    def __init__(self, api_key: str | None = None, model: str = "gpt-5.4") -> None:
-        self.api_key = api_key or os.environ.get("OPENAI_API_KEY", "")
-        self.model = model
-        self._client: Any = None
-
-    def _get_client(self) -> Any:
-        if self._client is None:
-            import openai
-
-            self._client = openai.OpenAI(api_key=self.api_key)
-        return self._client
-
-    def _call(self, prompt: str, max_tokens: int = 512) -> str:
-        client = self._get_client()
-        response = client.chat.completions.create(
-            model=self.model,
-            max_completion_tokens=max_tokens,
-            messages=[{"role": "user", "content": prompt}],
-        )
-        return str(response.choices[0].message.content or "")
-
-    def tag_regions(self, image_path: str, source: SourceWorksheetModel) -> list[RegionTag]:
-        try:
-            prompt = _build_tag_prompt(source)
-            text = self._call(prompt, max_tokens=1024)
-            data = json.loads(text)
-            return [RegionTag.model_validate(item) for item in data]
-        except Exception as e:
-            logger.warning(f"OpenAI tag_regions failed: {e}")
-            return []
-
-    def infer_skill(self, source: SourceWorksheetModel) -> SkillInference | None:
-        try:
-            prompt = _build_skill_prompt(source)
-            text = self._call(prompt, max_tokens=256)
-            data = json.loads(text)
-            return SkillInference.model_validate(data)
-        except Exception as e:
-            logger.warning(f"OpenAI infer_skill failed: {e}")
-            return None
-
-    def review_ocr(self, regions: list[SourceRegion]) -> list[OCRCorrection]:
-        try:
-            prompt = _build_ocr_prompt(regions)
-            if prompt is None:
-                return []
-            text = self._call(prompt)
-            data = json.loads(text)
-            return [OCRCorrection.model_validate(item) for item in data]
-        except Exception as e:
-            logger.warning(f"OpenAI review_ocr failed: {e}")
-            return []
-
-    def suggest_adaptations(self, source: SourceWorksheetModel) -> list[AdaptationSuggestion]:
-        try:
-            prompt = _build_adaptation_prompt(source)
-            text = self._call(prompt)
-            data = json.loads(text)
-            return [AdaptationSuggestion.model_validate(item) for item in data]
-        except Exception as e:
-            logger.warning(f"OpenAI suggest_adaptations failed: {e}")
-            return []
-
-    IMAGE_MODEL = "gpt-image-1.5"
-
-    def generate_image(
-        self,
-        prompt: str,
-        output_path: str,
-        size: str = "1024x1024",
-    ) -> str | None:
-        """Generate an image using OpenAI gpt-image-1.5.
-
-        Fallback image generator when Gemini is unavailable.
-        Returns the output path on success, None on failure.
-        """
-        try:
-            import base64
-            from pathlib import Path
-
-            client = self._get_client()
-            response = client.images.generate(
-                model=self.IMAGE_MODEL,
-                prompt=prompt,
-                n=1,
-                size=size,
-            )
-
-            b64_data = response.data[0].b64_json
-            if not b64_data:
-                logger.warning("OpenAI image generation returned no data")
-                return None
-
-            image_bytes = base64.b64decode(b64_data)
-            Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-            with open(output_path, "wb") as f:
-                f.write(image_bytes)
-            logger.info(f"Generated image (OpenAI): {output_path}")
-            return output_path
-
-        except Exception as e:
-            logger.warning(f"OpenAI image generation failed: {e}")
-            return None
-
-
-# --- Gemini adapter ---
-
-
-class GeminiAdapter:
-    """AI assist via Google Gemini API (google.genai SDK).
-
-    Uses gemini-3-flash-preview for text tasks and
-    gemini-3.1-flash-image-preview for image generation.
-    """
-
-    IMAGE_MODEL = "gemini-3.1-flash-image-preview"
-
-    def __init__(
-        self,
-        api_key: str | None = None,
-        model: str = "gemini-3-flash-preview",
-    ) -> None:
-        self.api_key = api_key or os.environ.get("GEMINI_API_KEY", "")
-        self.model = model
-        self._client: Any = None
-
-    def _get_client(self) -> Any:
-        if self._client is None:
-            from google import genai
-
-            self._client = genai.Client(api_key=self.api_key)
-        return self._client
-
-    def _call(self, prompt: str) -> str:
-        client = self._get_client()
-        response = client.models.generate_content(
-            model=self.model,
-            contents=prompt,
-        )
-        return str(response.text)
-
-    def generate_image(
-        self,
-        prompt: str,
-        output_path: str,
-    ) -> str | None:
-        """Generate an image using gemini-3.1-flash-image-preview.
-
-        Used for custom avatar items and theme assets.
-        Returns the output path on success, None on failure.
-        """
-        try:
-            from pathlib import Path
-
-            from google.genai import types
-
-            client = self._get_client()
-            response = client.models.generate_content(
-                model=self.IMAGE_MODEL,
-                contents=prompt,
-                config=types.GenerateContentConfig(
-                    response_modalities=["TEXT", "IMAGE"],
-                ),
-            )
-
-            for part in response.candidates[0].content.parts:
-                if part.inline_data:
-                    Path(output_path).parent.mkdir(parents=True, exist_ok=True)
-                    with open(output_path, "wb") as f:
-                        f.write(part.inline_data.data)
-                    logger.info(f"Generated image: {output_path}")
-                    return output_path
-
-            logger.warning("Gemini image generation returned text, not image")
-            return None
-
-        except Exception as e:
-            logger.warning(f"Gemini image generation failed: {e}")
-            return None
-
-    def tag_regions(self, image_path: str, source: SourceWorksheetModel) -> list[RegionTag]:
-        try:
-            prompt = _build_tag_prompt(source)
-            text = self._call(prompt)
-            data = json.loads(_extract_json(text))
-            return [RegionTag.model_validate(item) for item in data]
-        except Exception as e:
-            logger.warning(f"Gemini tag_regions failed: {e}")
-            return []
-
-    def infer_skill(self, source: SourceWorksheetModel) -> SkillInference | None:
-        try:
-            prompt = _build_skill_prompt(source)
-            text = self._call(prompt)
-            data = json.loads(_extract_json(text))
-            return SkillInference.model_validate(data)
-        except Exception as e:
-            logger.warning(f"Gemini infer_skill failed: {e}")
-            return None
-
-    def review_ocr(self, regions: list[SourceRegion]) -> list[OCRCorrection]:
-        try:
-            prompt = _build_ocr_prompt(regions)
-            if prompt is None:
-                return []
-            text = self._call(prompt)
-            data = json.loads(_extract_json(text))
-            return [OCRCorrection.model_validate(item) for item in data]
-        except Exception as e:
-            logger.warning(f"Gemini review_ocr failed: {e}")
-            return []
-
-    def suggest_adaptations(self, source: SourceWorksheetModel) -> list[AdaptationSuggestion]:
-        try:
-            prompt = _build_adaptation_prompt(source)
-            text = self._call(prompt)
-            data = json.loads(_extract_json(text))
-            return [AdaptationSuggestion.model_validate(item) for item in data]
-        except Exception as e:
-            logger.warning(f"Gemini suggest_adaptations failed: {e}")
-            return []
-
-
-class OpenRouterAdapter(OpenAIAdapter):
+class OpenRouterAdapter:
     """Schema-validated AI assist through the shared OpenRouter model chain."""
+
+    def __init__(self, model: str | None = None) -> None:
+        from ai import openrouter
+
+        self.model = model or next(iter(openrouter.models("text")), "none")
+        self._model_ids = [model] if model else None
 
     def _call(self, prompt: str, max_tokens: int = 512) -> str:
         from ai import openrouter
@@ -409,6 +117,7 @@ class OpenRouterAdapter(OpenAIAdapter):
         result = openrouter.complete(
             prompt,
             max_tokens=max_tokens,
+            model_ids=self._model_ids,
             accept=lambda text: isinstance(openrouter.json_value(text), (dict, list)),
         )
         return json.dumps(openrouter.json_value(result.text)) if result else ""
@@ -420,9 +129,59 @@ class OpenRouterAdapter(OpenAIAdapter):
 
         result = openrouter.generate_with_fallbacks(prompt, aspect_ratio="1:1")
         if result:
-            Path(output_path).write_bytes(result)
+            path = Path(output_path)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(result)
             return output_path
         return None
+
+    def tag_regions(self, image_path: str, source: SourceWorksheetModel) -> list[RegionTag]:
+        try:
+            prompt = _build_tag_prompt(source)
+            text = self._call(prompt, max_tokens=1024)
+            data = json.loads(text)
+            return [RegionTag.model_validate(item) for item in data]
+        except Exception as e:
+            logger.warning(f"OpenRouter tag_regions failed: {e}")
+            return []
+
+    def infer_skill(self, source: SourceWorksheetModel) -> SkillInference | None:
+        try:
+            prompt = _build_skill_prompt(source)
+            text = self._call(prompt, max_tokens=256)
+            data = json.loads(text)
+            return SkillInference.model_validate(data)
+        except Exception as e:
+            logger.warning(f"OpenRouter infer_skill failed: {e}")
+            return None
+
+    def review_ocr(self, regions: list[SourceRegion]) -> list[OCRCorrection]:
+        try:
+            prompt = _build_ocr_prompt(regions)
+            if prompt is None:
+                return []
+            text = self._call(prompt)
+            data = json.loads(text)
+            return [OCRCorrection.model_validate(item) for item in data]
+        except Exception as e:
+            logger.warning(f"OpenRouter review_ocr failed: {e}")
+            return []
+
+    def suggest_adaptations(self, source: SourceWorksheetModel) -> list[AdaptationSuggestion]:
+        try:
+            prompt = _build_adaptation_prompt(source)
+            text = self._call(prompt)
+            data = json.loads(text)
+            return [AdaptationSuggestion.model_validate(item) for item in data]
+        except Exception as e:
+            logger.warning(f"OpenRouter suggest_adaptations failed: {e}")
+            return []
+
+
+# Legacy import names retain the protocol, but cannot create direct provider clients.
+ClaudeAdapter = OpenRouterAdapter
+OpenAIAdapter = OpenRouterAdapter
+GeminiAdapter = OpenRouterAdapter
 
 
 # --- Shared prompt builders ---
@@ -522,37 +281,15 @@ _PROVIDERS: dict[str, type] = {
 
 
 def get_adapter(provider: str = "auto", **kwargs: str) -> ModelAdapter:
-    """Get an AI adapter by provider name.
+    """Select OpenRouter or the deterministic baseline; vendor names are aliases."""
+    from ai import openrouter
 
-    "auto" — tries providers in order: OpenAI, Gemini, Claude, NoOp.
-    "openai" — requires OPENAI_API_KEY (primary, GPT-5.4).
-    "gemini" — requires GEMINI_API_KEY (text + image generation).
-    "claude" — requires ANTHROPIC_API_KEY.
-    "none" — deterministic baseline, no AI.
-    """
-    if provider == "auto":
-        from ai import openrouter
-
-        if openrouter.enabled():
-            return OpenRouterAdapter(**kwargs)
-        if os.environ.get("OPENAI_API_KEY"):
-            provider = "openai"
-        elif os.environ.get("GEMINI_API_KEY"):
-            provider = "gemini"
-        elif os.environ.get("ANTHROPIC_API_KEY"):
-            provider = "claude"
-        else:
-            provider = "none"
-
-    if provider == "openrouter":
-        return OpenRouterAdapter(**kwargs)
-    adapter_cls = _PROVIDERS.get(provider)
-    if adapter_cls is None:
-        logger.warning(f"Unknown AI provider '{provider}', using NoOp")
+    if provider == "none" or (provider == "auto" and not openrouter.available()):
         return NoOpAdapter()
-
-    instance: Any = adapter_cls(**kwargs)
-    return instance  # type: ignore[no-any-return]
+    if provider in {"auto", "openrouter", "openai", "gemini", "claude"}:
+        return OpenRouterAdapter(**kwargs)
+    logger.warning("Unknown AI provider '%s', using NoOp", provider)
+    return NoOpAdapter()
 
 
 def run_ai_assist(
@@ -599,28 +336,5 @@ def run_ai_assist(
 
 
 def generate_image(prompt: str, output_path: str) -> str | None:
-    """Generate an image, trying Gemini first, falling back to OpenAI.
-
-    Returns the output path on success, None if both fail or no keys available.
-    """
-    from ai import openrouter
-
-    if openrouter.enabled():
-        return OpenRouterAdapter().generate_image(prompt, output_path)
-    # Try Gemini first
-    if os.environ.get("GEMINI_API_KEY"):
-        gemini = GeminiAdapter()
-        result = gemini.generate_image(prompt, output_path)
-        if result:
-            return result
-        logger.info("Gemini image generation failed, trying OpenAI fallback")
-
-    # Fall back to OpenAI
-    if os.environ.get("OPENAI_API_KEY"):
-        openai_adapter = OpenAIAdapter()
-        result = openai_adapter.generate_image(prompt, output_path)
-        if result:
-            return result
-
-    logger.warning("No image generation provider available")
-    return None
+    """Generate an image through the shared OpenRouter model fallback chain."""
+    return OpenRouterAdapter().generate_image(prompt, output_path)
