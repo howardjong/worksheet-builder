@@ -8,6 +8,43 @@
 
 ## Current State
 
+### Session 70 — 2026-10-07 (consolidate and prune redundant tests)
+
+**Owner scope:** Clean up tests on a new branch, validate, and promote to main.
+Branch: `codex/prune-redundant-tests`, based on main merge `29faaa4` (PR #3).
+Production behavior and offline inference isolation remain unchanged.
+
+**Audit and cleanup:**
+- Scanned the entire test suite for identical AST bodies; the three duplicate
+  pairs in provider ordering, judge approval, and prompt version are resolved.
+- Replaced stale OpenAI/Gemini adapter selection tests with explicit router
+  selection cases, compatibility-alias identity, and protocol checks for the
+  two actual implementations. Removed repeated image-method existence checks:
+  actual image generation/output is already covered in `test_openrouter.py`.
+- Consolidated trivial nested-model construction tests into one full AIResult
+  JSON round trip that includes every nested contract. Retained each NoOp action
+  and explicit disabled behavior; removed the redundant NoOp JSON round trip.
+- Image provider tests now verify both orderings and credential isolation with
+  legacy keys; consolidate model overrides/defaults. Their inherited no-key
+  generation path is covered by the shared gateway's no-key regression.
+- Replaced two hard-coded prompt-version assertions with a behavioral cache
+  invalidation case beside the existing model-chain case.
+- Removed the import-only smoke test: all eight packages are already imported
+  by retained behavioral test modules during collection. Learning objectives,
+  failure modes, content/scene quality gates, semantic golden and experiment
+  tests are retained. This is conservative pruning, not a coverage-percentage
+  claim or a target for reducing the test count.
+
+**Verification:** Lint and strict typecheck pass (203 Python source files).
+Full `make test-all`: 1,069 passed, 23 skipped, one existing Pillow warning,
+47.57 seconds. Net 12 fewer executed cases; test code shrank by 164 lines.
+No exact duplicate test bodies remain in the scan. No paid inference ran.
+
+**Publication:** Publish the tested tree through the connected GitHub app,
+wait for PR CI, merge under the owner's instruction, and verify main's tree.
+Next: configure a router credential securely for separately bounded live tests;
+the manually triggered live-test workflow has not been added.
+
 ### Session 69 — 2026-10-07 (complete OpenRouter routing and tested promotion)
 
 **Owner scope:** Check out `codex/openrouter-model-resilience`, ensure all LLM
@@ -42,9 +79,9 @@ getdata deprecation warning remains. Default text/vision/audio and image models
 were checked against OpenRouter's public catalogs; no billed inference or actual
 private-learner visual acceptance was run.
 
-**Publication:** Apply the tested tree to PR #3 through the connected GitHub app
-(the terminal has no push credentials), verify matching tree hashes and checks,
-then merge under the owner's explicit instruction. Follow-up: configure the
+**Publication:** PR #3 merged as `29faaa4` after successful GitHub CI. The
+connected app published the exact tested tree; remote main and local main were
+verified to match. Follow-up: configure the
 router key securely and inspect live worksheets with the actual learner profile.
 
 ### Session 68 — 2026-09-30 (OpenRouter migration and image resilience branch)

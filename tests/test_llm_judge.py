@@ -769,15 +769,6 @@ def test_derive_abstain_when_judge_omits_the_cell_that_would_fail() -> None:
     assert out == "abstain"
 
 
-def test_derive_approve_when_all_essential_cells_scored_clean() -> None:
-    # Positive guard: the completeness guard must NOT over-trigger when every
-    # essential cell is scored at/above the pass band with no defects.
-    ledger = _ledger()
-    judge = _clean_judge(ledger, quality=0.80)
-    out = derive_objective_approval(judge, _pass_gate(), _coverage("pass"), ledger)  # type: ignore[arg-type]
-    assert out == "approve"
-
-
 # --- samples plumbing ------------------------------------------------------ #
 
 
