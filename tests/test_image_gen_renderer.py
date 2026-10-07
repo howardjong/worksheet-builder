@@ -285,9 +285,11 @@ def test_unexpected_provider_error_uses_next_model(
     assert working.calls == 1
 
 
-def test_model_chain_change_invalidates_page_cache(
+@pytest.mark.parametrize("changed_setting", ["model_chain", "prompt_version"])
+def test_generation_configuration_change_invalidates_page_cache(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
+    changed_setting: str,
 ) -> None:
     import render.image_gen as image_gen
 
@@ -295,7 +297,10 @@ def test_model_chain_change_invalidates_page_cache(
     monkeypatch.setattr(image_gen, "evaluate_page", lambda *args, **kwargs: _gate_report(True))
     renderer = _renderer([provider], tmp_path / "cache", monkeypatch)
     renderer.render(_context(tmp_path))
-    monkeypatch.setenv("WORKSHEET_OPENROUTER_IMAGE_MODELS", "new-model")
+    if changed_setting == "model_chain":
+        monkeypatch.setenv("WORKSHEET_OPENROUTER_IMAGE_MODELS", "new-model")
+    else:
+        monkeypatch.setattr(image_gen, "PROMPT_VERSION", "changed-prompt-version")
     renderer.render(_context(tmp_path))
     assert provider.calls == 2
 

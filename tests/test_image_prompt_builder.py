@@ -199,12 +199,6 @@ def test_page_prompt_renders_quick_log_without_traffic_strip() -> None:
     assert "green, yellow, and red" not in prompt
 
 
-def test_prompt_version_bumped() -> None:
-    from render.image_prompt_builder import PROMPT_VERSION
-
-    assert PROMPT_VERSION == "page_prompt_v5_learning_scene"
-
-
 def _spec_with_fill_blank_options() -> WorksheetDesignSpec:
     return _spec(
         sections=[
@@ -239,12 +233,6 @@ def test_fill_blank_with_options_renders_circle_affordance() -> None:
     prompt = build_page_prompt(_spec_with_fill_blank_options())
     assert "circle" in prompt.lower()
     assert "handwriting line below" not in prompt
-
-
-def test_prompt_version_bumped_for_uat_fixes() -> None:
-    from render.image_prompt_builder import PROMPT_VERSION
-
-    assert PROMPT_VERSION == "page_prompt_v5_learning_scene"
 
 
 def _spec_with_match_rows() -> WorksheetDesignSpec:

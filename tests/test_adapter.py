@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import pytest
+
 from extract.adapter import (
     AdaptationSuggestion,
     AIResult,
     ClaudeAdapter,
     GeminiAdapter,
+    ModelAdapter,
     NoOpAdapter,
     OCRCorrection,
     OpenAIAdapter,
+    OpenRouterAdapter,
     RegionTag,
     SkillInference,
     generate_image,
@@ -57,50 +61,14 @@ def _source_model() -> SourceWorksheetModel:
 
 
 class TestSchemaContracts:
-    def test_region_tag_validates(self) -> None:
-        tag = RegionTag(
-            region_index=0,
-            suggested_type="title",
-            confidence=0.95,
-            rationale="First line",
-        )
-        assert tag.region_index == 0
-        json_str = tag.model_dump_json()
-        restored = RegionTag.model_validate_json(json_str)
-        assert restored.suggested_type == "title"
-
-    def test_skill_inference_validates(self) -> None:
-        inf = SkillInference(
-            domain="phonics",
-            specific_skill="cvc_blending",
-            grade_level="1",
-            confidence=0.9,
-        )
-        assert inf.domain == "phonics"
-
-    def test_ocr_correction_validates(self) -> None:
-        corr = OCRCorrection(
-            region_index=2,
-            original_text="ta11",
-            corrected_text="tall",
-            confidence=0.85,
-        )
-        assert corr.corrected_text == "tall"
-
-    def test_adaptation_suggestion_validates(self) -> None:
-        sug = AdaptationSuggestion(
-            suggestion_type="chunking",
-            description="Split into 3-item chunks for Grade 1",
-            confidence=0.8,
-        )
-        assert sug.suggestion_type == "chunking"
-
-    def test_ai_result_round_trip(self) -> None:
+    def test_ai_result_round_trip_preserves_all_nested_contracts(self) -> None:
         result = AIResult(
             provider="test",
             enabled=True,
             region_tags=[
-                RegionTag(region_index=0, suggested_type="title", confidence=0.9),
+                RegionTag(
+                    region_index=0, suggested_type="title", confidence=0.9, rationale="First line"
+                ),
             ],
             skill_inference=SkillInference(
                 domain="phonics",
@@ -108,11 +76,22 @@ class TestSchemaContracts:
                 grade_level="1",
                 confidence=0.85,
             ),
+            ocr_corrections=[
+                OCRCorrection(
+                    region_index=2, original_text="ta11", corrected_text="tall", confidence=0.85
+                )
+            ],
+            adaptation_suggestions=[
+                AdaptationSuggestion(
+                    suggestion_type="chunking",
+                    description="Split into 3-item chunks for Grade 1",
+                    confidence=0.8,
+                )
+            ],
         )
         json_str = result.model_dump_json()
         restored = AIResult.model_validate_json(json_str)
-        assert len(restored.region_tags) == 1
-        assert restored.skill_inference is not None
+        assert restored == result
 
 
 # --- NoOp Adapter Tests ---
@@ -139,141 +118,59 @@ class TestNoOpAdapter:
         result = adapter.suggest_adaptations(_source_model())
         assert result == []
 
-    def test_implements_protocol(self) -> None:
-        from extract.adapter import ModelAdapter
-
-        adapter = NoOpAdapter()
-        assert isinstance(adapter, ModelAdapter)
-
 
 # --- Adapter Factory Tests ---
 
 
 class TestGetAdapter:
-    def test_none_returns_noop(self) -> None:
-        adapter = get_adapter("none")
-        assert isinstance(adapter, NoOpAdapter)
+    @pytest.mark.parametrize("provider", ["none", "unknown_provider", "auto"])
+    def test_disabled_or_unconfigured_returns_noop(
+        self, provider: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+        assert isinstance(get_adapter(provider), NoOpAdapter)
 
-    def test_unknown_returns_noop(self) -> None:
-        adapter = get_adapter("unknown_provider")
-        assert isinstance(adapter, NoOpAdapter)
+    def test_explicit_none_disables_configured_router(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+        assert isinstance(get_adapter("none"), NoOpAdapter)
 
-    def test_auto_without_key_returns_noop(self) -> None:
-        import os
+    @pytest.mark.parametrize("provider", ["auto", "openrouter", "openai", "gemini", "claude"])
+    def test_supported_provider_names_create_router(
+        self, provider: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+        assert type(get_adapter(provider)) is OpenRouterAdapter
 
-        old_o = os.environ.pop("OPENAI_API_KEY", None)
-        old_g = os.environ.pop("GEMINI_API_KEY", None)
-        old_a = os.environ.pop("ANTHROPIC_API_KEY", None)
-        try:
-            adapter = get_adapter("auto")
-            assert isinstance(adapter, NoOpAdapter)
-        finally:
-            if old_o:
-                os.environ["OPENAI_API_KEY"] = old_o
-            if old_g:
-                os.environ["GEMINI_API_KEY"] = old_g
-            if old_a:
-                os.environ["ANTHROPIC_API_KEY"] = old_a
 
-    def test_claude_adapter_created(self) -> None:
-        adapter = get_adapter("claude")
-        assert isinstance(adapter, ClaudeAdapter)
+def test_legacy_adapter_imports_are_router_aliases() -> None:
+    assert ClaudeAdapter is OpenAIAdapter is GeminiAdapter is OpenRouterAdapter
 
-    def test_openai_adapter_created(self) -> None:
-        adapter = get_adapter("openai")
-        assert isinstance(adapter, OpenAIAdapter)
 
-    def test_gemini_adapter_created(self) -> None:
-        adapter = get_adapter("gemini")
-        assert isinstance(adapter, GeminiAdapter)
+@pytest.mark.parametrize("adapter_type", [NoOpAdapter, OpenRouterAdapter])
+def test_distinct_adapter_implementations_satisfy_protocol(
+    adapter_type: type[NoOpAdapter] | type[OpenRouterAdapter],
+) -> None:
+    assert isinstance(adapter_type(), ModelAdapter)
 
-    def test_claude_implements_protocol(self) -> None:
-        from extract.adapter import ModelAdapter
 
-        adapter = ClaudeAdapter()
-        assert isinstance(adapter, ModelAdapter)
-
-    def test_openai_implements_protocol(self) -> None:
-        from extract.adapter import ModelAdapter
-
-        adapter = OpenAIAdapter()
-        assert isinstance(adapter, ModelAdapter)
-
-    def test_gemini_implements_protocol(self) -> None:
-        from extract.adapter import ModelAdapter
-
-        adapter = GeminiAdapter()
-        assert isinstance(adapter, ModelAdapter)
-
-    def test_auto_prefers_openai(self) -> None:
-        """OpenAI (GPT-5.4) is the top-priority auto-detected provider."""
-        import os
-
-        os.environ["OPENROUTER_API_KEY"] = "test-key"
-        os.environ["OPENROUTER_API_KEY"] = "test-key"
-        try:
-            adapter = get_adapter("auto")
-            assert isinstance(adapter, OpenAIAdapter)
-        finally:
-            del os.environ["OPENROUTER_API_KEY"]
-            os.environ.pop("OPENROUTER_API_KEY", None)
-
-    def test_auto_falls_back_to_gemini(self) -> None:
-        import os
-
-        old_o = os.environ.pop("OPENAI_API_KEY", None)
-        old_a = os.environ.pop("ANTHROPIC_API_KEY", None)
-        os.environ["OPENROUTER_API_KEY"] = "test-key"
-        try:
-            adapter = get_adapter("auto")
-            assert isinstance(adapter, GeminiAdapter)
-        finally:
-            os.environ.pop("OPENROUTER_API_KEY", None)
-            if old_o:
-                os.environ["OPENAI_API_KEY"] = old_o
-            if old_a:
-                os.environ["ANTHROPIC_API_KEY"] = old_a
+def test_adapter_uses_configured_model_and_explicit_override(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("WORKSHEET_OPENROUTER_TEXT_MODELS", "model-a,model-b")
+    assert OpenRouterAdapter().model == "model-a"
+    adapter = get_adapter("openrouter", model="model-c")
+    assert isinstance(adapter, OpenRouterAdapter)
+    assert adapter.model == "model-c"
 
 
 # --- AI Assist Runner Tests ---
 
 
-class TestGeminiImageGen:
-    def test_gemini_has_image_model(self) -> None:
-        adapter = GeminiAdapter()
-        assert callable(adapter.generate_image)
-
-    def test_gemini_has_generate_image_method(self) -> None:
-        adapter = GeminiAdapter()
-        assert hasattr(adapter, "generate_image")
-        assert callable(adapter.generate_image)
-
-    def test_gemini_text_model_is_lite(self) -> None:
-        adapter = GeminiAdapter()
-        assert adapter.model == "openai/gpt-5.5"
-
-    def test_openai_model_is_gpt54(self) -> None:
-        adapter = OpenAIAdapter()
-        assert adapter.model == "openai/gpt-5.5"
-
-    def test_openai_has_image_generation(self) -> None:
-        adapter = OpenAIAdapter()
-        assert hasattr(adapter, "generate_image")
-        assert callable(adapter.generate_image)
-
-    def test_generate_image_no_keys_returns_none(self) -> None:
-        import os
-
-        old_g = os.environ.pop("GEMINI_API_KEY", None)
-        old_o = os.environ.pop("OPENAI_API_KEY", None)
-        try:
-            result = generate_image("a robot", "/tmp/test.png")
-            assert result is None
-        finally:
-            if old_g:
-                os.environ["GEMINI_API_KEY"] = old_g
-            if old_o:
-                os.environ["OPENAI_API_KEY"] = old_o
+def test_generate_image_without_router_key_returns_none(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    assert generate_image("a robot", "/tmp/test.png") is None
 
 
 class TestRunAiAssist:
@@ -284,10 +181,5 @@ class TestRunAiAssist:
         assert result.provider == "NoOpAdapter"
         assert len(result.region_tags) == 0
         assert result.skill_inference is None
-
-    def test_result_is_valid_model(self) -> None:
-        adapter = NoOpAdapter()
-        result = run_ai_assist(adapter, _source_model())
-        json_str = result.model_dump_json()
-        restored = AIResult.model_validate_json(json_str)
-        assert not restored.enabled
+        assert result.ocr_corrections == []
+        assert result.adaptation_suggestions == []
