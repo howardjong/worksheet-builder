@@ -70,19 +70,55 @@ No paid inference or OpenRouter key used. Official OpenRouter Sol/Luna/reasoning
 and Decisions image-state documentation verified 2026-10-08. Runtime invocation:
 `PYTHONPATH=.venv/lib/python3.12/site-packages python -m pytest ...`.
 
-**Next / handoff:** Publish the reviewed delta on the same test branch with a
-lease against `2cc5e9a`, compare local/remote tree and verify main unchanged.
-Muse follows `docs/handoffs/on-demand-live-validation.md`: first recompose the
-real frozen package/saved scenes with zero API calls, restoring original model
-configuration solely for old receipt verification. Inspect the three reported
-score/numbering defects and new page count; return actual private JSON if an
-error is embedded in approved text. Then restore Sol medium + Luna, price every
-configured model, reconcile the $3.85 remainder, shadow-test labelled accepted
-and rejected scenes, and only then pay for a small task-specific scene trial.
-The 180s full-run deadline and $5 total session cap remain. New full end-to-end
-run, educational usefulness, false accept rate, photo intake and physical print
-acceptance remain unresolved. Do not infer 3-second feasibility from model
-advertisements or 76-second render-only replay.
+**Publication/next:** The reviewed delta was published to
+`codex/on-demand-composed-worksheets` at `09918d5` / tree `0cba2ec6`; main is
+unchanged. Muse completed the no-API recomposition and examined new artwork. See
+Session 75 and `docs/handoffs/on-demand-live-validation.md` for the updated gate
+calibration and full-run test. Live first-pass success, p95 latency, novel-photo
+intake and physical print acceptance remain pending. Do not infer three-second
+feasibility from advertised model speed or 76-second render-only replay.
+
+### Session 75 — 2026-10-08 (Luna gate trial calibration; bounded end-to-end next)
+
+**Owner direction:** Muse reports the new word-tile illustration was acceptable:
+relevant and nonrepetitive is enough. Recalibrate Luna; next run should measure
+full lesson-100 wall time and first-pass quality. Remain on
+`codex/on-demand-composed-worksheets`; prior published head `09918d5`, tree
+`0cba2ec6`. Main remains `78b00d5`.
+
+**Muse evidence (not independently inspected here):** $1.17 spent / ~$3.83 left
+of the $5 cap. Three prior vision-accepted scenes score below .95 on Luna, including
+answer-free scores near 0. The owner-approved new scene scored identity .90, task
+.40, action .42. Wrong-action/outfit controls were 0.0. Scores varied across
+repeats. Muse's actual page-by-page no-API recomposition is complete: 8 pages,
+correct denominators and numbering, no repeated continuation art, saved PNGs
+byte-identical, no reported clipping/orphan logs. This is not new end-to-end
+evidence; private candidate images/PDF remain on Muse's machine.
+
+**Calibration change:** Replaced the uniform .95 with trial cutoffs
+in `render/live_scene.py`: identity .85, relevance .35, action .35, outfit .85,
+safety .95, no text .95, answer-free .95, area .95. The answer check asks
+whether the image is answer-free and explicitly treats uncertainty as failure.
+This admits the owner-approved .90/.40/.42 example while continuing to reject the
+probed 0 controls. These thresholds are provisional from a tiny labelled sample,
+not accuracy claims. Bumped cache/gate version to v4; preserves genuine v2/v3
+receipt verification without granting old approvals under the new thresholds.
+
+**Handoff now says:** Reuse Muse's completed layout evidence. Shadow-run v4 on
+saved accepted/new/rejected images once, repeat if affordable to quantify wobble,
+then prioritize one full lesson-100 run with Sol 6.1 medium + Luna v4. Increase
+the diagnostic deadline from 180 to 300 seconds so the pipeline can finish for
+latency measurement. The total cap remains $5; reconcile the $3.83 remainder and
+allocate at most $3.80 for all new calls. Photo/AirPrint remain pending. Do not
+promote until labelled gate behavior, full first-pass quality and photo flow are
+accepted. Under-three-second latency is unproven.
+
+**Verification:** Full suite 1,169 passed, 23 skipped, one pre-existing Pillow
+deprecation warning. Focused gate/replay/provider suite: 90 passed. Ruff clean;
+strict mypy clean across 221 files. No paid inference. Current OpenRouter docs confirm Noul returns probability of “yes” and
+document image/Decisions input format. Local workspace is a duplicate commit
+chain, but the code tree matches the published branch; use GitHub's current test
+branch head as the parent for publication.
 
 ### Session 73 — 2026-10-08 (live-discovered objective approval handshake)
 

@@ -297,7 +297,7 @@ def test_caregiver_scores_each_section_and_never_counts_a_passage_as_one_word(
         "outfit_ok",
         "child_safe",
         "no_text",
-        "no_answers",
+        "answer_free",
         "meaningful_area",
     ],
 )
@@ -317,10 +317,24 @@ def test_luna_batches_all_scene_checks_and_fails_closed_on_uncertainty(
             "outfit_ok",
             "child_safe",
             "no_text",
-            "no_answers",
+            "answer_free",
             "meaningful_area",
         }
-        return {name: 0.94 if name == failed else 0.99 for name in questions}
+        values = {name: 0.99 for name in questions}
+        values["answer_free"] = 0.99
+        cutoffs = {
+            "identity_ok": 0.85,
+            "supports_task": 0.35,
+            "action_ok": 0.35,
+            "outfit_ok": 0.85,
+            "child_safe": 0.95,
+            "no_text": 0.95,
+            "answer_free": 0.95,
+            "meaningful_area": 0.95,
+        }
+        if failed:
+            values[failed] = cutoffs[failed] - 0.01
+        return values
 
     monkeypatch.setattr("ai.openrouter.decide_yes_no", decide)
     monkeypatch.setattr(
@@ -333,6 +347,29 @@ def test_luna_batches_all_scene_checks_and_fails_closed_on_uncertainty(
     assert gate.probabilities
     assert judge_scene(synthetic_image(), None, current.design_spec) is None
     assert len(calls) == 1  # absent reference cannot spend or approve
+
+
+def test_luna_trial_cutoffs_admit_owner_accepted_relevant_art_but_reject_clear_nearmisses(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    values = {
+        "identity_ok": 0.90,
+        "supports_task": 0.40,
+        "action_ok": 0.42,
+        "outfit_ok": 0.99,
+        "child_safe": 0.99,
+        "no_text": 0.99,
+        "answer_free": 0.99,
+        "meaningful_area": 0.99,
+    }
+    monkeypatch.setattr("ai.openrouter.decide_yes_no", lambda *args, **kwargs: values)
+    current = context(Path("unused"))
+    gate = judge_scene(synthetic_image(), synthetic_image(), current.design_spec)
+    assert gate is not None and gate.approved
+    assert gate.probabilities["answer_free"] == 0.99
+    values["action_ok"] = 0.0
+    gate = judge_scene(synthetic_image(), synthetic_image(), current.design_spec)
+    assert gate is not None and not gate.approved
 
 
 def test_scene_gate_refuses_string_booleans_and_missing_checks(

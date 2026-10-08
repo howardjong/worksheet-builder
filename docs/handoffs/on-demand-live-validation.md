@@ -32,58 +32,54 @@ New model defaults: `openai/gpt-6.1-sol`, `reasoning.effort=medium`, for text/vi
 and `openai/gpt-6-luna-decisions` for composed artwork gates. No automatic
 GPT-5.5 / Gemini 3.1 Pro / Sonnet 4.6 review fallback. Image generation chains
 are separate and unchanged. Clear inherited stage overrides before paid trials.
-Luna batches eight mandatory checks; each must reach a **provisional** 0.95
-threshold, with valid local geometry. This is not calibrated accuracy. Missing or
-uncertain results fail closed; no old-model escalation. Evaluate human-labelled
-accepted **and rejected** scenes before relying on this policy for promotion.
+Muse's shadow report found the old uniform 0.95 threshold rejected three earlier
+accepted scenes. The text-free art's `no_answers` check was a confusing negative
+question Luna scored near zero across all three. The new v4 question clearly asks
+whether any completed answer is absent, defines blank materials as answer-free,
+and treats uncertainty as failure. Answer-free must reach .95. Other provisional
+cutoffs: identity .85, task relevance .35, action .35, outfit .85, child safety
+.95, no text .95 and meaningful area .95. These let the
+owner-approved new scene's rounded .90/.40/.42 values through while the tested
+wrong-action/outfit controls at 0 remain rejected. This is a **tiny owner-labelled
+pilot policy, not calibrated accuracy**. Repeat exact saved candidates to measure
+score wobble; label every scene with the owner before drawing an accuracy claim.
+No result bypasses missing/invalid checks or local geometry.
 
-### First: fix the delivered layout without another paid call
+### Layout verification is done; begin calibration
 
-Archive private evidence read-only; fetch the latest test branch into the clean
-detached worktree and run offline checks. Recompose Muse's genuine hash-bound
-frozen package using the successful three-worksheet replay's saved `render_1`,
-`render_2`, `render_3` directories. The source below is that **replay root**, not
-the full transform's differently named renderer directories. Use fresh output.
+Muse has already recomposed the genuine approved lesson-100 package without API
+calls: the PDF is 8 pages (down from 10), the score/log defects are fixed, artwork
+is not repeated, and saved PNGs are byte-identical. Muse reports no clipping or
+caregiver-only pages. This is Muse's evidence, not independently reviewed here;
+keep its private PDF and per-page previews. No need to repeat this paid or offline
+layout pass if these artifacts still match the approved package and test branch.
+The new code changes in this handoff concern gate calibration, not PDF layout.
 
-For legacy v2 receipts, temporarily restore the exact original image and scene
-vision model chains from the saved run configuration solely to verify their old
-cache keys. Unset the API key for this recomposition; **there are no inference
-calls**, even if a key is present. Do not hand-edit a receipt or approval. This
-preserves old gate provenance; it does not retroactively claim Luna approval.
+### Then: bounded calibration and full end-to-end run
 
-```bash
-python -m experiments.live_replay \
-  --manifest /private/live-lesson-100/artifacts/frozen_render_package.json \
-  --reuse-scenes /private/successful-three-worksheet-replay \
-  --output /private/recomposed-layout
-```
+Restore the new model configuration below; legacy cache-verification settings must
+not leak into live runs. Use the preserved images for one Luna v4 shadow batch:
+three previously accepted scenes, the owner-approved new word-tile scene, and the
+wrong-action and wrong-outfit controls. Include clear text/answer negative examples
+if present. Ask the exact v4 `answer_free` question and the other checks. Repeat
+once on the same images to measure wobble if the current account price and ceiling
+allow it (Muse's earlier five probes cost about $0.002 total). Save raw scores and
+human labels. Generate no artwork for this probe.
 
-Inspect every page and `layout_report.json`: WS1 must show the five-word reading
-score separately from other tasks; WS2 must visibly number its five writing
-items 1–5, while original item IDs remain unchanged; WS3 passage feedback must
-have no blank denominator. Verify the same content/package/image hashes, one
-art placement per worksheet at its declared section, no repetition on continuation
-pages, no clipped text or orphan logs, and report the new physical page count.
-If a reported error is embedded in approved practice text, preserve that JSON
-and return the actual evidence rather than silently rewriting approved content.
-Codex has not received the private live PDF/JSON and cannot certify their layout.
-
-### Then: bounded model and artwork trials
-
-Restore the new model configuration below; the legacy cache-verification settings
-must not leak into live runs. Shadow-probe Luna on existing human-labelled scenes
-first (no new artwork needed), including rejected candidates and deliberately
-wrong task/identity/text examples. Record per-check probabilities, latency and
-false accepts/rejects against humans, not agreement with one old judge. Keep
-probes within the **$3.85 reported remainder** and count all HTTP retries.
-
-Next use `--worksheet 1 --live` on the real frozen package in a fresh directory
-for a small task-specific artwork + Luna gate trial. The new scene prompt/cache
-version means fresh live trials cannot reuse old approval. Inspect procedure
-relevance before spending on all three worksheets. A full lesson-100 rerun uses
-Sol 6.1 medium for planning/judging; keep the 180-second deadline unless Howard
-authorizes a different limit. A timeout is not end-to-end acceptance. Never
-relax gates, enlarge the session budget or merge on a replay alone.
+Then prioritize the full **lesson-100 end-to-end run** in a fresh output directory:
+planner, Sol 6.1 medium judge, fresh generated scenes, Luna gates, PDF and validators.
+Use the lesson fixture because no authorized phone photo is available. The owner
+has asked to see actual wall time. Use the **300-second** diagnostic deadline
+below, keeping the hard cumulative $5 session cap and spending at most **$3.80 of
+the reported $3.83 remainder** across probes and the run. Reconcile spending and
+verified model ceilings first; if they do not fit, stop before paid calls. Do not
+set a per-process budget larger than the cumulative remainder. Record wall time from pipeline start
+to merged validated PDF, each critical-path stage, all retries/fallbacks, first
+attempt accept/reject and reconciled cost. A 300-second safety window is a test
+limit, not the product target. Do not make optional serial/parallel trials if they
+threaten the budget. A replay is not end-to-end evidence. Keep image/content gates;
+report failure if any stage blocks. Full run is the best next evidence for both
+first-pass quality and actual end-to-end latency.
 
 Novel phone-photo acceptance and actual AirPrint remain pending; no authorized
 new phone photo was supplied. The old approval handshake fix remains covered:
@@ -111,10 +107,10 @@ Running/timed-out requests can still be billed; keep the external cap.
 
 Before each process, set `WORKSHEET_RUN_MAX_USD` to its allocation within the
 **remaining** session budget, `WORKSHEET_RUN_MAX_CALLS` to a bounded attempt count,
-and `WORKSHEET_RUN_DEADLINE_S` to a diagnostic limit. These reset per process,
-not across the session. Start full diagnostic runs with a 180-second deadline;
-that is a safety limit, not an accepted product latency target. A smaller deadline
-can be tested on frozen render-only trials after actual timings are known.
+and `WORKSHEET_RUN_DEADLINE_S=300` for the requested end-to-end measurement.
+Limits reset per process, not across the session. The 300-second window is a safety bound for measuring actual wall time, not the
+product target. Test smaller bounds after one
+complete run.
 
 Set `WORKSHEET_CALL_CEILINGS_JSON` to a JSON object mapping **every configured
 model ID** to a verified conservative USD ceiling per HTTP attempt. Compute
@@ -137,44 +133,16 @@ or no eligible endpoint exists, stop; never retry with weaker privacy routing.
 Custom character descriptions and photographed text can still contain personal
 information, so inspect those inputs too. Keep every private artifact out of git.
 
-## Minimal compatibility probes before another full image pipeline
+## Model routing preflight
 
-Use current public model/endpoint metadata to verify availability, image input,
-reference-image support and structured output before paid calls. Model-level
-capabilities can be a union across providers; check the routed endpoint too.
-Verify Sol 6.1 medium chat/structured-output support and Luna image Decisions
-support on the routed endpoints. These defaults are owner-requested test-branch
-changes; live quality and speed remain to be measured.
+Before any paid call, verify Sol 6.1 medium supports the routed chat/structured
+output endpoint and Luna Decisions supports image inputs on the selected route.
+Use the batch format documented for the Decisions API and retain model IDs as
+actually served. The small shadow batch in the section above uses saved candidate
+images; it replaces the old separate one-image trial. Jev probing is optional and
+should not displace the full run or consume funds needed for it.
 
-1. If an unchanged approved frozen package from this branch is available, dry-run the replay command
-   below, then use `--worksheet 1 --live` in a fresh directory for one artwork
-   and gate trial. Do not disable checks or count a synthetic approval as real.
-   Older artifacts must pass the revised deterministic rubric; if they do not,
-   run lesson 100 once to create an approved frozen package instead. Never
-   hand-author an affirmative verdict or synthetic approval for a live replay.
-2. Optionally shadow-probe Jev with one clear synthetic instruction. Create
-   private `state.txt` and `questions.json` (for example
-   `{"clear":"Is the instruction a clear action for a seven-year-old?"}`).
-   The CLI is dry-run by default and requires explicit `--live` plus limits:
-
-```bash
-python -m experiments.live_decisions --state /private/state.txt \
-  --questions /private/questions.json --model typesafe/jev-1.13 \
-  --output /private/jev-probe
-# Add --live only after checking the key, ceilings, remaining budget and limits.
-```
-
-For Luna, use `--model openai/gpt-6-luna-decisions` and repeated `--image` arguments
-(canonical reference first, candidate scene last). State the exact action and
-costume from `learning_scene.json` in the private state file; batch identity,
-action, outfit, text/answer absence and safety questions. The documented wire
-format was checked on 2026-10-08: plain strings and image_url parts directly in
-the state array. Live endpoint behavior is still unverified. Save human labels
-for accepted **and rejected** candidates. The CLI probes remain shadow-only. The test branch separately uses all eight
-mandatory probabilities plus geometry for scene approval; content approval
-still belongs to Sol and the exact package hash. Label threshold failures honestly.
-
-## First live run: lesson 100 regression
+## Full lesson-100 pipeline and latency run
 
 Use lesson 100 because it is the committed fixture Howard approved. Do not claim
 to have tested 106 unless the actual source exists. Use Sol 6.1 medium for planner/judge and Luna Decisions for scene checks;
@@ -193,7 +161,7 @@ export WORKSHEET_OPENROUTER_SCENE_DECISIONS_MODEL=openai/gpt-6-luna-decisions
 export WORKSHEET_IMAGE_CONCURRENCY=3
 export WORKSHEET_SCENE_MAX_CANDIDATES=2
 export WORKSHEET_ALLOW_PDF_FALLBACK=0
-export WORKSHEET_RUN_DEADLINE_S=180
+export WORKSHEET_RUN_DEADLINE_S=300
 # Set the per-process USD/call limits and verified model ceilings as described above.
 export WORKSHEET_OPENROUTER_SCENE_TIMEOUT=90
 export WORKSHEET_OPENROUTER_PLANNER_TIMEOUT=90
@@ -204,10 +172,12 @@ python transform.py --lesson 100 --profile /private/test-learner.yaml --theme sp
 ```
 
 Inspect the PDF and actual gates even if the CLI returns successfully. A failed
-scene must be reported as failure; do not silently count a plain fallback as
-first-pass success. A content rejection should stop before paid artwork begins.
-Compare content to Muse's prior lesson 100 package, especially -er/-est practice,
-connected text, worked examples and duplicate copying sections.
+scene must be reported as failure; no plain fallback counts as first-pass success.
+Compare the package with Muse's prior lesson-100 package, especially -er/-est
+practice, connected text, examples and duplicated copying. Record time from the
+first transform call to the final merged, validated PDF, as well as stage spans.
+Mark content/art first-pass pass only if no planner retry, gate rejection, provider
+fallback or renderer degradation occurred; do not infer it from final PDF alone.
 
 ## Mandatory product test: a new phone photo
 
@@ -313,8 +283,9 @@ Decisions image-state wire format with the official API first. Batch narrow
 questions about the same input. Save timing, probabilities and human outcomes;
 measure false accepts/rejects, not agreement with one stochastic judge. These
 models do not generate worksheet content. CLI probes and Jev remain shadow-only;
-Luna is wired into the composed scene gate on this test branch with a provisional
-threshold, requiring human calibration before promotion.
+Luna is wired into the composed scene gate on this test branch with v4 provisional,
+per-criterion thresholds described above. Validate them against saved human labels
+before promotion.
 
 ## Report and acceptance
 
@@ -338,11 +309,9 @@ no clipped text, no caregiver-only pages, accurate score denominators. Confirm
 pass, and no degraded-art fallback.
 
 Use the saved `action_contract` to label exact action and outfit acceptance, not
-just "a character is present." Confirm layout report fonts: child-facing goal,
-name, instructions and practice meet K>=16pt, grade 1>=14pt, grades 2–3>=12pt.
-Caregiver logs/footer can be smaller. Record physical page count and pacing;
-the previous live lesson-100 replay needed 10 pages, so low page count is
-not yet demonstrated. Record effective artwork PPI at its printed size; vector
+just "a character is present." Confirm child-facing fonts meet K>=16pt, grade 1>=14pt,
+grades 2–3>=12pt; caregiver logs/footer can be smaller. Muse's layout recomposition
+already reports 8 pages instead of 10; confirm the full run's page count and pacing. Record effective artwork PPI at its printed size; vector
 text is crisp independently of artwork. A ~1K scene at this slot is below 300ppi;
 do not claim 300ppi or silently shrink it into a thumbnail. Human printed-art
 acceptance is required rather than a blanket speculative resolution target.

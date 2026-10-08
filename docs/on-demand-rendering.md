@@ -153,17 +153,22 @@ mixed story/word-work layouts use semantic mapping rather than dropping a page.
 
 The Decisions adapter `ai.openrouter.decide_yes_no()` supports named probability
 checks using `/api/alpha/decisions`, separate from chat completions. Luna image
-checks now power composed scene approval on this test branch only. Eight checks
-(identity, task relevance, action, outfit, safety, no text, no answers and meaningful
-area) must each reach the provisional conservative threshold 0.95. Invalid/missing
-results fail closed; there is no legacy-model escalation. Local pixel bounds
-add a geometry check, while the meaningful-area decision excludes decorative
-backgrounds. Jev and the separate CLI remain shadow-only and cannot approve
-content or bypass a gate. The documented image-state format was checked
-on 2026-10-08 (strings and image_url parts in a top-level state array).
-Live endpoint behavior, thresholds and false
-acceptance rates must be checked against human labels before promotion. A model's
-self-reported probability is not measured accuracy.
+checks now power composed scene approval on this test branch only. The first
+Luna scores rejected the owner's acceptable, task-relevant trial artwork and
+previously accepted scenes, so the v4 trial uses separate provisional cutoffs:
+identity .85, task relevance .35, action .35, outfit .85, child safety .95,
+no visible text .95, answer-free .95 and meaningful scene area .95. The answer
+check explicitly asks whether any specific completed answer is absent, and says
+uncertainty fails the check. This avoids both a confusing double-negative and
+inverting uncertainty into an unsafe pass.
+These cutoffs come from a very small owner-labelled trial set, not a validated
+accuracy study. Record raw probabilities and compare with human judgments on
+accepted and rejected saved scenes before promotion. Invalid/missing results fail
+closed; there is no legacy-model escalation. Local pixel bounds add a geometry
+check, while Luna's meaningful-area question excludes decorative backgrounds.
+The documented image-state format was checked on 2026-10-08 (strings and image_url
+parts in a top-level state array). A model's self-reported probability is not
+measured accuracy.
 
 Official API reference: https://openrouter.ai/docs/api/api-reference/alphadecisions/submit-a-decisions-request
 Multimodal state format: https://openrouter.ai/docs/guides/community/multimodal-decisions

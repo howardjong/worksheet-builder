@@ -21,10 +21,21 @@ from render.scene_geometry import meaningful_page_fraction
 from render.strategies import RenderContext
 from theme.schema import ThemeConfig
 
-SCENE_VERSION = "live_scene_v3_decisions"
+SCENE_VERSION = "live_scene_v4_luna_calibrated"
 DECISIONS_MODEL = "openai/gpt-6-luna-decisions"
-# Provisional conservative trial policy, not a claim of calibrated accuracy.
-DECISION_THRESHOLD = 0.95
+# Owner-reviewed trial art was relevant at 0.40 task / 0.42 action / 0.90
+# identity, while clear wrong-action/outfit controls scored 0. These are trial
+# cutoffs from a tiny labeled set, not production-calibrated accuracy estimates.
+DECISION_THRESHOLDS = {
+    "identity_ok": 0.85,
+    "supports_task": 0.35,
+    "action_ok": 0.35,
+    "outfit_ok": 0.85,
+    "child_safe": 0.95,
+    "no_text": 0.95,
+    "answer_free": 0.95,
+    "meaningful_area": 0.95,
+}
 
 
 class SceneAction(BaseModel):
@@ -253,8 +264,11 @@ def judge_scene(
             "no_text": (
                 "Is the LAST image entirely free of visible letters, words, numbers or labels?"
             ),
-            "no_answers": (
-                "Is the LAST image free of practice answers or clues that give away those answers?"
+            "answer_free": (
+                "Is the LAST image free of any specific completed answer to a child practice item? "
+                "Answer yes only when no target word, solved item or marked correct choice is "
+                "visible. Blank or unmarked learning materials and general instructional scenes "
+                "are answer-free. If uncertain, answer no."
             ),
             "meaningful_area": (
                 "Does the actual learning character/action/material (excluding background/"
@@ -273,7 +287,8 @@ def judge_scene(
         )
         if probabilities is None or set(probabilities) != set(questions):
             return None
-        passed = {name: value >= DECISION_THRESHOLD for name, value in probabilities.items()}
+        passed = {name: value >= DECISION_THRESHOLDS[name] for name, value in probabilities.items()}
+        passed["no_answers"] = passed.pop("answer_free")
         with Image.open(io.BytesIO(png)) as image:
             rgba = image.convert("RGBA")
             white = Image.new("RGBA", rgba.size, "white")
@@ -352,10 +367,23 @@ def _scene_judge_models() -> list[str]:
     return openrouter.stage_models("scene_judge", role="vision")
 
 
-def _scene_key(prompt: str, reference: bytes | None, *, legacy: bool = False) -> str:
+def _scene_key(
+    prompt: str,
+    reference: bytes | None,
+    *,
+    legacy: bool = False,
+    prior_calibration: bool = False,
+) -> str:
+    version = (
+        "live_scene_v2_action_contract"
+        if legacy
+        else "live_scene_v3_decisions"
+        if prior_calibration
+        else SCENE_VERSION
+    )
     return hashlib.sha256(
         (
-            ("live_scene_v2_action_contract" if legacy else SCENE_VERSION)
+            version
             + prompt
             + json.dumps(openrouter.models("image"))
             + json.dumps(
@@ -363,7 +391,7 @@ def _scene_key(prompt: str, reference: bytes | None, *, legacy: bool = False) ->
                 if legacy
                 else _scene_judge_models()
             )
-            + ("" if legacy else str(DECISION_THRESHOLD))
+            + ("" if legacy else json.dumps(0.95 if prior_calibration else DECISION_THRESHOLDS))
         ).encode()
         + (reference or b"")
     ).hexdigest()
@@ -405,7 +433,11 @@ def load_approved_scene(context: RenderContext) -> str | None:
     except (OSError, ValueError):
         return None
     version = report.get("scene_version")
-    if version not in {SCENE_VERSION, "live_scene_v2_action_contract"}:
+    if version not in {
+        SCENE_VERSION,
+        "live_scene_v3_decisions",
+        "live_scene_v2_action_contract",
+    }:
         return None
     prompt = scene_prompt(
         context.design_spec,
@@ -417,6 +449,7 @@ def load_approved_scene(context: RenderContext) -> str | None:
         prompt,
         _reference(context.character_identity),
         legacy=version == "live_scene_v2_action_contract",
+        prior_calibration=version == "live_scene_v3_decisions",
     )
     return _approved_scene(context.artifacts_dir, key, context.design_spec)
 
@@ -452,8 +485,8 @@ def generate_scene(context: RenderContext) -> str | None:
                     "scene_version": SCENE_VERSION,
                     "gate_models": _scene_judge_models(),
                     "gate_backend": os.environ.get("WORKSHEET_SCENE_GATE_BACKEND", "decisions"),
-                    "decision_threshold": (
-                        DECISION_THRESHOLD
+                    "decision_thresholds": (
+                        DECISION_THRESHOLDS
                         if os.environ.get("WORKSHEET_SCENE_GATE_BACKEND", "decisions")
                         == "decisions"
                         else None

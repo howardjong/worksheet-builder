@@ -231,3 +231,32 @@ def test_legacy_scene_receipt_can_be_recomposed_without_new_gate_approval(
     assert report["mode"] == "recompose_no_inference"
     copied = json.loads((tmp_path / "recomposed/render_1/learning_scene.json").read_text())
     assert copied["scene_version"] == "live_scene_v2_action_contract"
+
+
+def test_v3_luna_scene_receipt_preserves_its_original_cache_key(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from render.design_spec import compile_worksheet_design_spec
+    from render.live_scene import _reference, _scene_key, scene_prompt
+
+    frozen, source = saved_scenes(tmp_path, monkeypatch)
+    package = FrozenRenderPackage.model_validate_json(frozen.read_text())
+    spec = compile_worksheet_design_spec(
+        package.worksheets[0], package.theme, package.profile, render_mode="hybrid_shell"
+    )
+    receipt_path = source / "render_1/learning_scene.json"
+    receipt = json.loads(receipt_path.read_text())
+    receipt["scene_version"] = "live_scene_v3_decisions"
+    receipt["key"] = _scene_key(
+        scene_prompt(spec, package.theme, package.identity),
+        _reference(package.identity),
+        prior_calibration=True,
+    )
+    receipt_path.write_text(json.dumps(receipt))
+    forbid_inference(monkeypatch)
+    report = replay(str(tmp_path / "recomposed-v3"), str(frozen), reuse_scenes=str(source))
+    assert report["mode"] == "recompose_no_inference"
+    provenance = report["scene_approval_provenance"]
+    assert isinstance(provenance, list) and provenance[0]["scene_version"] == (
+        "live_scene_v3_decisions"
+    )
