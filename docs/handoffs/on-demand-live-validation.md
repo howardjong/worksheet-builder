@@ -6,11 +6,45 @@ Fetch the branch, pin and report its exact SHA before testing. Read AGENTS.md,
 `.claude/worksheet-project-context.md` and `docs/on-demand-rendering.md`. Do not
 merge or change the production default based only on offline checks.
 
-If the branch is still unpublished, use Codex's updated git patch in an isolated
-branch based on `78b00d5` (`git am --3way /private/on-demand-composed-worksheets.patch`).
-Do not substitute an old remote branch or test main and report these fixes tested.
-Report the resulting commit and tree SHA. Publication was previously rejected;
-Codex has not retried remote writes. Keep all changes off main until acceptance.
+The owner authorized publication; the branch is now remote. Use its latest head,
+not the earlier patch or main. Keep all changes off main until acceptance.
+
+## Post-fix rerun after Muse's first live trial
+
+Muse tested baseline `0288e0f` / tree `2eae86a` on 2026-10-08. Offline checks
+passed, but the live lesson-100 run failed at 99 seconds after two planner/judge
+calls and before any artwork. Reconciled cost was $0.277; the judge scored 0.83
+and the objective planner derived approval, but its serialized verdict lacked the
+`approved` boolean consumed by transform. No PDF, artwork, phone photo, replay
+comparison or Decisions acceptance was demonstrated. This was an application
+contract defect, not a rejected content package or evidence of image performance.
+
+The fix saves both `approval_decision` (the authoritative derived tri-state) and
+`approved` in objective planner verdicts. The diagnostic recommendation alone is
+not approval. Live composed approval also requires the exact package hash.
+Planning outputs now persist before the gate, and new pipeline runs clear stale
+frozen manifests. Do not manually add an approval flag to an old artifact.
+
+Preserve the original private run directory read-only before updating the clean
+detached worktree to the latest remote test-branch head. Verify it includes this
+fix and repeat offline checks. Use a fresh output/artifact directory for the new
+full run so evidence cannot mix with the failed trial.
+
+Start with **$4.72 reported remaining**, reconcile the account before new calls,
+and allocate from that remainder. It is not guaranteed to cover a full run plus
+two replays: admission uses conservative ceilings and image costs are unmeasured.
+Prioritize one lesson-100 full rerun. If a real hash-bound frozen package already
+exists, use it without re-planning; the reported old run saved only skill/verdict
+metadata, so it may need one fresh planning/judge pass. A verdict and score alone
+cannot reconstruct the approved activity text; never substitute deterministic
+activities or author a synthetic approval. After the fixed run saves a genuine
+frozen package, use render-only replay for further image trials, including when
+the full run fails during artwork. Inspect each failure before paying again.
+
+All optional serial/parallel and Decisions experiments stay within the remaining
+session budget. Report them pending if insufficient funds; do not increase the
+budget or relax content/artwork gates. A new authorized phone photo and manual
+AirPrint acceptance remain pending until their actual inputs/devices are available.
 
 ## Key and preflight
 

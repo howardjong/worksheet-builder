@@ -746,8 +746,12 @@ def test_objective_coverage_fail_records_failing_cells(
     assert failure["package_bounds"]["passed"] is True
 
 
-def test_objective_clean_plan_approved(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+@pytest.mark.parametrize("recommendation", ["approve", "abstain", "reject"])
+def test_objective_clean_plan_approved(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, recommendation: str
+) -> None:
     from adapt import llm_planner
+    from adapt.approval import package_hash
 
     _objective_env(monkeypatch)
     monkeypatch.setattr(llm_planner, "build_objective_ledger", lambda s: _tiny_ledger())
@@ -759,7 +763,9 @@ def test_objective_clean_plan_approved(monkeypatch: pytest.MonkeyPatch, tmp_path
     monkeypatch.setattr(
         llm_planner,
         "judge_objective_adaptation_samples",
-        lambda ld, g, c, w, e, n: [_obj_verdict(0.8)],
+        lambda ld, g, c, w, e, n: [
+            _obj_verdict(0.8).model_copy(update={"approval_recommendation": recommendation})
+        ],
     )
 
     result = llm_planner.plan_lesson_llm(_skill(), _profile(), artifacts_dir=str(tmp_path))
@@ -768,6 +774,9 @@ def test_objective_clean_plan_approved(monkeypatch: pytest.MonkeyPatch, tmp_path
     assert [i.content for i in result[0].chunks[0].items] == ["cake", "ride"]
     verdict = json.loads((tmp_path / "judge_verdict.json").read_text())
     assert verdict["outcome"] == "objective_approved"
+    assert verdict["approval_recommendation"] == recommendation
+    assert verdict["approval_decision"] == "approve" and verdict["approved"] is True
+    assert verdict["package_hash"] == package_hash(result)
     log_lines = (tmp_path / "llm_adaptation_log.jsonl").read_text().splitlines()
     assert json.loads(log_lines[-1])["outcome"] == "objective_approved"
 

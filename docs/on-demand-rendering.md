@@ -28,7 +28,11 @@ sharing/printing flow. Test that flow on an actual phone and printer.
    matching and choose asset-independent tasks before judging.
 3. Finalize splitting, caps and instruction clarity **before** the pedagogical
    judge sees the package. An approved package is not edited by AI review later.
-   A live composed run requires affirmative pedagogical approval before artwork.
+   A live composed run requires `approved: true` bound to the exact package hash
+   before artwork. Objective planner artifacts also save `approval_decision` from
+   the deterministic tri-state derivation; the model's diagnostic
+   `approval_recommendation` cannot substitute for this contract. The finalized
+   activity JSON is retained privately even if approval or artwork later fails.
    Deterministic answer-key, coverage, skill, grade, ADHD and workload checks also
    stop failed content before any illustration calls.
    Photo coverage requires every target/list/chain word, student sentence and

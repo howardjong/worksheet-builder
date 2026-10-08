@@ -17,6 +17,7 @@ import os
 from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, Field
 
@@ -866,7 +867,7 @@ def _plan_lesson_objective(
     # 5. Route on the authoritative tri-state decision.
     if decision == "approve":
         outcome = "objective_approved"
-        verdict_payload = _objective_verdict_payload(aggregated, outcome)
+        verdict_payload = _objective_verdict_payload(aggregated, outcome, decision=decision)
         verdict_payload["package_hash"] = package_hash(worksheets)
         if coverage_retry_details:
             verdict_payload.update(coverage_retry_details)
@@ -913,8 +914,20 @@ def _objective_fallback(
     return None
 
 
-def _objective_verdict_payload(verdict: ObjectiveJudgeVerdict, outcome: str) -> dict[str, object]:
+def _objective_verdict_payload(
+    verdict: ObjectiveJudgeVerdict,
+    outcome: str,
+    *,
+    decision: Literal["approve", "abstain", "reject"],
+) -> dict[str, object]:
+    """Serialize the derived decision, not the judge's diagnostic recommendation.
+
+    Transform and frozen replay use the same boolean contract as the ordinary
+    planner. Abstention stays unknown; it must never authorize live artwork.
+    """
     payload: dict[str, object] = dict(verdict.model_dump())
+    payload["approval_decision"] = decision
+    payload["approved"] = {"approve": True, "abstain": None, "reject": False}[decision]
     payload["outcome"] = outcome
     payload["planner_version"] = 2
     return payload

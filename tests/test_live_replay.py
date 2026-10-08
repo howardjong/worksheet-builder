@@ -118,3 +118,13 @@ def test_render_only_replay_produces_pdf_with_mocked_inference(
     assert report["approved"] and Path(str(report["pdf_path"])).is_file()
     assert calls == ["first"]
     assert report["package_hash"] == json.loads(frozen.read_text())["package_hash"]
+
+
+def test_new_pipeline_run_clears_old_frozen_approval(tmp_path: Path) -> None:
+    from transform import _clear_stale_run_artifacts
+
+    frozen = manifest(tmp_path)
+    (tmp_path / "judge_verdict.json").write_text('{"approved": true}')
+    _clear_stale_run_artifacts(tmp_path)
+    assert not frozen.exists()
+    assert not (tmp_path / "judge_verdict.json").exists()

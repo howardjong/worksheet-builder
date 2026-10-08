@@ -8,6 +8,57 @@
 
 ## Current State
 
+### Session 73 — 2026-10-08 (live-discovered objective approval handshake)
+
+**Owner scope:** Resolve Muse's live failure on the existing test branch, preserve
+the quality gates, and update/publish the handoff for another bounded live trial.
+The owner authorized the test-branch push; baseline remote `0288e0f` has the exact
+tested tree `2eae86a`. Main remains `78b00d5`; no merge or production promotion.
+
+**Live evidence reported by Muse (not independently rerun by Codex):** Lesson 100,
+`hybrid_shell`, concurrency 3, two candidates, no PDF fallback, GPT-5.5 planner
+and judge. At 99 seconds, two calls / $0.277 reconciled spend, the judge scored
+0.83 and the objective planner derived approval, but transform rejected the
+serialized artifact for lacking `approved`. No PDF or artwork was produced.
+Remaining session budget reported $4.72; a new authorized phone photo is absent.
+
+**Root cause and fix:** `_objective_verdict_payload()` dumped only the objective
+schema, whose `approval_recommendation` is diagnostic and whose approval is
+derived separately by deterministic tri-state policy. The ordinary planner's
+`JudgeVerdict` already has `approved`; it was not the broken writer. Objective
+artifacts now serialize the derived `approval_decision` plus the same boolean
+contract consumed by transform/replay. No diagnostic recommendation is promoted
+to approval. Live composed runs also require the exact judged package hash.
+Finalized activity JSON is persisted immediately after planning so an early
+approval/art failure does not lose the paid plan. New runs clear stale frozen
+manifests along with prior verdicts; private snapshots must be preserved elsewhere
+before reusing an output directory.
+
+**Verification:** Reproduced the original exception offline with a real objective
+planner writer -> transform reader -> scene/PDF integration test, then observed
+the fixed path produce a synthetic-art PDF and a verified frozen package with
+the same judge/delivery hash, no advisory re-judge and no AI-review edits. Covered
+diagnostic recommendations differing from the derived decision, unknown/false/
+string approvals, missing hashes, retained failed planning output and stale
+manifest cleanup. Full offline suite: 1,140 passed, 23 skipped, one existing
+Pillow deprecation warning; lint/format and strict typing pass (221 Python files).
+No paid inference ran in Codex. In this session the scratch runtime lacked pytest;
+existing installed packages worked with `PYTHONPATH=.venv/lib/python3.12/site-packages`
+and the primary-runtime Python, without installing or changing dependencies.
+
+**Publication / next:** Publish the tested delta on
+`codex/on-demand-composed-worksheets` through the connected GitHub app, verify
+matching local/remote tree hashes and unchanged main, then Muse fetches the
+latest head into its clean detached worktree. Follow the post-fix section in
+`docs/handoffs/on-demand-live-validation.md`: archive old private evidence, new
+output directory, reconcile $4.72 remaining, prioritize one full lesson-100 run.
+The old run's verdict/skill metadata alone cannot reconstruct the approved plan;
+one fresh planner/judge pass may be necessary. Never hand-add an approval flag
+or substitute another plan. Once a genuine frozen package exists, image-only
+replays avoid repeated planning even after artwork failure. Budget coverage for
+optional replays is unproven; report pending rather than exceeding the session
+cap. Artwork quality/latency, novel-photo acceptance and AirPrint remain untested.
+
 ### Session 72 — 2026-10-08 (pre-live safeguards from Grok's revised plan)
 
 **Owner scope:** Add the useful parts of the revised plan and update the live-test

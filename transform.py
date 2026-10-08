@@ -543,6 +543,7 @@ _STALE_RUN_ARTIFACT_PATTERNS = (
     "planner_attempts.json",
     "superseded_judge_verdict.json",
     "approval_contract.json",
+    "frozen_render_package.json",
     "run_summary.json",
     "adapted_model_*.json",
     "ai_review_*.json",
@@ -945,6 +946,14 @@ def _run_multi_worksheet_pipeline(
     )
     logger.info("  Generated %s mini-worksheets", len(worksheets))
 
+    # Keep the finalized paid planning output even if approval/artwork later fails.
+    # These are private diagnostic artifacts, not evidence of approval.
+    if render_mode == "hybrid_shell":
+        for index, worksheet in enumerate(worksheets, 1):
+            (artifacts / f"adapted_model_{index}.json").write_text(
+                worksheet.model_dump_json(indent=2)
+            )
+
     # Stage 5c: Pedagogical judge verdict
     # When the LLM orchestrator ran, it already judged the adaptation and
     # wrote judge_verdict.json. Read it back if present; otherwise run the
@@ -1069,9 +1078,13 @@ def _run_multi_worksheet_pipeline(
     if render_mode == "hybrid_shell":
         from ai import openrouter
 
-        if openrouter.available() and pedagogical_judge_passed is not True:
+        if openrouter.available() and (
+            pedagogical_judge_passed is not True
+            or judge_result.get("package_hash") != package_hash(worksheets)
+        ):
             raise UnapprovedPackageError(
-                "Live composed worksheets require affirmative package approval"
+                "Live composed worksheets require affirmative package approval "
+                "bound to unchanged content"
             )
 
     pdf_paths: list[str] = []
