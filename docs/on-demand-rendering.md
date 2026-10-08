@@ -44,7 +44,8 @@ sharing/printing flow. Test that flow on an actual phone and printer.
 4. Generate a text-free learning scene for each mini-worksheet, with bounded
    overlap across independent worksheets. One batched Luna Decisions request checks stable
    character identity against its reference, the declared dominant action, theme
-   outfit, child-safe calm imagery, no text/answers and substantial scene area.
+   outfit, child-safe calm imagery and no text/answers. Measured foreground/printed
+   extent prevents tiny scenes; model-estimated painted coverage is advisory.
    `scene_action()` selects a specific section and models its reading, word-building,
    segmentation, choosing or writing procedure with concrete text-free actions/props.
    A comparison skill no longer overrides a reading/writing procedure. The same contract feeds the artist
@@ -78,9 +79,10 @@ so a spacesuit does not contradict an ordinary-clothes identity reference.
 | `WORKSHEET_IMAGE_CONCURRENCY` | `3` | Independent scene jobs; clamped to 1–4. `1` gives a serial comparison. |
 | `WORKSHEET_SCENE_MAX_CANDIDATES` | `2` | Total image model candidates per scene; clamped to 1–4. One quality attempt per candidate. |
 | `WORKSHEET_OPENROUTER_IMAGE_MODELS` | Existing ordered chain | Models tried for each scene; only the first N candidates are considered. |
-| `WORKSHEET_SCENE_GATE_BACKEND` | `decisions` | Batched Luna gate; explicit `vision` selects structured Sol vision review. No automatic backend fallback. |
+| `WORKSHEET_SCENE_GATE_BACKEND` | `decisions` | Batched Luna gate; explicit `vision` selects the configured structured vision model. No automatic backend fallback. |
 | `WORKSHEET_OPENROUTER_SCENE_DECISIONS_MODEL` | `openai/gpt-6-luna-decisions` | Only the verified image-capable Luna slug is accepted in this trial. |
-| `WORKSHEET_OPENROUTER_SCENE_JUDGE_MODELS` | Sol 6.1 | Overrides only explicit vision gate mode. |
+| `WORKSHEET_OPENROUTER_SCENE_JUDGE_MODELS` | Sol 6.1 | Overrides only explicit vision gate mode; use `anthropic/claude-haiku-5.5` for the comparison. |
+| `WORKSHEET_OPENROUTER_SCENE_JUDGE_REASONING_EFFORT` | `low` for Haiku trial | Scene vision stage only; leaves Sol planning/judging medium. |
 | `WORKSHEET_OPENROUTER_EXTRACTION_MODELS` | Sol 6.1 | Independent photo transcription routing. |
 | `WORKSHEET_OPENROUTER_PLANNER_MODELS` | Sol 6.1 | Independent content authoring routing. |
 | `WORKSHEET_OPENROUTER_JUDGE_MODELS` | Sol 6.1 | Independent pedagogical approval routing. |
@@ -151,24 +153,49 @@ reuses that cache when photo bytes and extraction models stay unchanged. The
 composed photo intake also rejects student-facing regions lost by skill mapping;
 mixed story/word-work layouts use semantic mapping rather than dropping a page.
 
-The Decisions adapter `ai.openrouter.decide_yes_no()` supports named probability
-checks using `/api/alpha/decisions`, separate from chat completions. Luna image
-checks now power composed scene approval on this test branch only. The first
-Luna scores rejected the owner's acceptable, task-relevant trial artwork and
-previously accepted scenes, so the v4 trial uses separate provisional cutoffs:
-identity .85, task relevance .35, action .35, outfit .85, child safety .95,
-no visible text .95, answer-free .95 and meaningful scene area .95. The answer
-check explicitly asks whether any specific completed answer is absent, and says
-uncertainty fails the check. This avoids both a confusing double-negative and
-inverting uncertainty into an unsafe pass.
-These cutoffs come from a very small owner-labelled trial set, not a validated
-accuracy study. Record raw probabilities and compare with human judgments on
-accepted and rejected saved scenes before promotion. Invalid/missing results fail
-closed; there is no legacy-model escalation. Local pixel bounds add a geometry
-check, while Luna's meaningful-area question excludes decorative backgrounds.
-The documented image-state format was checked on 2026-10-08 (strings and image_url
-parts in a top-level state array). A model's self-reported probability is not
-measured accuracy.
+Worksheet gate v5 is an **application rubric**, not a Luna model version. The
+requested decision model is `openai/gpt-6-luna-decisions`; OpenRouter may report a
+dated served version. Seven semantic checks block: identity .85, task relevance
+.35, recognizable procedure .35, outfit .85, child safety .95, no text .95 and
+answer-free .95. These remain provisional cutoffs from very little labelled art.
+A choosing illustration shows a pencil hovering above unmarked cards, preserving
+the prohibition on marked practice answers. Relevant procedure art need not be
+artistically perfect; the action/props and theme still have to be recognizable.
+
+The eighth Luna question (estimated painted semantic coverage >=55%) remains
+recorded as an advisory score. A probability of .41 is not an area measurement
+of 41%, and imposing .95 confidence on that estimate rejected owner-accepted art.
+Resolution, foreground bounding **extent** >=55% of image area and printed extent
+>=the design-spec minimum still block empty/tiny art. These extents allow white
+gaps inside a useful scene. Luna bounds are local nonwhite pixel bounds, which
+can include background/decorations; they are not semantic coverage. Haiku vision
+returns estimated semantic bounds. Human-labelled tiny-subject/large-background
+controls must expose weaknesses in either estimator. Mandatory relevance/action
+checks and human review remain necessary; this is not measured first-pass quality.
+
+Explicit `vision` mode can use `anthropic/claude-haiku-5.5` with structured JSON
+and short concrete blocking reasons. Its default scene effort is low; Sol planner
+and content judge remain medium. No automatic backend/model escalation occurs.
+New scene keys bind prompt, policy, models, reference and effort. Old v2/v3/v4
+receipts remain usable for no-API recomposition under their original provenance,
+never silently becoming v5 approvals.
+
+`python -m experiments.scene_gate_compare --cases /private/cases.json --output ...`
+validates genuine frozen packages and human-labelled saved images without paid
+calls by default. Explicit `--live` compares Luna and Haiku using the actual v5
+rubric, shared verified limits and no image generation. It saves per-image hashes,
+raw gates, false accept/reject counts, expected-control misses and partial results
+on failure. Optional repeated observations are not independent labelled cases.
+It cannot authorize worksheet delivery. See the live handoff for manifest format,
+remaining session budget, negative controls and conditional full-run instructions.
+The CLI now exits nonzero on missing PDF or failed validation, preserving artifacts;
+intentional `image_prompt` output is exempt. Verify the process exit status itself,
+especially when using shell pipelines.
+
+The Decisions adapter `ai.openrouter.decide_yes_no()` uses `/api/alpha/decisions`,
+separate from chat. The documented image-state format was checked on 2026-10-08
+(strings and image_url parts in a top-level state array). Invalid/missing checks
+fail closed. A model's self-reported probability is not measured accuracy.
 
 Official API reference: https://openrouter.ai/docs/api/api-reference/alphadecisions/submit-a-decisions-request
 Multimodal state format: https://openrouter.ai/docs/guides/community/multimodal-decisions

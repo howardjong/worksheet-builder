@@ -589,7 +589,9 @@ def test_cli_lesson_mode_invokes_lesson_pipeline(
 
     def fake_run_lesson_pipeline(**kwargs: Any) -> str:
         calls.update(kwargs)
-        return ""
+        pdf = tmp_path / "result.pdf"
+        pdf.write_bytes(b"test-pdf")
+        return str(pdf)
 
     monkeypatch.setattr(transform_module, "run_lesson_pipeline", fake_run_lesson_pipeline)
 
@@ -614,3 +616,76 @@ def test_cli_lesson_mode_invokes_lesson_pipeline(
     assert calls["lesson_number"] == 74
     assert calls["theme_id"] == "roblox_obby"
     assert calls["render_mode"] == "pdf_classic"
+
+
+@pytest.mark.parametrize("entry", ["lesson", "photo"])
+@pytest.mark.parametrize("failure", ["empty", "missing", "rejected", "exception"])
+def test_cli_reports_pdf_failure_with_nonzero_status_and_preserves_evidence(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    entry: str,
+    failure: str,
+) -> None:
+    artifacts = tmp_path / "artifacts"
+    artifacts.mkdir()
+    evidence = artifacts / "candidate_1.png"
+    evidence.write_bytes(b"saved candidate")
+
+    def run(**kwargs: Any) -> str:
+        if failure == "exception":
+            raise RuntimeError("Learning scene unavailable")
+        if failure == "empty":
+            return ""
+        pdf = tmp_path / "output.pdf"
+        if failure == "rejected":
+            pdf.write_bytes(b"test-pdf")
+            (artifacts / "run_summary.json").write_text(
+                json.dumps(
+                    {
+                        "validation_results": {"all_validators_passed": False},
+                    }
+                )
+            )
+        return str(pdf)
+
+    monkeypatch.setattr(
+        transform_module,
+        "run_lesson_pipeline" if entry == "lesson" else "run_pipeline",
+        run,
+    )
+    args = ["--lesson", "100"] if entry == "lesson" else ["--input", "private-photo.png"]
+    result = CliRunner().invoke(
+        transform,
+        [
+            *args,
+            "--profile",
+            "unused",
+            "--output",
+            str(tmp_path),
+            "--render-mode",
+            "hybrid_shell",
+        ],
+    )
+    assert result.exit_code != 0 and "Error:" in result.output
+    assert evidence.read_bytes() == b"saved candidate"
+
+
+def test_prompt_only_cli_remains_successful_without_pdf(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(transform_module, "run_lesson_pipeline", lambda **kwargs: "")
+    result = CliRunner().invoke(
+        transform,
+        [
+            "--lesson",
+            "100",
+            "--profile",
+            "unused",
+            "--output",
+            str(tmp_path),
+            "--render-mode",
+            "image_prompt",
+        ],
+    )
+    assert result.exit_code == 0

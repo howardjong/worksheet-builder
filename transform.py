@@ -127,25 +127,38 @@ def transform(
     artifacts = output / "artifacts"
     artifacts.mkdir(parents=True, exist_ok=True)
 
-    if lesson_number is not None:
-        run_lesson_pipeline(
-            lesson_number=lesson_number,
-            profile_path=profile_path,
-            theme_id=theme_id,
-            output_dir=str(output),
-            artifacts_dir=str(artifacts),
-            render_mode=render_mode,
-        )
-    else:
-        assert input_path is not None  # guaranteed by the exactly-one check above
-        run_pipeline(
-            input_path=input_path,
-            profile_path=profile_path,
-            theme_id=theme_id,
-            output_dir=str(output),
-            artifacts_dir=str(artifacts),
-            render_mode=render_mode,
-        )
+    try:
+        if lesson_number is not None:
+            pdf_path = run_lesson_pipeline(
+                lesson_number=lesson_number,
+                profile_path=profile_path,
+                theme_id=theme_id,
+                output_dir=str(output),
+                artifacts_dir=str(artifacts),
+                render_mode=render_mode,
+            )
+        else:
+            assert input_path is not None
+            pdf_path = run_pipeline(
+                input_path=input_path,
+                profile_path=profile_path,
+                theme_id=theme_id,
+                output_dir=str(output),
+                artifacts_dir=str(artifacts),
+                render_mode=render_mode,
+            )
+        if render_mode != "image_prompt":
+            if not pdf_path or not Path(pdf_path).is_file():
+                raise RuntimeError("No PDF produced; inspect preserved run artifacts")
+            summary_path = artifacts / "run_summary.json"
+            if summary_path.is_file():
+                summary = json.loads(summary_path.read_text())
+                if summary.get("validation_results", {}).get("all_validators_passed") is not True:
+                    raise RuntimeError("PDF did not pass all validation; inspect run_summary.json")
+    except (RuntimeError, ValueError, OSError) as exc:
+        # Pipeline telemetry and candidate receipts are saved before this boundary.
+        # Click emits a nonzero process status, including an empty/missing output.
+        raise click.ClickException(str(exc)) from exc
 
 
 def rag_available() -> bool:
@@ -506,6 +519,15 @@ def _run_from_skill_model(
     (artifacts / "run_summary.json").write_text(run_artifacts.model_dump_json(indent=2))
     if not run_artifacts.validation_results.get("all_validators_passed", False):
         logger.warning("PDF validation or artwork approval incomplete; inspect run_summary.json")
+        if selected_render_mode == "hybrid_shell":
+            raise RuntimeError(
+                "Composed PDF failed validation or artwork approval; inspect run_summary.json"
+            )
+    if selected_render_mode == "hybrid_shell" and (
+        not run_artifacts.pdf_paths
+        or not all(Path(path).is_file() for path in run_artifacts.pdf_paths)
+    ):
+        raise RuntimeError("No composed PDF produced; inspect preserved run artifacts")
     return run_artifacts
 
 

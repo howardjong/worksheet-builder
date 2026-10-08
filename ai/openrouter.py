@@ -230,6 +230,7 @@ def complete(
     max_tokens: int = 4096,
     accept: Callable[[str], bool] | None = None,
     json_schema: Mapping[str, Any] | None = None,
+    reasoning_effort: str | None = None,
 ) -> Completion | None:
     if not available():
         return None
@@ -254,9 +255,13 @@ def complete(
                 "type": "json_schema",
                 "json_schema": {"name": "worksheet_check", "schema": json_schema, "strict": False},
             }
-        effort = os.environ.get(
-            "WORKSHEET_OPENROUTER_REASONING_EFFORT",
-            "medium" if model == "openai/gpt-6.1-sol" else "",
+        effort = (
+            reasoning_effort
+            if reasoning_effort is not None
+            else os.environ.get(
+                "WORKSHEET_OPENROUTER_REASONING_EFFORT",
+                "medium" if model == "openai/gpt-6.1-sol" else "",
+            )
         )
         if effort in {"none", "minimal", "low", "medium", "high"}:
             payload["reasoning"] = {"effort": effort}
@@ -301,6 +306,7 @@ def complete_json(
     max_tokens: int = 4096,
     validate: Callable[[Mapping[str, Any]], bool] | None = None,
     json_schema: Mapping[str, Any] | None = None,
+    reasoning_effort: str | None = None,
 ) -> Mapping[str, Any] | None:
     def accepts(text: str) -> bool:
         value = json_value(text)
@@ -315,6 +321,7 @@ def complete_json(
         max_tokens=max_tokens,
         accept=accepts,
         json_schema=json_schema,
+        reasoning_effort=reasoning_effort,
     )
     value = json_value(result.text) if result else None
     return value if isinstance(value, dict) else None

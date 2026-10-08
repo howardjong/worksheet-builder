@@ -21,12 +21,13 @@ from render.scene_geometry import meaningful_page_fraction
 from render.strategies import RenderContext
 from theme.schema import ThemeConfig
 
-SCENE_VERSION = "live_scene_v4_luna_calibrated"
+SCENE_VERSION = "live_scene_v5_relevant_procedure"
+HAIKU_MODEL = "anthropic/claude-haiku-5.5"
 DECISIONS_MODEL = "openai/gpt-6-luna-decisions"
 # Owner-reviewed trial art was relevant at 0.40 task / 0.42 action / 0.90
 # identity, while clear wrong-action/outfit controls scored 0. These are trial
 # cutoffs from a tiny labeled set, not production-calibrated accuracy estimates.
-DECISION_THRESHOLDS = {
+PRIOR_DECISION_THRESHOLDS = {
     "identity_ok": 0.85,
     "supports_task": 0.35,
     "action_ok": 0.35,
@@ -36,6 +37,14 @@ DECISION_THRESHOLDS = {
     "answer_free": 0.95,
     "meaningful_area": 0.95,
 }
+# Seven semantic checks block approval. The estimated pixel-coverage probability
+# is diagnostic only: confidence in a statement is not a geometric measurement.
+DECISION_THRESHOLDS = {
+    name: cutoff for name, cutoff in PRIOR_DECISION_THRESHOLDS.items() if name != "meaningful_area"
+}
+AREA_POLICY = (
+    "foreground bounding extent >=55%; printed extent >=spec minimum; model coverage advisory"
+)
 
 
 class SceneAction(BaseModel):
@@ -101,7 +110,9 @@ def _legacy_scene_action(
     )
 
 
-def scene_action(spec: WorksheetDesignSpec, theme: ThemeConfig | None = None) -> SceneAction:
+def scene_action(
+    spec: WorksheetDesignSpec, theme: ThemeConfig | None = None, *, prior_rubric: bool = False
+) -> SceneAction:
     """Model one concrete learner procedure; bind its illustration to that section."""
     if not spec.sections:
         return _legacy_scene_action(spec, theme)
@@ -143,7 +154,10 @@ def scene_action(spec: WorksheetDesignSpec, theme: ThemeConfig | None = None) ->
     elif dominant == "circle":
         kind, action, props = (
             "choose",
-            "using a pencil to circle one blank choice card among several",
+            "using a pencil to circle one blank choice card among several"
+            if prior_rubric
+            else "holding a pencil above three blank choice cards while considering them, "
+            "without touching, circling or marking any card",
             "a pencil and three blank choice cards",
         )
     else:
@@ -206,7 +220,12 @@ def _reference(identity: object | None) -> bytes | None:
 
 
 def scene_prompt(
-    spec: WorksheetDesignSpec, theme: ThemeConfig, identity: object | None, *, legacy: bool = False
+    spec: WorksheetDesignSpec,
+    theme: ThemeConfig,
+    identity: object | None,
+    *,
+    legacy: bool = False,
+    prior_rubric: bool = False,
 ) -> str:
     character = (
         identity.character_block
@@ -214,7 +233,11 @@ def scene_prompt(
         else "a friendly learner"
     )
     tasks = "; ".join(section.micro_goal for section in spec.sections)
-    action = _legacy_scene_action(spec, theme) if legacy else scene_action(spec, theme)
+    action = (
+        _legacy_scene_action(spec, theme)
+        if legacy
+        else scene_action(spec, theme, prior_rubric=prior_rubric)
+    )
     prompt = (
         "Draw only a substantial instructional illustration, never a worksheet. "
         "Landscape 16:9; fill the image with the meaningful scene, calm white background. "
@@ -239,55 +262,82 @@ def scene_prompt(
     return prompt
 
 
-def judge_scene(
-    png: bytes, reference: bytes | None, spec: WorksheetDesignSpec, theme: ThemeConfig | None = None
-) -> SceneGate | None:
+def scene_rubric(
+    spec: WorksheetDesignSpec, theme: ThemeConfig | None = None
+) -> tuple[str, dict[str, str]]:
+    """Shared semantic criteria for Luna and the structured vision comparison."""
     action = scene_action(spec, theme)
-    if os.environ.get("WORKSHEET_SCENE_GATE_BACKEND", "decisions") == "decisions":
+    questions = {
+        "identity_ok": (
+            "Does the LAST image preserve the FIRST reference's face, hair and proportions? "
+            "Theme clothing may change."
+        ),
+        "supports_task": (
+            "Does the LAST image clearly support the declared learning goal and activities "
+            "rather than being decorative posing?"
+        ),
+        "action_ok": (
+            "Does the LAST image depict a recognizable version of the required learning action "
+            "with its required props? Minor pose details need not be perfect."
+        ),
+        "outfit_ok": "Is the character dressed appropriately for the declared theme costume?",
+        "child_safe": "Is the image safe, calm and appropriate for a child aged five to eight?",
+        "no_text": (
+            "Is the LAST image entirely free of visible letters, words, numbers or labels?"
+        ),
+        "answer_free": (
+            "Is the LAST image free of any specific completed answer to a child practice item? "
+            "Answer yes only when no target word, solved item or marked correct choice is "
+            "visible. Blank or unmarked learning materials and general instructional scenes "
+            "are answer-free. If uncertain, answer no."
+        ),
+        "meaningful_area": (
+            "Does the actual learning character/action/material (excluding background/"
+            "decorations) occupy at least 55% of the LAST image?"
+        ),
+    }
+    section_goal = (
+        spec.sections[action.section_number - 1].micro_goal if spec.sections else spec.learning_goal
+    )
+    state = (
+        "Evaluate the LAST image. FIRST image is canonical character reference. "
+        "Uncertainty or inability to verify must count as criterion not satisfied. "
+        f"Goal: {spec.learning_goal}. Required action: {action.action}. "
+        f"Props: {action.props}. Costume: {action.costume}. "
+        f"Illustrated section: {section_goal}. "
+        "Judge relevance and a recognizable procedure, not artistic perfection. "
+        "The character may wear a theme costume instead of reference clothes."
+    )
+    return state, questions
+
+
+def judge_scene(
+    png: bytes,
+    reference: bytes | None,
+    spec: WorksheetDesignSpec,
+    theme: ThemeConfig | None = None,
+    *,
+    backend: str | None = None,
+    model_ids: list[str] | None = None,
+) -> SceneGate | None:
+    backend = backend or os.environ.get("WORKSHEET_SCENE_GATE_BACKEND", "decisions")
+    gate_models = model_ids if model_ids is not None else _scene_judge_models(backend)
+    if backend not in {"decisions", "vision"} or not gate_models:
+        raise ValueError("Unknown scene gate backend or empty model list")
+    if backend == "decisions" and gate_models != [DECISIONS_MODEL]:
+        raise ValueError("Composed Decisions gates require the verified image-capable Luna model")
+    state, questions = scene_rubric(spec, theme)
+    if backend == "decisions":
         if not reference:
             return None
-        questions = {
-            "identity_ok": (
-                "Does the LAST image preserve the FIRST reference's face, hair and proportions? "
-                "Theme clothing may change."
-            ),
-            "supports_task": (
-                "Does the LAST image clearly support the declared learning goal and activities "
-                "rather than being decorative posing?"
-            ),
-            "action_ok": (
-                "Does the LAST image depict the exact required learning action "
-                "with its required props?"
-            ),
-            "outfit_ok": "Is the character dressed appropriately for the declared theme costume?",
-            "child_safe": "Is the image safe, calm and appropriate for a child aged five to eight?",
-            "no_text": (
-                "Is the LAST image entirely free of visible letters, words, numbers or labels?"
-            ),
-            "answer_free": (
-                "Is the LAST image free of any specific completed answer to a child practice item? "
-                "Answer yes only when no target word, solved item or marked correct choice is "
-                "visible. Blank or unmarked learning materials and general instructional scenes "
-                "are answer-free. If uncertain, answer no."
-            ),
-            "meaningful_area": (
-                "Does the actual learning character/action/material (excluding background/"
-                "decorations) occupy at least 55% of the LAST image?"
-            ),
-        }
-        state = (
-            "Evaluate the LAST image. FIRST image is canonical character reference. "
-            "Uncertainty or inability to verify must count as criterion not satisfied. "
-            f"Goal: {spec.learning_goal}. Required action: {action.action}. "
-            f"Props: {action.props}. Costume: {action.costume}. "
-            f"Activities: {[section.micro_goal for section in spec.sections]}."
-        )
         probabilities = openrouter.decide_yes_no(
-            state, questions, model=_scene_judge_models()[0], images=[reference, png]
+            state, questions, model=gate_models[0], images=[reference, png]
         )
         if probabilities is None or set(probabilities) != set(questions):
             return None
-        passed = {name: value >= DECISION_THRESHOLDS[name] for name, value in probabilities.items()}
+        passed = {
+            name: probabilities[name] >= cutoff for name, cutoff in DECISION_THRESHOLDS.items()
+        }
         passed["no_answers"] = passed.pop("answer_free")
         with Image.open(io.BytesIO(png)) as image:
             rgba = image.convert("RGBA")
@@ -302,7 +352,7 @@ def judge_scene(
             else (0.0, 0.0, 0.0, 0.0)
         )
         return SceneGate(
-            **{name: value for name, value in passed.items() if name != "meaningful_area"},
+            **passed,
             bounds=normalized,
             issues=[
                 name + " below provisional threshold" for name, value in passed.items() if not value
@@ -310,18 +360,17 @@ def judge_scene(
             probabilities=probabilities,
         )
     prompt = (
-        "Evaluate the LAST image as instructional artwork. The first image, if present, "
-        "is the character reference. Compare stable face/hair/proportions; allow theme costumes. "
-        f"Goal: {spec.learning_goal}. "
-        f"Required action: {action.action}. Props: {action.props}. Costume: {action.costume}. "
-        "Check meaningful reading/writing/word-building action (not an unrelated portrait), "
-        "no visible text/letters/numbers, no practice answers. Return the tight bounding box "
-        "of meaningful artwork in normalized [left,top,right,bottom] coordinates. "
-        "Check the exact declared action, appropriate outfit and child-safe calm imagery. "
-        "Missing identity reference means identity_ok=false; identity cannot be verified. "
+        state + "\n" + json.dumps(questions) + "\n"
         "Return ONLY JSON with booleans identity_ok, supports_task, action_ok, outfit_ok, "
-        "child_safe, no_text, no_answers, "
-        "bounds (four numbers), and issues (array of strings). Any uncertainty must fail its check."
+        "child_safe, no_text, no_answers (use the answer_free criterion), "
+        "bounds (four numbers), and issues (short concrete blocking defects only). "
+        "Estimate the tight bounding extent around the learning character and materials, "
+        "excluding background and decorations, in normalized [left,top,right,bottom] "
+        "coordinates. This is an extent, NOT painted-pixel coverage; white gaps are allowed. "
+        "The meaningful_area probability/coverage question is advisory and must NOT add an "
+        "issue or change a semantic check. No required check may pass if it cannot be verified. "
+        "Missing identity reference means identity_ok=false. "
+        "Relevant, recognizable artwork is enough; cosmetic imperfections are not defects."
     )
 
     def validates(value: object) -> bool:
@@ -344,17 +393,21 @@ def judge_scene(
         prompt,
         images=([reference, png] if reference else [png]),
         role="vision",
-        model_ids=_scene_judge_models(),
-        max_tokens=512,
+        model_ids=gate_models,
+        max_tokens=768,
         validate=validates,
         json_schema=schema,
+        reasoning_effort=os.environ.get(
+            "WORKSHEET_OPENROUTER_SCENE_JUDGE_REASONING_EFFORT",
+            "low" if gate_models == [HAIKU_MODEL] else None,
+        ),
     )
     gate = SceneGate.model_validate(raw) if raw is not None else None
     return gate.model_copy(update={"identity_ok": False}) if gate and not reference else gate
 
 
-def _scene_judge_models() -> list[str]:
-    backend = os.environ.get("WORKSHEET_SCENE_GATE_BACKEND", "decisions")
+def _scene_judge_models(backend: str | None = None) -> list[str]:
+    backend = backend or os.environ.get("WORKSHEET_SCENE_GATE_BACKEND", "decisions")
     if backend == "decisions":
         model = os.environ.get("WORKSHEET_OPENROUTER_SCENE_DECISIONS_MODEL", DECISIONS_MODEL)
         if model != DECISIONS_MODEL:
@@ -373,12 +426,15 @@ def _scene_key(
     *,
     legacy: bool = False,
     prior_calibration: bool = False,
+    prior_rubric: bool = False,
 ) -> str:
     version = (
         "live_scene_v2_action_contract"
         if legacy
         else "live_scene_v3_decisions"
         if prior_calibration
+        else "live_scene_v4_luna_calibrated"
+        if prior_rubric
         else SCENE_VERSION
     )
     return hashlib.sha256(
@@ -391,7 +447,26 @@ def _scene_key(
                 if legacy
                 else _scene_judge_models()
             )
-            + ("" if legacy else json.dumps(0.95 if prior_calibration else DECISION_THRESHOLDS))
+            + (
+                ""
+                if legacy
+                else json.dumps(
+                    0.95
+                    if prior_calibration
+                    else PRIOR_DECISION_THRESHOLDS
+                    if prior_rubric
+                    else {
+                        "thresholds": DECISION_THRESHOLDS,
+                        "area_policy": AREA_POLICY,
+                        "effort": os.environ.get(
+                            "WORKSHEET_OPENROUTER_SCENE_JUDGE_REASONING_EFFORT",
+                            "low"
+                            if _scene_judge_models() == [HAIKU_MODEL]
+                            else os.environ.get("WORKSHEET_OPENROUTER_REASONING_EFFORT", "medium"),
+                        ),
+                    }
+                )
+            )
         ).encode()
         + (reference or b"")
     ).hexdigest()
@@ -436,6 +511,7 @@ def load_approved_scene(context: RenderContext) -> str | None:
     if version not in {
         SCENE_VERSION,
         "live_scene_v3_decisions",
+        "live_scene_v4_luna_calibrated",
         "live_scene_v2_action_contract",
     }:
         return None
@@ -444,12 +520,14 @@ def load_approved_scene(context: RenderContext) -> str | None:
         theme,
         context.character_identity,
         legacy=version == "live_scene_v2_action_contract",
+        prior_rubric=version in {"live_scene_v3_decisions", "live_scene_v4_luna_calibrated"},
     )
     key = _scene_key(
         prompt,
         _reference(context.character_identity),
         legacy=version == "live_scene_v2_action_contract",
         prior_calibration=version == "live_scene_v3_decisions",
+        prior_rubric=version == "live_scene_v4_luna_calibrated",
     )
     return _approved_scene(context.artifacts_dir, key, context.design_spec)
 
@@ -491,6 +569,14 @@ def generate_scene(context: RenderContext) -> str | None:
                         == "decisions"
                         else None
                     ),
+                    "area_policy": AREA_POLICY,
+                    "bounds_source": (
+                        "local_nonwhite_foreground_extent"
+                        if os.environ.get("WORKSHEET_SCENE_GATE_BACKEND", "decisions")
+                        == "decisions"
+                        else "vision_semantic_extent"
+                    ),
+                    "advisory_checks": ["meaningful_area"],
                     "action_contract": action.model_dump(),
                     "attempts": attempts,
                     **extra,

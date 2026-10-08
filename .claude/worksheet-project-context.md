@@ -8,6 +8,84 @@
 
 ## Current State
 
+### Session 76 — 2026-10-08 (relevant art rubric, Haiku comparison, reliable failure status)
+
+**Owner authorization:** Implement the assessed plan on the existing test branch:
+fix choosing/area criteria, compare Haiku with Luna on saved human-labelled art,
+retain Sol planner/content judge, then let Muse run one qualified full trial.
+Existing branch-push authorization persists. Baseline remote `2663a2b`, exact tree
+`d81645f287a36c799f44b7a4892a2b2519915c37`; local equivalent `f733e55`. Main remains
+`78b00d5`; no merge or default-renderer promotion.
+
+**Latest Muse evidence (reported, not independently rerun/visually reviewed):**
+Lesson 100 failed at artwork after 190s, no PDF. Sol planner took 58s + 52s in two
+requests; content judge approved .86 in 21s. All four fresh artwork candidates
+were rejected. Eleven calls, $0.40 this run; cumulative ~$1.57/$5 and ~$3.43
+remaining. The exact-image repeat returned identical Luna scores; differences
+between different generated PNGs are sensitivity evidence, not proof of random
+same-input behavior. Served model was `openai/gpt-6-luna-decisions-20261006`.
+"Luna v4" referred to our fourth worksheet rubric, not a different model. Saved
+owner-approved word-tile scene passed 7/8 checks; estimated painted-area confidence
+.41 blocked at .95. A circled-card scene conflicted with the no-marked-answer rule.
+Muse reported exit 0 without PDF; original runner behavior is not reproduced here.
+Private artifacts remain at Muse's `~/workspace/wb-ondemand-run/`.
+
+**Implemented:**
+- `render/live_scene.py`: worksheet rubric `live_scene_v5_relevant_procedure`.
+  Choosing models a pencil hovering above three blank unmarked cards. Artist and
+  gate share this action. Seven semantic checks remain mandatory, with the prior
+  provisional Luna thresholds; recognize relevant procedure/props rather than
+  perfect pose details. Shared `scene_rubric()` feeds both backends.
+- Model estimated 55% painted coverage is advisory, recorded but not an approval
+  blocker. A .41 confidence is not a measured 41% area. Mandatory resolution,
+  >=55% foreground bounding extent and >=design-spec printed extent remain.
+  White internal gaps are allowed. Luna uses local nonwhite bounds, which can
+  include decorations/background; Haiku estimates semantic bounds. This known
+  limitation needs labelled tiny-subject/background controls and human review.
+- Explicit vision mode supports `anthropic/claude-haiku-5.5`, short structured
+  booleans/bounds/concrete reasons, low scene effort by default. Added an explicit
+  per-call reasoning override to OpenRouter so Sol planning/judging stay medium
+  without mutating process environment. Current caches bind effort/policy and
+  models. Genuine v2/v3/v4 receipts retain original prompts/keys/provenance for
+  no-API recomposition, not upgraded approvals. No automatic model escalation.
+- `experiments/scene_gate_compare.py`: dry by default; genuine frozen package,
+  actual worksheet index/reference, private saved PNGs and preassigned strict
+  human labels. Explicit live compares the actual gates, never creates artwork or
+  writes worksheet approval. Shared verified USD/call/deadline ceilings must fit
+  the comparison plus one retry per request. Saves each paid result and partial
+  evidence, hashes, bounds source, raw gate, timing, false accepts/rejects, invalid
+  responses and expected-check misses (a wrong-outfit control rejected only for
+  geometry is not evidence of outfit detection). Optional repeated observations
+  share hashes and are not independent labelled cases. Requested/served models
+  are distinct; actual served IDs are retained by inference telemetry.
+- `transform.py`: Click exits nonzero on empty/missing PDF, failed validation or
+  pipeline failure, keeping artifacts. Intentional image_prompt is exempt.
+  Composed collection also raises after persisting failed summaries so telemetry
+  does not call failed quality successful completion. Need Muse to verify actual
+  process returncode and its shell wrapper/tee status, not assume root cause.
+- Live handoff prioritizes $0 planner-retry diagnosis, limited saved-scene
+  Haiku/Luna comparison, then a single fresh full lesson-100 run only if a gate
+  accepts owner positives and rejects negatives for the right reasons. Cumulative
+  $5 remains; reconcile ~$3.43 and allocate <=$3.40 across new processes. 300s
+  diagnostic window, parallel scene jobs, no plain fallback/no whole-run retry.
+  Default trial backend remains Luna until comparison qualifies a winner.
+
+**Verification:** Required test-all collection: 1,186 passed / 23 skipped, one
+pre-existing Pillow warning. Latest comparison admission checks rerun afterward;
+ruff and strict mypy (223 files) clean. Tests cover unmarked choosing, blank/tiny
+art, advisory confidence versus hard checks, explicit Haiku routing/effort,
+original v4 cache key/provenance, both CLI entry points, shadow labels/partial
+failure and control-specific misses. No paid inference/key used. No new PDF layout
+changes; prior Muse 8-page recomposition remains the layout evidence.
+
+**Publication/next:** This session publishes the reviewed tree on
+`codex/on-demand-composed-worksheets` against the verified current remote parent;
+main unchanged. Muse must pin the latest published
+commit/tree, follow `docs/handoffs/on-demand-live-validation.md`, return the actual
+planner retry cause and comparison evidence, then complete one qualified full run.
+A failed 190s run is not successful E2E timing. First-pass success/rate, photo
+intake and physical AirPrint are still pending. No >=95% or <3s claim.
+
 ### Session 74 — 2026-10-08 (live layout defects, instructional art and model refresh)
 
 **Owner scope:** Fix Muse's delivered-package defects and repetitive unhelpful art

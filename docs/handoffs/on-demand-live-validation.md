@@ -11,80 +11,166 @@ not the earlier patch or main. Keep all changes off main until acceptance.
 
 ## Latest evidence and next trial
 
-Muse tested `2cc5e9a` / tree `8222147`: 1,140 offline tests passed, approval
-handshake worked, and the full lesson-100 run approved content at 0.89 but hit
-the unchanged 180-second deadline during artwork (13 calls, $0.58). A single
-worksheet replay completed in 54 seconds, then all three in 76 seconds. The
-10-page package (4+4+2) had three live scenes passing the old vision gates;
-artwork was 277ppi. This is successful render-only evidence, **not a completed
-end-to-end run or a controlled serial/parallel comparison**. Session spend was
-$1.15 reconciled; Muse reported **$3.85 remaining**. Reconcile before new calls.
+Muse tested `2663a2b` / tree `d81645f2`: 1,169 tests passed. The fresh full
+lesson-100 run failed at artwork after **190 seconds, no PDF**. Sol planning
+made two requests (58s + 52s); the content judge approved at .86 in 21s.
+All four artwork candidates were rejected. This is failure latency, not completed
+end-to-end latency or first-pass success. Muse reports ~$1.57 cumulative spend,
+**~$3.43 remaining** of the same $5 session cap. Reconcile before any new calls;
+allocate at most $3.40 across comparison and full run, never reset the session cap.
 
-Owner found repetitive, weakly instructional artwork. This was renderer behavior,
-not fallback: the same scene was stamped on continuation pages and the action
-selector applied the same comparison pose across worksheets. The new renderer
-places a scene once, beside the declared section, and new prompts model that
-section's reading, building, choosing or writing procedure. These are supplemental
-procedure illustrations, not verified picture-matching assets. Human review of
-actual educational usefulness remains a merge blocker.
+The fourth version of our application rubric was called "Luna v4" in reports.
+That was not a model version. The requested model remains
+`openai/gpt-6-luna-decisions`, served as
+`openai/gpt-6-luna-decisions-20261006`. An exact saved-image repeat returned
+identical scores. Different generated images had different scores; that alone
+does not establish randomness on identical input.
 
-New model defaults: `openai/gpt-6.1-sol`, `reasoning.effort=medium`, for text/vision
-and `openai/gpt-6-luna-decisions` for composed artwork gates. No automatic
-GPT-5.5 / Gemini 3.1 Pro / Sonnet 4.6 review fallback. Image generation chains
-are separate and unchanged. Clear inherited stage overrides before paid trials.
-Muse's shadow report found the old uniform 0.95 threshold rejected three earlier
-accepted scenes. The text-free art's `no_answers` check was a confusing negative
-question Luna scored near zero across all three. The new v4 question clearly asks
-whether any completed answer is absent, defines blank materials as answer-free,
-and treats uncertainty as failure. Answer-free must reach .95. Other provisional
-cutoffs: identity .85, task relevance .35, action .35, outfit .85, child safety
-.95, no text .95 and meaningful area .95. These let the
-owner-approved new scene's rounded .90/.40/.42 values through while the tested
-wrong-action/outfit controls at 0 remain rejected. This is a **tiny owner-labelled
-pilot policy, not calibrated accuracy**. Repeat exact saved candidates to measure
-score wobble; label every scene with the owner before drawing an accuracy claim.
-No result bypasses missing/invalid checks or local geometry.
+The owner accepts relevant, nonrepetitive art without demanding perfection.
+Worksheet gate **v5** implements that standard:
 
-### Layout verification is done; begin calibration
+- Choosing illustration: pencil hovers above blank cards, without circling or
+  marking an answer. Artist and gate use the same declared action.
+- Seven semantic checks remain mandatory: identity, task relevance, recognizable
+  procedure/props, appropriate outfit, child safety, no text, no specific answer.
+  Luna trial cutoffs remain .85/.35/.35/.85/.95/.95/.95, respectively; these are
+  provisional from a tiny labelled sample, not validated accuracy estimates.
+- Luna's estimate of 55% painted semantic coverage is **advisory**. Its probability
+  is confidence in that assertion, not measured area. It cannot block by itself.
+  Resolution (800x450 minimum), foreground bounding extent (55% of image area)
+  and printed extent (the design spec's minimum, currently 10% of page) still
+  block tiny/blank art. White gaps inside the learning scene are allowed.
+- Luna uses local nonwhite foreground bounds; Haiku can return semantic bounds.
+  Local bounds can include coloured backgrounds or decorations. Inspect this
+  limitation with tiny-subject/large-background controls; do not claim semantic
+  coverage has been measured locally. Relevance/action and human review matter.
+- Explicit vision gating supports `anthropic/claude-haiku-5.5`, one short structured
+  reply with concrete blocking reasons, default **low** effort for that stage only.
+  Sol planner/content judge remain medium. No automatic backend/model escalation.
+  The trial default stays Luna until the saved-image comparison selects a model.
+- Current prompt/policy/effort have a new cache key. Recomposition may verify
+  genuine v2/v3/v4 receipts under their original contract, retaining provenance;
+  those do not count as fresh v5 acceptance.
+- CLI now rejects empty/missing PDF paths and failed validation with a nonzero
+  status; prompt-only mode is exempt. Composed failures preserve run artifacts.
+  Muse's original zero status was not independently reproduced; check the runner
+  too. Capture the Python process status, not `tee`'s status (use `pipefail` or
+  a subprocess's returncode).
 
-Muse has already recomposed the genuine approved lesson-100 package without API
-calls: the PDF is 8 pages (down from 10), the score/log defects are fixed, artwork
-is not repeated, and saved PNGs are byte-identical. Muse reports no clipping or
-caregiver-only pages. This is Muse's evidence, not independently reviewed here;
-keep its private PDF and per-page previews. No need to repeat this paid or offline
-layout pass if these artifacts still match the approved package and test branch.
-The new code changes in this handoff concern gate calibration, not PDF layout.
+Muse already completed no-API recomposition of the older approved package:
+8 pages, no repeated continuation art, corrected numbering/logs, byte-identical
+saved scenes and no reported clipping/caregiver-only pages. Do not repeat that
+layout pass unless new evidence warrants it. Phone-photo and physical AirPrint
+acceptance remain pending.
 
-### Then: bounded calibration and full end-to-end run
+### First: inspect the slow planner retry ($0)
 
-Restore the new model configuration below; legacy cache-verification settings must
-not leak into live runs. Use the preserved images for one Luna v4 shadow batch:
-three previously accepted scenes, the owner-approved new word-tile scene, and the
-wrong-action and wrong-outfit controls. Include clear text/answer negative examples
-if present. Ask the exact v4 `answer_free` question and the other checks. Repeat
-once on the same images to measure wobble if the current account price and ceiling
-allow it (Muse's earlier five probes cost about $0.002 total). Save raw scores and
-human labels. Generate no artwork for this probe.
+Read the latest private `planner_attempts.json`, coverage reports and timings.
+Identify the actual reason for the second 52s planning request; do not infer it
+from model scores. Return the specific failed objectives/constraints to Codex.
+Keep Sol and the existing content policy unchanged during the artwork comparison.
+This inspection should not trigger another planner request or an automatic retry.
 
-Then prioritize the full **lesson-100 end-to-end run** in a fresh output directory:
-planner, Sol 6.1 medium judge, fresh generated scenes, Luna gates, PDF and validators.
-Use the lesson fixture because no authorized phone photo is available. The owner
-has asked to see actual wall time. Use the **300-second** diagnostic deadline
-below, keeping the hard cumulative $5 session cap and spending at most **$3.80 of
-the reported $3.83 remainder** across probes and the run. Reconcile spending and
-verified model ceilings first; if they do not fit, stop before paid calls. Do not
-set a per-process budget larger than the cumulative remainder. Record wall time from pipeline start
-to merged validated PDF, each critical-path stage, all retries/fallbacks, first
-attempt accept/reject and reconciled cost. A 300-second safety window is a test
-limit, not the product target. Do not make optional serial/parallel trials if they
-threaten the budget. A replay is not end-to-end evidence. Keep image/content gates;
-report failure if any stage blocks. Full run is the best next evidence for both
-first-pass quality and actual end-to-end latency.
+### Second: compare gates on saved human-labelled scenes
 
-Novel phone-photo acceptance and actual AirPrint remain pending; no authorized
-new phone photo was supplied. The old approval handshake fix remains covered:
-objective verdicts serialize derived `approval_decision`/`approved`, bound to the
-exact finalized package. Never synthesize approval from a numeric score.
+Use `experiments.scene_gate_compare`, which calls the actual v5 gate wiring for
+both Luna Decisions and Haiku vision, without creating any images or changing
+planner/judge model environment. It is dry by default and live requires a vault
+key plus shared USD/call/deadline limits and verified ceilings for both models.
+The cumulative $5 cap applies. Allocate a small portion (aim <=$0.25 if current
+conservative ceilings permit); reserve the rest for one full run.
+
+Create a **private** JSON manifest with human labels assigned before inference:
+
+```json
+{
+  "package": "/private/live-run/artifacts/frozen_render_package.json",
+  "cases": [
+    {
+      "id": "owner-accepted-word-tiles",
+      "image": "/private/saved/word-tiles.png",
+      "worksheet": 1,
+      "human_approved": true,
+      "notes": "Relevant word-building action; owner accepted."
+    },
+    {
+      "id": "wrong-action",
+      "image": "/private/saved/wrong-action.png",
+      "worksheet": 1,
+      "human_approved": false,
+      "expected_failed_checks": ["action_ok"]
+    }
+  ]
+}
+```
+
+Each case must use the **actual corresponding frozen approved package and
+worksheet index**, not guessed associations. Cases from another package override
+`package` per case. The tool verifies frozen approval, hashes and reference,
+then uses that worksheet's exact v5 action/outfit/rubric for each model. A
+cross-spec control deliberately uses the mismatched worksheet and is labelled
+rejected. Labels not yet reviewed by Howard must be described as provisional
+Muse labels, not owner approval.
+
+Include the owner-approved word-tile art, appropriate prior accepted scenes,
+latest near-miss word-tile candidates, wrong-action/outfit and cross-spec controls.
+Add clearly text-bearing/answer-bearing, blank/tiny and tiny-subject/large-background
+controls if available. Locally derived negative controls are allowed if labelled
+as synthetic controls; do not generate extra art. Some old circled-choice scenes
+are now genuine negatives because they conflict with the new unmarked action.
+Do not label all previously accepted artwork positive automatically.
+
+```bash
+# Set vault key surrogate and verified USD/call/deadline limits/ceilings first.
+# Both requested IDs must have current conservative ceilings; no guessed prices.
+export WORKSHEET_OPENROUTER_SCENE_JUDGE_REASONING_EFFORT=low
+python -m experiments.scene_gate_compare --cases /private/scene-cases.json \
+  --output /private/gate-comparison-dry
+python -m experiments.scene_gate_compare --cases /private/scene-cases.json \
+  --output /private/gate-comparison-live --live
+```
+
+Default is one request per model per case (HTTP retries can add attempts).
+Preflight requires the allocation to cover the verified ceilings and one transport
+retry per request; reduce the labelled set or reconcile more of the existing
+remainder if it cannot fit. Do not understate ceilings.
+Optional `--repeats 2` tests identical bytes/rubric only if it fits the remainder.
+Keep `scene_gate_comparison.json`, inference calls, run limits and timings.
+Compare false accepts, false rejects, invalid replies, concrete reasons,
+`expected_check_misses`, geometry and latency. Report distinct cases separately
+from repeated observations. Served model IDs are in `inference_calls.jsonl`;
+requested model IDs alone are not proof of the provider/model actually served.
+The two backends use different bounds estimators; compare semantic decisions
+separately from geometry and inspect the reported `bounds_source`.
+
+Select Haiku for the next run if it accepts owner-approved relevant art and
+rejects the required negative controls for the right reasons, with no observed
+hard safety/text/answer leaks. Apply the same bar to Luna. If neither qualifies,
+stop and return failures; do not spend on a full art run or lower more cutoffs.
+This small comparison is diagnostic, not proof of >=95% quality. It cannot write
+worksheet approvals or overwrite original scene receipts. No production promotion.
+
+### Third: one fresh full end-to-end run
+
+If the comparison qualifies a gate, run lesson 100 once in an empty directory:
+Sol 6.1 medium planner and content judge, fresh scenes in bounded parallelism,
+the selected artwork gate, vector PDF and all validators. Use the 300s diagnostic
+window and remaining reconciled session allocation. Keep PDF fallback disabled.
+For Haiku set:
+
+```bash
+export WORKSHEET_SCENE_GATE_BACKEND=vision
+export WORKSHEET_OPENROUTER_SCENE_JUDGE_MODELS=anthropic/claude-haiku-5.5
+export WORKSHEET_OPENROUTER_SCENE_JUDGE_REASONING_EFFORT=low
+```
+
+For Luna set `WORKSHEET_SCENE_GATE_BACKEND=decisions` and
+`WORKSHEET_OPENROUTER_SCENE_DECISIONS_MODEL=openai/gpt-6-luna-decisions`.
+Keep Sol stage overrides below unchanged. Price/ceiling lists must cover every
+configured planner/judge/image/gate model. Report actual elapsed time through a
+merged validated PDF, exit status, planner retries, gate rejections, provider
+fallbacks, art acceptance, human page review and reconciled spend. No PDF means
+failure, regardless of deadline or process status. No automatic whole-run retry.
 
 ## Key and preflight
 
@@ -136,7 +222,8 @@ information, so inspect those inputs too. Keep every private artifact out of git
 ## Model routing preflight
 
 Before any paid call, verify Sol 6.1 medium supports the routed chat/structured
-output endpoint and Luna Decisions supports image inputs on the selected route.
+output endpoint, Luna Decisions supports image inputs, and Haiku supports vision plus
+structured output on the selected routes.
 Use the batch format documented for the Decisions API and retain model IDs as
 actually served. The small shadow batch in the section above uses saved candidate
 images; it replaces the old separate one-image trial. Jev probing is optional and
@@ -145,7 +232,7 @@ should not displace the full run or consume funds needed for it.
 ## Full lesson-100 pipeline and latency run
 
 Use lesson 100 because it is the committed fixture Howard approved. Do not claim
-to have tested 106 unless the actual source exists. Use Sol 6.1 medium for planner/judge and Luna Decisions for scene checks;
+to have tested 106 unless the actual source exists. Use Sol 6.1 medium for planner/judge and the qualified comparison winner for scene checks;
 retain every attempted and served model name.
 
 ```bash
@@ -156,8 +243,11 @@ export WORKSHEET_OPENROUTER_JUDGE_MODELS=openai/gpt-6.1-sol
 export WORKSHEET_OPENROUTER_REVIEW_MODELS=openai/gpt-6.1-sol
 export WORKSHEET_OPENROUTER_EXTRACTION_MODELS=openai/gpt-6.1-sol
 export WORKSHEET_OPENROUTER_REASONING_EFFORT=medium
-export WORKSHEET_SCENE_GATE_BACKEND=decisions
-export WORKSHEET_OPENROUTER_SCENE_DECISIONS_MODEL=openai/gpt-6-luna-decisions
+# Choose the gate that met the saved-image acceptance bar; this example uses Haiku.
+export WORKSHEET_SCENE_GATE_BACKEND=vision
+export WORKSHEET_OPENROUTER_SCENE_JUDGE_MODELS=anthropic/claude-haiku-5.5
+export WORKSHEET_OPENROUTER_SCENE_JUDGE_REASONING_EFFORT=low
+# For Luna use backend=decisions plus the exact Luna alias instead.
 export WORKSHEET_IMAGE_CONCURRENCY=3
 export WORKSHEET_SCENE_MAX_CANDIDATES=2
 export WORKSHEET_ALLOW_PDF_FALLBACK=0
@@ -283,8 +373,8 @@ Decisions image-state wire format with the official API first. Batch narrow
 questions about the same input. Save timing, probabilities and human outcomes;
 measure false accepts/rejects, not agreement with one stochastic judge. These
 models do not generate worksheet content. CLI probes and Jev remain shadow-only;
-Luna is wired into the composed scene gate on this test branch with v4 provisional,
-per-criterion thresholds described above. Validate them against saved human labels
+Luna is wired into the composed scene gate on this test branch with v5 provisional,
+per-criterion thresholds and advisory coverage described above. Validate them against saved human labels
 before promotion.
 
 ## Report and acceptance

@@ -298,7 +298,6 @@ def test_caregiver_scores_each_section_and_never_counts_a_passage_as_one_word(
         "child_safe",
         "no_text",
         "answer_free",
-        "meaningful_area",
     ],
 )
 def test_luna_batches_all_scene_checks_and_fails_closed_on_uncertainty(
@@ -360,7 +359,7 @@ def test_luna_trial_cutoffs_admit_owner_accepted_relevant_art_but_reject_clear_n
         "child_safe": 0.99,
         "no_text": 0.99,
         "answer_free": 0.99,
-        "meaningful_area": 0.99,
+        "meaningful_area": 0.41,  # confidence is advisory, not a geometric fraction
     }
     monkeypatch.setattr("ai.openrouter.decide_yes_no", lambda *args, **kwargs: values)
     current = context(Path("unused"))
@@ -752,3 +751,67 @@ def test_illustration_is_placed_once_beside_its_declared_section(
         assert sum(len(page.get_images()) for page in pdf) == 1
         page = pdf[report["artwork_pages"][0] - 1]
         assert "Section 2: Build 20 words" in page.get_text()
+
+
+def test_choose_art_models_considering_without_marking_an_answer(tmp_path: Path) -> None:
+    from render.live_scene import scene_action, scene_prompt
+    from theme.schema import ThemeConfig
+
+    current = context(tmp_path, count=1)
+    current.design_spec.sections[0].items[0].response_format = "circle"
+    assert isinstance(current.theme, ThemeConfig)
+    action = scene_action(current.design_spec, current.theme)
+    assert action.kind == "choose"
+    assert "above" in action.action and "without touching, circling or marking" in action.action
+    assert action.action in scene_prompt(current.design_spec, current.theme, None)
+    old = scene_action(current.design_spec, current.theme, prior_rubric=True)
+    assert "to circle one blank choice card" in old.action
+
+
+def test_advisory_area_confidence_cannot_approve_blank_or_tiny_art(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from PIL import ImageDraw
+
+    monkeypatch.setattr(
+        "ai.openrouter.decide_yes_no",
+        lambda state, questions, **kw: {name: 0.99 for name in questions},
+    )
+    image = Image.new("RGB", (1024, 576), "white")
+    for draw_tiny in (False, True):
+        if draw_tiny:
+            ImageDraw.Draw(image).rectangle((480, 260, 540, 300), fill="blue")
+        buffer = io.BytesIO()
+        image.save(buffer, format="PNG")
+        gate = judge_scene(
+            buffer.getvalue(), synthetic_image(), context(Path("unused")).design_spec
+        )
+        assert gate and not gate.approved
+
+
+def test_haiku_uses_shared_semantics_and_stage_effort_without_changing_sol(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from render.live_scene import HAIKU_MODEL
+
+    monkeypatch.setenv("WORKSHEET_OPENROUTER_REASONING_EFFORT", "medium")
+
+    def complete(prompt: str, **kwargs: Any) -> dict[str, Any]:
+        assert "answer_free" in prompt and "recognizable version" in prompt
+        assert "NOT painted-pixel coverage" in prompt
+        assert kwargs["model_ids"] == [HAIKU_MODEL]
+        assert kwargs["reasoning_effort"] == "low"
+        return approved_gate().model_dump()
+
+    monkeypatch.setattr("ai.openrouter.complete_json", complete)
+    gate = judge_scene(
+        synthetic_image(),
+        synthetic_image(),
+        context(Path("unused")).design_spec,
+        backend="vision",
+        model_ids=[HAIKU_MODEL],
+    )
+    assert gate and gate.approved
+    import os
+
+    assert os.environ["WORKSHEET_OPENROUTER_REASONING_EFFORT"] == "medium"

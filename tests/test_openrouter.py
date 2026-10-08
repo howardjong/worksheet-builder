@@ -526,3 +526,16 @@ def test_privacy_routing_is_enforced_without_weaker_fallback(
     assert openrouter._request(endpoint, {"model": "test-model"}, alpha=alpha) is None
     assert calls[0]["json"]["provider"] == {"zdr": True, "data_collection": "deny"}
     assert len(calls) == 1
+
+
+def test_stage_effort_override_does_not_replace_global_sol_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _responses(monkeypatch, [_text("{}")])
+    monkeypatch.setenv("WORKSHEET_OPENROUTER_REASONING_EFFORT", "medium")
+    openrouter.complete_json(
+        "gate",
+        model_ids=["anthropic/claude-haiku-5.5"],
+        reasoning_effort="low",
+    )
+    assert calls[0]["json"]["reasoning"] == {"effort": "low"}
