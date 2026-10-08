@@ -14,11 +14,13 @@ from __future__ import annotations
 import json
 import logging
 import os
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from adapt.approval import package_hash
 from adapt.coverage_ledger import (
     CoverageLedgerEntry,
     build_coverage_ledger,
@@ -43,6 +45,7 @@ from adapt.objective_ledger import (
 from adapt.rules import AccommodationRules, build_rules, llm_adapt_enabled
 from adapt.schema import AdaptedActivityModel
 from adapt.section_cap import enforce_section_cap
+from ai.telemetry import in_stage
 from companion.dosage import current_grade
 from companion.schema import LearnerProfile
 from corpus.ufli.lookup import lookup_lesson
@@ -89,11 +92,16 @@ def _corpus_block(skill: LiteracySkillModel) -> str:
     return "\n\n".join(parts)
 
 
+@in_stage("planner")
 def _call_planner(prompt: str) -> tuple[str | None, str]:
     """Walk the provider chain; return (response_text, model_label)."""
     from ai import openrouter
 
-    result = openrouter.complete(prompt, max_tokens=PLANNER_MAX_COMPLETION_TOKENS)
+    result = openrouter.complete(
+        prompt,
+        max_tokens=PLANNER_MAX_COMPLETION_TOKENS,
+        model_ids=openrouter.stage_models("planner"),
+    )
     return (result.text, result.model) if result else (None, "none")
 
 
@@ -311,6 +319,14 @@ def _build_planner_prompt(
             refs.append(f"- Lesson {lesson}: {concept}")
         curriculum_text = "\nCurriculum references:\n" + "\n".join(refs)
 
+    asset_guidance = (
+        "No verified instructional pictures are available. Do not author picture matching "
+        "or instructions that refer to artwork. Choose text discrimination/circle, written "
+        "production or reading as appropriate; avoid adjacent duplicate copying sections."
+        if "match" not in rules.allowed_response_formats
+        else ""
+    )
+
     return f"""You are an expert literacy curriculum designer specializing in \
 ADHD-optimized worksheets for children ages 5-8.
 
@@ -342,6 +358,7 @@ Response format preferences: {profile.accommodations.response_format_prefs}
 - Maximum {rules.instruction_max_words} words per instruction step
 - Time estimate per section: about {rules.time_estimate_minutes} minutes
 - Allowed response formats: {rules.allowed_response_formats}
+{asset_guidance}
 - The FIRST section of the first worksheet MUST have a worked example. A worked
   example MUST model the CORRECT answer and end on a real word, correctly
   spelled (e.g. "c__ke -> cake"). NEVER show a wrong attempt, a non-word, or a
@@ -465,6 +482,7 @@ def plan_lesson_llm(
     rules: AccommodationRules | None = None,
     rag_curriculum_references: list[dict[str, object]] | None = None,
     artifacts_dir: str | None = None,
+    finalize: Callable[[list[AdaptedActivityModel]], list[AdaptedActivityModel]] | None = None,
 ) -> list[AdaptedActivityModel] | None:
     """One planning call → clamp → judge → one regen → deterministic fallback.
 
@@ -493,7 +511,7 @@ def plan_lesson_llm(
 
     if _objective_coverage_enabled():
         return _plan_lesson_objective(
-            skill, profile, rules, theme_id, rag_curriculum_references, artifacts_dir
+            skill, profile, rules, theme_id, rag_curriculum_references, artifacts_dir, finalize
         )
 
     base_prompt = _build_planner_prompt(skill, profile, rules, theme_id, rag_curriculum_references)
@@ -519,6 +537,8 @@ def plan_lesson_llm(
         worksheets = enforce_section_cap(
             _translate_plan(plan, skill, profile, theme_id, rules), rules
         )
+        if finalize is not None:
+            worksheets = finalize(worksheets)
         if not worksheets:
             logger.warning("  LLM planner: translation produced no worksheets")
             break
@@ -537,7 +557,10 @@ def plan_lesson_llm(
         verdicts.append(verdict)
         if verdict.approved:
             outcome = "planned_approved" if attempt == 0 else "planned_regen_approved"
-            _write_verdict_artifact(_verdict_payload(verdict, outcome), artifacts_dir)
+            _write_verdict_artifact(
+                {**_verdict_payload(verdict, outcome), "package_hash": package_hash(worksheets)},
+                artifacts_dir,
+            )
             _log_performance(
                 _entry(skill, outcome, verdicts, verdict.overall_score, model_label),
                 artifacts_dir,
@@ -622,6 +645,7 @@ def _generate_and_gate(
     ledger: ObjectiveLedger,
     artifacts_dir: str | None,
     extra_details: dict[str, object] | None,
+    finalize: Callable[[list[AdaptedActivityModel]], list[AdaptedActivityModel]] | None = None,
 ) -> tuple[list[AdaptedActivityModel], BlockingGateResult, str] | None:
     """Call the provider chain, parse, translate, clamp, and gate — once.
 
@@ -651,6 +675,8 @@ def _generate_and_gate(
         return None
 
     worksheets = enforce_section_cap(_translate_plan(plan, skill, profile, theme_id, rules), rules)
+    if finalize is not None:
+        worksheets = finalize(worksheets)
     if not worksheets:
         logger.warning("  LLM planner (objective): translation produced no worksheets")
         _objective_fallback(
@@ -702,6 +728,7 @@ def _plan_lesson_objective(
     theme_id: str,
     rag_curriculum_references: list[dict[str, object]] | None,
     artifacts_dir: str | None,
+    finalize: Callable[[list[AdaptedActivityModel]], list[AdaptedActivityModel]] | None = None,
 ) -> list[AdaptedActivityModel] | None:
     """Objective-sufficiency planning path (flag-gated WORKSHEET_OBJECTIVE_COVERAGE).
 
@@ -718,7 +745,15 @@ def _plan_lesson_objective(
     )
 
     generated = _generate_and_gate(
-        prompt, skill, profile, theme_id, rules, ledger, artifacts_dir, extra_details=None
+        prompt,
+        skill,
+        profile,
+        theme_id,
+        rules,
+        ledger,
+        artifacts_dir,
+        extra_details=None,
+        finalize=finalize,
     )
     if generated is None:
         return None
@@ -755,6 +790,7 @@ def _plan_lesson_objective(
             ledger,
             artifacts_dir,
             extra_details=retry_extra_details,
+            finalize=finalize,
         )
         if generated is None:
             return None
@@ -831,6 +867,7 @@ def _plan_lesson_objective(
     if decision == "approve":
         outcome = "objective_approved"
         verdict_payload = _objective_verdict_payload(aggregated, outcome)
+        verdict_payload["package_hash"] = package_hash(worksheets)
         if coverage_retry_details:
             verdict_payload.update(coverage_retry_details)
         _write_verdict_artifact(verdict_payload, artifacts_dir)

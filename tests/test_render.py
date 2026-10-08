@@ -178,7 +178,7 @@ class TestRenderWorksheet:
 
         assert "I can read words with the y pattern" in flat_text
         assert "Grown-up quick log" in flat_text
-        assert "step back one lesson" in flat_text
+        assert "review an easier activity" in flat_text
         assert "Circle one for each part" not in flat_text
 
 

@@ -23,3 +23,4 @@ def _isolate_inference_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
         raise AssertionError("Tests must mock HTTP inference; live requests are disabled")
 
     monkeypatch.setattr(httpx, "post", no_live_post)
+    monkeypatch.setattr(httpx.Client, "post", no_live_post)

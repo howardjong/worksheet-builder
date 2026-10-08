@@ -58,9 +58,7 @@ def _make_worksheet_image(
 
     # Apply perspective distortion
     if add_perspective:
-        src_pts = np.array(
-            [[0, 0], [width, 0], [width, height], [0, height]], dtype=np.float32
-        )
+        src_pts = np.array([[0, 0], [width, 0], [width, height], [0, height]], dtype=np.float32)
         # Simulate phone at slight angle
         dst_pts = np.array(
             [
@@ -245,3 +243,16 @@ class TestArchivalPdf:
         """Missing master image raises FileNotFoundError."""
         with pytest.raises(FileNotFoundError):
             derive_archival_pdf("/nonexistent/master.png", os.path.join(tmp_dir, "out.pdf"))
+
+
+@pytest.mark.parametrize("shape", [(2, 1, 4), (2, 4)])
+def test_deskew_accepts_both_opencv_hough_line_shapes(
+    shape: tuple[int, ...], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from capture.preprocess import _deskew
+
+    lines = np.asarray([[0, 0, 200, 10], [0, 40, 200, 50]], dtype=np.int32).reshape(shape)
+    monkeypatch.setattr(cv2, "HoughLinesP", lambda *args, **kwargs: lines)
+    image = np.full((100, 240, 3), 255, dtype=np.uint8)
+    corrected, angle = _deskew(image)
+    assert corrected.shape == image.shape and angle == pytest.approx(2.8624, abs=0.001)

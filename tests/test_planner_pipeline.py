@@ -11,9 +11,10 @@ def test_skip_ai_review_for_planner_v2_output() -> None:
     assert _skip_ai_review({"planner_version": 2, "approved": True}) is True
 
 
-def test_run_ai_review_for_legacy_and_deterministic_output() -> None:
-    assert _skip_ai_review({"approved": True}) is False
+def test_review_does_not_edit_any_approved_package() -> None:
+    assert _skip_ai_review({"approved": True}) is True
     assert _skip_ai_review({"enabled": False}) is False
+    assert _skip_ai_review({"planner_version": 2, "approved": False}) is False
 
 
 def test_engine_routes_to_planner_v2(monkeypatch: pytest.MonkeyPatch) -> None:

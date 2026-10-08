@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field
 from adapt.objective_ledger import EvidenceItem, ObjectiveLedger, build_objective_ledger
 from adapt.schema import AdaptedActivityModel
 from ai import openrouter
+from ai.telemetry import in_stage
 from skill.schema import LiteracySkillModel
 from validate.blocking_gates import BlockingGateResult, run_blocking_gates
 from validate.objective_coverage import (
@@ -146,11 +147,13 @@ def openai_text_model() -> str:
     return next(iter(openrouter.models("text")), "none")
 
 
+@in_stage("judge")
 def _call_openai(prompt: str, max_completion_tokens: int = 1024) -> str | None:
     """Call the configured OpenAI text model and return the response text."""
     result = openrouter.complete(
         prompt,
         max_tokens=max_completion_tokens,
+        model_ids=openrouter.stage_models("judge"),
         accept=lambda text: isinstance(openrouter.json_value(text), dict),
     )
     return result.text if result else None

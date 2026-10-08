@@ -111,6 +111,14 @@ def _build_adapt_prompt(
             refs.append(f"  - Lesson {lesson}: {concept}")
         curriculum_text = "\nCurriculum references:\n" + "\n".join(refs)
 
+    asset_guidance = (
+        "No verified instructional pictures are available. Do not author picture matching "
+        "or instructions that refer to artwork. Choose text discrimination/circle, written "
+        "production or reading as appropriate; avoid adjacent duplicate copying sections."
+        if "match" not in rules.allowed_response_formats
+        else ""
+    )
+
     return f"""You are an expert literacy curriculum designer specializing in ADHD-optimized worksheets for children ages 5-8.
 
 ## Source Worksheet Content
@@ -138,6 +146,7 @@ Response format preferences: {profile.accommodations.response_format_prefs}
 - Maximum {rules.instruction_max_words} words per instruction step
 - Time estimate per chunk: about {rules.time_estimate_minutes} minutes
 - Allowed response formats: {rules.allowed_response_formats}
+{asset_guidance}
 - First activity MUST have a worked example
 - Use brain breaks between worksheets
 - Write instructions that a child and grown-up can follow without guessing.
@@ -191,8 +200,14 @@ Respond with ONLY this JSON (no markdown fences):
 def _call_gemini(prompt: str, model: str = "gemini-3-flash-preview") -> str | None:
     """Call Gemini and return the response text."""
     from ai import openrouter
+    from ai.telemetry import stage
 
-    result = openrouter.complete(prompt, accept=lambda text: _parse_lesson_plan(text) is not None)
+    with stage("planner"):
+        result = openrouter.complete(
+            prompt,
+            accept=lambda text: _parse_lesson_plan(text) is not None,
+            model_ids=openrouter.stage_models("planner"),
+        )
     return result.text if result else None
 
 

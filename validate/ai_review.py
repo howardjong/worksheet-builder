@@ -6,6 +6,7 @@ import json
 import logging
 
 from adapt.schema import AdaptedActivityModel
+from ai.telemetry import in_stage
 
 logger = logging.getLogger(__name__)
 
@@ -49,6 +50,7 @@ class ReviewResult:
         return data
 
 
+@in_stage("review")
 def review_adapted_worksheet(
     adapted: AdaptedActivityModel,
     max_iterations: int = MAX_REVIEW_ITERATIONS,
@@ -75,7 +77,7 @@ def review_adapted_worksheet(
         logger.info(f"  Found {len(result.issues)} issues, {len(result.suggestions)} suggestions")
 
         # Apply suggestions
-        if result.suggestions:
+        if result.suggestions and iteration < max_iterations:
             adapted = _apply_suggestions(adapted, result.suggestions)
         else:
             # No actionable suggestions — stop iterating
@@ -93,6 +95,7 @@ def _run_review(adapted: AdaptedActivityModel) -> ReviewResult:
         return ReviewResult(passed=True, issues=[], suggestions=[], skipped_no_api_key=True)
     raw = openrouter.complete_json(
         _build_review_prompt(adapted),
+        model_ids=openrouter.stage_models("review"),
         validate=lambda value: (
             isinstance(value.get("passed"), bool)
             and isinstance(value.get("issues"), list)

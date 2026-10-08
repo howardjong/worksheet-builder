@@ -33,6 +33,7 @@ from adapt.schema import (
     Step,
 )
 from adapt.section_cap import enforce_package_cap, enforce_section_cap
+from ai.telemetry import in_stage
 from companion.schema import LearnerProfile
 from skill.lesson_loader import EXTRACTION_ARTIFACTS
 from skill.schema import LiteracySkillModel
@@ -79,6 +80,7 @@ def _transformation_family(skill: LiteracySkillModel) -> str | None:
     return contract.family if contract is not None else None
 
 
+@in_stage("adaptation")
 def adapt_activity(
     skill: LiteracySkillModel,
     profile: LearnerProfile,
@@ -290,6 +292,7 @@ def _resolve_lesson_package_cap(
     return cap
 
 
+@in_stage("adaptation")
 def adapt_lesson(
     skill: LiteracySkillModel,
     profile: LearnerProfile,
@@ -312,7 +315,19 @@ def adapt_lesson(
     if rules is None:
         rules = build_rules(profile)
 
+    if capabilities is not None and not capabilities.picture_assets_guaranteed:
+        rules = rules.model_copy(
+            update={
+                "allowed_response_formats": [
+                    value for value in rules.allowed_response_formats if value != "match"
+                ]
+            }
+        )
+
     package_cap = _resolve_lesson_package_cap(skill, profile, rules, artifacts_dir)
+
+    def finalize_package(worksheets: list[AdaptedActivityModel]) -> list[AdaptedActivityModel]:
+        return _finalize_lesson_package(worksheets, rules, skill, package_cap, capabilities)
 
     if os.environ.get("WORKSHEET_DIRECT_COMPILER") == "1":
         try:
@@ -344,6 +359,7 @@ def adapt_lesson(
                 rules=rules,
                 rag_curriculum_references=rag_curriculum_references,
                 artifacts_dir=artifacts_dir,
+                finalize=finalize_package,
             )
             if planned:
                 return _finalize_lesson_package(planned, rules, skill, package_cap, capabilities)
@@ -361,6 +377,7 @@ def adapt_lesson(
                 rules=rules,
                 rag_curriculum_references=rag_curriculum_references,
                 artifacts_dir=artifacts_dir,
+                finalize=finalize_package,
             )
             if llm_result:
                 return _finalize_lesson_package(llm_result, rules, skill, package_cap, capabilities)
@@ -377,7 +394,9 @@ def adapt_lesson(
     discovery_default = ["match", "trace", "circle"]
     if "trace" not in rules.allowed_response_formats:
         discovery_default = ["write" if f == "trace" else f for f in discovery_default]
-    if os.environ.get("WORKSHEET_SKIP_ASSET_GEN") == "1":
+    if os.environ.get("WORKSHEET_SKIP_ASSET_GEN") == "1" or (
+        capabilities is not None and not capabilities.picture_assets_guaranteed
+    ):
         # Put the asset-free recognition task before repeated production so
         # the first retained Word Practice page mixes response modes.
         discovery_default = ["circle", "write"]

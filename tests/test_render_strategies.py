@@ -144,12 +144,20 @@ def test_hybrid_shell_strategy_is_experimental_pdf_renderer(
         Path(str(args[2])).write_text("pdf placeholder")
         return str(args[2])
 
-    monkeypatch.setattr("render.strategies.render_worksheet", fake_render_worksheet)
+    monkeypatch.setattr("render.composed_pdf.render_composed_pdf", fake_render_worksheet)
+    monkeypatch.setattr("render.live_scene.generate_scene", lambda _context: None)
+    from adapt.engine import adapt_activity
+    from companion.schema import LearnerProfile
+    from skill.lesson_loader import skill_model_from_lesson
+    from theme.engine import load_theme
+
     output_path = tmp_path / "hybrid.pdf"
     context = RenderContext(
         design_spec=_design_spec("hybrid_shell"),
-        adapted=object(),
-        theme=object(),
+        adapted=adapt_activity(
+            skill_model_from_lesson(49), LearnerProfile(name="Test", grade_level="1")
+        ),
+        theme=load_theme("space"),
         output_path=output_path,
         artifacts_dir=tmp_path,
     )

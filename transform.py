@@ -22,11 +22,14 @@ try:
 except ImportError:
     pass
 
+from adapt.approval import package_hash
 from adapt.engine import adapt_activity, adapt_lesson
 from adapt.rules import build_rules
-from adapt.schema import AdaptedActivityModel
+from adapt.schema import AdaptationCapabilities, AdaptedActivityModel
+from ai.telemetry import in_stage, traced_pipeline
 from capture.preprocess import preprocess_page
 from capture.store import store_master
+from companion.character_identity import resolve_character_identity
 from companion.dosage import current_grade
 from companion.schema import load_profile
 from extract.heuristics import map_to_source_model
@@ -39,7 +42,7 @@ from skill.extractor import extract_skill
 from skill.schema import LiteracySkillModel
 from theme.engine import apply_theme, load_theme
 from validate.adhd_compliance import validate_adhd_compliance, validate_lesson_time_budget
-from validate.ai_review import review_adapted_worksheet
+from validate.ai_review import ReviewResult, review_adapted_worksheet
 from validate.content_coverage import (
     validate_content_coverage,
     validate_content_coverage_for_package,
@@ -175,6 +178,7 @@ def run_pipeline(
     return run_artifacts.pdf_paths[0] if run_artifacts.pdf_paths else ""
 
 
+@in_stage("extraction")
 def _resolve_source_model(
     input_path: str, preprocessed_path: str, image_hash: str
 ) -> SourceWorksheetModel:
@@ -217,6 +221,7 @@ def _source_model_with_cache(
     return model
 
 
+@traced_pipeline
 def run_pipeline_collect_artifacts(
     input_path: str,
     profile_path: str,
@@ -425,6 +430,9 @@ def _run_from_skill_model(
         except Exception as exc:
             logger.warning("  RAG indexing skipped: %s", exc)
 
+    (artifacts / "run_summary.json").write_text(run_artifacts.model_dump_json(indent=2))
+    if not run_artifacts.validation_results.get("all_validators_passed", False):
+        logger.warning("PDF validation or artwork approval incomplete; inspect run_summary.json")
     return run_artifacts
 
 
@@ -460,6 +468,9 @@ def run_lesson_pipeline(
 _STALE_RUN_ARTIFACT_PATTERNS = (
     "judge_verdict.json",
     "planner_attempts.json",
+    "superseded_judge_verdict.json",
+    "approval_contract.json",
+    "run_summary.json",
     "adapted_model_*.json",
     "ai_review_*.json",
     "validation*.json",
@@ -473,6 +484,7 @@ def _clear_stale_run_artifacts(artifacts: Path) -> None:
             path.unlink(missing_ok=True)
 
 
+@traced_pipeline
 def run_lesson_pipeline_collect_artifacts(
     lesson_number: int,
     profile_path: str,
@@ -618,6 +630,10 @@ def _run_single_worksheet_pipeline(
         rag_prior_adaptations=rag_prior_adaptations,
         rag_curriculum_references=rag_curriculum_references,
     )
+    if render_mode == "hybrid_shell":
+        from render.pdf import prepare_pdf_activity
+
+        adapted = prepare_pdf_activity(adapted, None)
 
     adapted_json = artifacts / "adapted_model.json"
     adapted_json.write_text(adapted.model_dump_json(indent=2))
@@ -644,10 +660,36 @@ def _run_single_worksheet_pipeline(
 
     adapted_json.write_text(adapted.model_dump_json(indent=2))
 
+    single_judge_passed: bool | None = None
+    if render_mode == "hybrid_shell":
+        from adapt.llm_judge import judge_adaptation
+        from ai import openrouter
+
+        if reviews and not reviews[-1].passed:
+            raise UnapprovedPackageError("Content review failed before artwork generation")
+        _validate_before_artwork(skill_model, [adapted], profile, artifacts)
+        if openrouter.available():
+            verdict = judge_adaptation(skill_model, [adapted])
+            if verdict is None or not verdict.approved:
+                raise UnapprovedPackageError(
+                    "Live composed worksheets require affirmative approval"
+                )
+            single_judge_passed = True
+            (artifacts / "judge_verdict.json").write_text(
+                json.dumps(
+                    {
+                        **verdict.model_dump(),
+                        "package_hash": package_hash([adapted]),
+                    },
+                    indent=2,
+                )
+            )
+
+    reviewed_hash = package_hash([adapted])
     apply_theme(adapted, theme)
 
     avatar_path: str | None = None
-    if profile.avatar:
+    if profile.avatar and render_mode != "hybrid_shell":
         logger.info("Stage 6b: Composing avatar...")
         avatar_result = compose_avatar(profile, size="companion", theme_id=theme_id)
         if avatar_result:
@@ -670,6 +712,32 @@ def _run_single_worksheet_pipeline(
             output_path=Path(pdf_path),
             artifacts_dir=artifacts,
             avatar_image=avatar_path,
+            character_identity=(
+                resolve_character_identity(profile, theme_id, character_spec=theme.character_spec)
+                if render_mode == "hybrid_shell"
+                else None
+            ),
+        )
+    )
+    if render_result.effective_activity is not None:
+        adapted = render_result.effective_activity
+        adapted_json.write_text(adapted.model_dump_json(indent=2))
+        design_spec = compile_worksheet_design_spec(
+            adapted, theme, profile, render_mode=render_mode
+        )
+    delivery_matches_review = reviewed_hash == package_hash([adapted])
+    if single_judge_passed is True and not delivery_matches_review:
+        single_judge_passed = False
+    (artifacts / "approval_contract.json").write_text(
+        json.dumps(
+            {
+                "reviewed_package_hash": reviewed_hash,
+                "judged_package_hash": reviewed_hash if single_judge_passed is not None else None,
+                "delivered_package_hash": package_hash([adapted]),
+                "matches": delivery_matches_review,
+                "approved": single_judge_passed,
+            },
+            indent=2,
         )
     )
     manifest_path = _write_renderer_manifest(artifacts, render_result, design_spec)
@@ -695,13 +763,21 @@ def _run_single_worksheet_pipeline(
     else:
         validation_results = _validate_non_pdf_and_report(skill_model, adapted, profile, artifacts)
         pdf_paths = []
-    validation_results["ai_review_passed"] = ai_review_passed
+    validation_results["ai_review_passed"] = ai_review_passed and delivery_matches_review
+    validation_results["approval_matches_delivery"] = delivery_matches_review
+    if single_judge_passed is not None:
+        validation_results["pedagogical_judge_passed"] = single_judge_passed
+    if render_result.artwork_approved is not None:
+        validation_results["artwork_approved"] = render_result.artwork_approved
     validation_results["renderer_produces_pdf"] = render_result.produces_pdf
     validation_results["renderer_experimental"] = render_result.experimental
     validation_results["all_validators_passed"] = (
         validation_results.get("all_validators_passed", False)
         and ai_review_passed
+        and delivery_matches_review
+        and single_judge_passed is not False
         and render_result.produces_pdf
+        and render_result.artwork_approved is not False
     )
 
     logger.info("Done! Render mode %s complete", render_result.renderer_id)
@@ -771,6 +847,11 @@ def _run_multi_worksheet_pipeline(
         rag_curriculum_references=rag_curriculum_references,
         artifacts_dir=str(artifacts),
         character_identity=character_identity,
+        capabilities=(
+            AdaptationCapabilities(picture_assets_guaranteed=False)
+            if render_mode == "hybrid_shell"
+            else None
+        ),
     )
     logger.info("  Generated %s mini-worksheets", len(worksheets))
 
@@ -779,6 +860,11 @@ def _run_multi_worksheet_pipeline(
     # wrote judge_verdict.json. Read it back if present; otherwise run the
     # judge as advisory-only (e.g., when the deterministic engine was used).
     judge_json = artifacts / "judge_verdict.json"
+    if judge_json.exists():
+        existing_verdict = json.loads(judge_json.read_text())
+        if existing_verdict.get("package_hash") not in {None, package_hash(worksheets)}:
+            # A finalized/split package must never inherit an approval of its predecessor.
+            judge_json.replace(artifacts / "superseded_judge_verdict.json")
     judge_result: dict[str, object]
     pedagogical_judge_passed: bool | None = None
     if judge_json.exists():
@@ -832,6 +918,7 @@ def _run_multi_worksheet_pipeline(
                 )
             # abstain: no approved bool, no pedagogical gate — pass-with-note,
             # mirroring how needs_verification counts as passed (advisory).
+        judge_result["package_hash"] = package_hash(worksheets)
         judge_json.write_text(json.dumps(judge_result, indent=2))
 
         if objective_verdict is None:
@@ -884,9 +971,18 @@ def _run_multi_worksheet_pipeline(
                     )
         except Exception as exc:
             logger.warning("  Pedagogical judge skipped: %s", exc)
+        judge_result["package_hash"] = package_hash(worksheets)
         judge_json.write_text(json.dumps(judge_result, indent=2))
 
     skip_review = _skip_ai_review(judge_result)
+    judged_hash = str(judge_result.get("package_hash", package_hash(worksheets)))
+    if render_mode == "hybrid_shell":
+        from ai import openrouter
+
+        if openrouter.available() and pedagogical_judge_passed is not True:
+            raise UnapprovedPackageError(
+                "Live composed worksheets require affirmative package approval"
+            )
 
     pdf_paths: list[str] = []
     adapted_summaries: list[dict[str, str | int | float | bool]] = []
@@ -901,6 +997,41 @@ def _run_multi_worksheet_pipeline(
     last_design_spec = None
     last_render_result = None
 
+    # Freeze reviewed content first; only network-bound scene work enters threads.
+    prepared_reviews: list[tuple[AdaptedActivityModel, list[ReviewResult]]] | None = None
+    if render_mode == "hybrid_shell" and not skip_review:
+        from render.concurrency import ordered_parallel_map
+
+        prepared_reviews = ordered_parallel_map(review_adapted_worksheet, worksheets)
+        for index, (_, reviews) in enumerate(prepared_reviews, 1):
+            (artifacts / f"ai_review_{index}.json").write_text(
+                json.dumps([review.to_dict() for review in reviews], indent=2)
+            )
+        if any(reviews and not reviews[-1].passed for _, reviews in prepared_reviews):
+            raise UnapprovedPackageError("Content review failed before artwork generation")
+        worksheets = [value[0] for value in prepared_reviews]
+
+    prepared_scenes: list[str | None] = []
+    if render_mode == "hybrid_shell":
+        from render.concurrency import ordered_parallel_map
+        from render.live_scene import generate_scene
+
+        _validate_before_artwork(skill_model, worksheets, profile, artifacts)
+        contexts = [
+            RenderContext(
+                design_spec=compile_worksheet_design_spec(
+                    ws, theme, profile, render_mode=render_mode
+                ),
+                adapted=ws,
+                theme=theme,
+                output_path=output / f"scene_{index}.pdf",
+                artifacts_dir=_render_artifacts_dir(artifacts, strategy, index),
+                character_identity=character_identity,
+            )
+            for index, ws in enumerate(worksheets, 1)
+        ]
+        prepared_scenes = ordered_parallel_map(generate_scene, contexts)
+
     for i, adapted in enumerate(worksheets, start=1):
         ws_title = adapted.worksheet_title or "Untitled"
         logger.info("  Processing worksheet %s/%s: %s", i, len(worksheets), ws_title)
@@ -910,13 +1041,16 @@ def _run_multi_worksheet_pipeline(
 
         if skip_review:
             logger.info(
-                "  AI quality review skipped for worksheet %s/%s (planner-v2 already judged)",
+                "  AI quality review skipped for worksheet %s/%s (package already approved)",
                 i,
                 len(worksheets),
             )
         else:
             logger.info("  AI quality review for worksheet %s/%s...", i, len(worksheets))
-            adapted, reviews = review_adapted_worksheet(adapted)
+            if prepared_reviews is not None:
+                adapted, reviews = prepared_reviews[i - 1]
+            else:
+                adapted, reviews = review_adapted_worksheet(adapted)
             review_json = artifacts / f"ai_review_{i}.json"
             review_json.write_text(json.dumps([review.to_dict() for review in reviews], indent=2))
             if reviews:
@@ -996,8 +1130,20 @@ def _run_multi_worksheet_pipeline(
                 artifacts_dir=render_artifacts_dir,
                 asset_manifest=asset_manifest,
                 character_identity=identity,
+                extra_artifacts=(
+                    {"scene_prepared": "1", "learning_scene": prepared_scenes[i - 1] or ""}
+                    if render_mode == "hybrid_shell"
+                    else {}
+                ),
             )
         )
+        if render_result.effective_activity is not None:
+            adapted = render_result.effective_activity
+            worksheets[i - 1] = adapted
+            adapted_json.write_text(adapted.model_dump_json(indent=2))
+            last_design_spec = compile_worksheet_design_spec(
+                adapted, theme, profile, render_mode=render_mode
+            )
         last_render_result = render_result
         render_results.append(render_result)
         renderer_artifact_paths.extend(render_result.artifact_paths)
@@ -1023,10 +1169,31 @@ def _run_multi_worksheet_pipeline(
                 suffix=f"_{i}",
             )
         validation_runs.append(ws_validation)
+        if render_result.artwork_approved is not None:
+            ws_validation["artwork_approved"] = render_result.artwork_approved
+            ws_validation["all_validators_passed"] = (
+                ws_validation.get("all_validators_passed", False) and render_result.artwork_approved
+            )
         adapted_summaries.append(_build_adapted_summary(adapted))
 
     _validate_format_variety(worksheets)
 
+    delivered_hash = package_hash(worksheets)
+    approval_matches_delivery = judged_hash == delivered_hash
+    if pedagogical_judge_passed is True and not approval_matches_delivery:
+        logger.warning("Approval invalidated: delivered activities differ from judged package")
+        pedagogical_judge_passed = False
+    (artifacts / "approval_contract.json").write_text(
+        json.dumps(
+            {
+                "judged_package_hash": judged_hash,
+                "delivered_package_hash": delivered_hash,
+                "matches": approval_matches_delivery,
+                "approved": pedagogical_judge_passed,
+            },
+            indent=2,
+        )
+    )
     validation_results = _aggregate_validation_results(validation_runs)
     if os.environ.get("WORKSHEET_OBJECTIVE_COVERAGE"):
         # Objective mode (lesson-mode default): the package is judged by
@@ -1053,6 +1220,7 @@ def _run_multi_worksheet_pipeline(
     validation_results["content_coverage_passed"] = content_coverage_passed
     validation_results["lesson_time_budget_passed"] = time_budget_result.passed
     validation_results["ai_review_passed"] = ai_review_passed
+    validation_results["approval_matches_delivery"] = approval_matches_delivery
     validation_results["renderer_produces_pdf"] = strategy.produces_pdf
     validation_results["renderer_experimental"] = strategy.experimental
     if pedagogical_judge_passed is not None:
@@ -1114,6 +1282,50 @@ def _run_multi_worksheet_pipeline(
     )
 
 
+def _validate_before_artwork(
+    skill: LiteracySkillModel,
+    worksheets: list[AdaptedActivityModel],
+    profile: object,
+    artifacts: Path,
+) -> None:
+    """Reject locally verifiable content defects before spending on illustrations."""
+    from adapt.objective_ledger import build_objective_ledger
+    from companion.schema import LearnerProfile
+    from validate.blocking_gates import run_blocking_gates
+
+    assert isinstance(profile, LearnerProfile)
+    gates = run_blocking_gates(worksheets, build_objective_ledger(skill))
+    results = [validate_lesson_time_budget(worksheets)]
+    for worksheet in worksheets:
+        results.extend(
+            [
+                validate_skill_parity(skill, worksheet),
+                validate_age_band(worksheet, current_grade(profile)),
+                validate_adhd_compliance(worksheet, rules=build_rules(profile)),
+            ]
+        )
+    coverage_ok = (
+        _validate_package_objective_coverage(skill, worksheets, artifacts)
+        if os.environ.get("WORKSHEET_OBJECTIVE_COVERAGE")
+        else _validate_package_content_coverage(skill, worksheets, artifacts).passed
+    )
+    passed = gates.passed and coverage_ok and all(result.passed for result in results)
+    (artifacts / "validation_before_artwork.json").write_text(
+        json.dumps(
+            {
+                "passed": passed,
+                "package_hash": package_hash(worksheets),
+                "blocking_gates": gates.model_dump(mode="json"),
+                "content_coverage_passed": coverage_ok,
+                "validators": [result.model_dump(mode="json") for result in results],
+            },
+            indent=2,
+        )
+    )
+    if not passed:
+        raise UnapprovedPackageError("Deterministic content validation failed before artwork")
+
+
 def _render_artifacts_dir(artifacts: Path, strategy: RenderStrategy, worksheet_number: int) -> Path:
     """Per-worksheet artifact isolation for renderers that emit diagnostics."""
     if strategy.produces_pdf and not strategy.experimental:
@@ -1121,6 +1333,7 @@ def _render_artifacts_dir(artifacts: Path, strategy: RenderStrategy, worksheet_n
     return artifacts / f"render_{worksheet_number}"
 
 
+@in_stage("merge")
 def _merge_lesson_package(content_hash: str, pdf_paths: list[str], output: Path) -> list[str]:
     """Merge all worksheet PDFs into a single lesson package (no cover page).
 
@@ -1135,13 +1348,8 @@ def _merge_lesson_package(content_hash: str, pdf_paths: list[str], output: Path)
 
 
 def _skip_ai_review(judge_result: dict[str, object]) -> bool:
-    """Planner-v2 output was already judged on full item text.
-
-    The legacy ai_review loop (up to 3 LLM calls per worksheet) only adds
-    value for deterministic/legacy output, where OCR artifacts are real and
-    no full-text judge gated the content.
-    """
-    return judge_result.get("planner_version") == 2
+    """Never edit a package after a full-content judge approved it."""
+    return judge_result.get("approved") is True
 
 
 def _should_generate_chunk_assets(render_mode: str) -> bool:
@@ -1151,7 +1359,7 @@ def _should_generate_chunk_assets(render_mode: str) -> bool:
     manifest; if it falls back to pdf_classic mid-run, that worksheet renders
     with the deterministic local art (same degradation as asset-gen failure).
     """
-    return render_mode != "image_gen"
+    return render_mode not in {"image_gen", "hybrid_shell"}
 
 
 def _validate_and_report(
@@ -1243,6 +1451,7 @@ def _write_renderer_manifest(
             "renderer_id": render_result.renderer_id,
             "render_mode": design_spec.render_mode,
             "experimental": render_result.experimental,
+            "artwork_approved": render_result.artwork_approved,
             "produces_pdf": render_result.produces_pdf,
             "pdf_path": render_result.pdf_path,
             "artifact_paths": render_result.artifact_paths,

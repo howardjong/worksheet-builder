@@ -12,11 +12,13 @@ from __future__ import annotations
 import json
 import logging
 import os
+from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from adapt.approval import package_hash
 from adapt.llm_adapt import (
     LessonPlan,
     _build_adapt_prompt,
@@ -63,6 +65,7 @@ def orchestrate_llm_adaptation(
     rules: AccommodationRules | None = None,
     rag_curriculum_references: list[dict[str, object]] | None = None,
     artifacts_dir: str | None = None,
+    finalize: Callable[[list[AdaptedActivityModel]], list[AdaptedActivityModel]] | None = None,
 ) -> list[AdaptedActivityModel] | None:
     """Orchestrate LLM adaptation with retry loop and GPT takeover.
 
@@ -121,12 +124,15 @@ def orchestrate_llm_adaptation(
                 )
                 continue
 
+            if finalize is not None:
+                worksheets = finalize(worksheets)
+
             # Judge the plan (only if GPT is available)
             if gpt_available:
                 verdict = judge_adaptation(skill, worksheets)
                 if verdict is not None:
                     verdicts.append(verdict)
-                    _write_judge_verdict(verdict, artifacts_dir)
+                    _write_judge_verdict(verdict, artifacts_dir, worksheets)
 
                     if verdict.approved:
                         outcome = "gemini_first_try" if attempt == 0 else "gemini_retry"
@@ -191,6 +197,8 @@ def orchestrate_llm_adaptation(
         logger.info("  LLM orchestrator: GPT 5.4 taking over planning")
         worksheets = _gpt_plan(skill, profile, theme_id, rules, verdicts, rag_curriculum_references)
         if worksheets:
+            if finalize is not None:
+                worksheets = finalize(worksheets)
             outcome = "gpt_takeover_unjudged"
             _write_unjudged_verdict(outcome, verdicts, artifacts_dir)
             _log_performance(
@@ -392,14 +400,21 @@ def _build_log_entry(
     )
 
 
-def _write_judge_verdict(verdict: JudgeVerdict, artifacts_dir: str | None) -> None:
+def _write_judge_verdict(
+    verdict: JudgeVerdict,
+    artifacts_dir: str | None,
+    worksheets: list[AdaptedActivityModel] | None = None,
+) -> None:
     """Write judge_verdict.json to artifacts directory."""
     if not artifacts_dir:
         return
     path = Path(artifacts_dir)
     path.mkdir(parents=True, exist_ok=True)
     verdict_path = path / "judge_verdict.json"
-    verdict_path.write_text(json.dumps(verdict.model_dump(), indent=2))
+    payload = verdict.model_dump()
+    if worksheets is not None:
+        payload["package_hash"] = package_hash(worksheets)
+    verdict_path.write_text(json.dumps(payload, indent=2))
 
 
 def _write_unjudged_verdict(

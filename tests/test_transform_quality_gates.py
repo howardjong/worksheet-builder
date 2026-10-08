@@ -458,7 +458,9 @@ def _run_pipeline_with_worksheets(
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     if write_judge_verdict:
         if judge_verdict is None:
-            judge_verdict = {"approved": True, "overall_score": 1.0}
+            judge_verdict = (
+                {"approved": True, "overall_score": 1.0} if stub_ai_review else {"enabled": False}
+            )
         (artifacts / "judge_verdict.json").write_text(json.dumps(judge_verdict))
 
     def fake_adapt_lesson(*args: object, **kwargs: object) -> list[AdaptedActivityModel]:
@@ -733,3 +735,36 @@ def test_objective_advisory_abstain_ships_with_warning(
     assert any("abstain" in record.message.lower() for record in caplog.records)
     # Abstain is pass-with-note: it must not mark package validation failed.
     assert run_artifacts.validation_results.get("pedagogical_judge_passed") is not False
+
+
+def test_renderer_content_change_invalidates_approval_and_records_delivered_model(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+) -> None:
+    from render.strategies import RenderContext, RenderResult
+
+    worksheet = _adapted_worksheet(1, ["grade", "slide"])
+    delivered = worksheet.model_copy(deep=True)
+    delivered.chunks[0].items[0].content = "modified content"
+
+    def render(self: object, context: RenderContext) -> RenderResult:
+        return RenderResult(
+            renderer_id="pdf_classic",
+            pdf_path=str(context.output_path),
+            artifact_paths=[],
+            produces_pdf=True,
+            experimental=False,
+            effective_activity=delivered,
+        )
+
+    monkeypatch.setattr("render.strategies.PdfClassicRenderer.render", render)
+    result = _run_pipeline_with_worksheets(tmp_path, monkeypatch, [worksheet])
+    assert result.validation_results["pedagogical_judge_passed"] is False
+    assert result.validation_results["approval_matches_delivery"] is False
+    assert not result.validation_results["all_validators_passed"]
+    contract = json.loads((tmp_path / "artifacts/approval_contract.json").read_text())
+    assert contract["approved"] is False and not contract["matches"]
+    actual = AdaptedActivityModel.model_validate_json(
+        (tmp_path / "artifacts/adapted_model_1.json").read_text()
+    )
+    assert actual == delivered

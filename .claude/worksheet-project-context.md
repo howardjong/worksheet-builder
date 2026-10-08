@@ -8,6 +8,73 @@
 
 ## Current State
 
+### Session 71 — 2026-10-08 (on-demand artwork and composed PDFs)
+
+**Owner scope:** Implement the quality/latency fix, with fresh images generated
+for novel phone photos. Prebuilt lesson/art libraries are not acceptable as a
+product prerequisite. Parallel independent images are authorized even if fresh
+photo-to-PDF cannot meet three seconds. No OpenRouter key is available to Codex;
+Muse/Grok will run paid live tests using their vault runtime injection.
+Branch: `codex/on-demand-composed-worksheets`, based on main `78b00d5`.
+
+**Implemented:**
+- `hybrid_shell` is now a real on-demand renderer: substantial text-free learning
+  scenes generated per mini-worksheet, vector practice text/layout, writing areas,
+  dotted tracing, choices and sound boxes. Same scene reused on continuation pages.
+  Short written tasks in grades 2–3 use numbered pairs when they fit; K–1 and
+  longer content remain full-width. Actual printed instructions/options/examples
+  and practice are checked; pages without child practice are rejected.
+- `render/live_scene.py`: combined structured visual gate, theme costumes allowed
+  with stable identity, meaningful scene-area checks, byte-bound accepted cache,
+  candidate budget 2 by default. Independent worksheets overlap via bounded
+  `render/concurrency.py` (default 3, max 4). Providers remain sequential within
+  a scene; no speculative racing. PDF/font/PyMuPDF work stays serial.
+- Adaptation capabilities remove picture-dependent matching before judging. Both
+  planners finalize caps/splitting/instructions before judges see output. Hashes
+  bind verdicts to effective packages (`adapt/approval.py`); any render-time
+  content rewrite invalidates approval and persists the delivered activity.
+  AI review skips every approved package and never applies an unreviewed final edit.
+- Live composed runs require affirmative content approval. Deterministic answer
+  key, coverage, skill/grade/ADHD/workload checks stop defects before paid artwork.
+  Artwork fallback remains available but marks artwork/all validators false;
+  `WORKSHEET_ALLOW_PDF_FALLBACK=0` fails closed. No placeholder image is counted as
+  proof of a picture-dependent task in this mode.
+- `ai/openrouter.py`: lazy shared pooled HTTP client, per-stage model routing and
+  per-attempt timeouts, optional reasoning effort and JSON schema. New Decisions
+  `decide_yes_no` adapter is shadow-only, not an approval shortcut; Luna image
+  wire format and accuracy still require live verification. No paid calls made.
+- `ai/telemetry.py`: thread-safe sanitized inference events and overlapping stage
+  timings saved even on failure. Missing API cost is explicitly incomplete, not
+  zero. `run_summary.json` persists aggregate quality/degradation. There is no overall deadline or dollar-budget enforcement in this patch.
+- Fixed OpenCV deskew for both Hough line shapes, discovered during photo tests.
+  Replaced inaccurate static green/red and 9-of-10 caregiver advice.
+
+**Offline evidence:** 1,092 tests passed, 23 skipped; lint and strict typing
+(211 source files) pass. Regressions cover a novel photo through real capture/mapping,
+engine, merge and validators with only inference mocked; bounded overlap,
+provider/candidate fallback, cache identity, actual printed content, approval
+invalidation and telemetry privacy. HTTP is blocked in tests. Offline benchmark
+`python -m experiments.on_demand_bench` exercises 5 committed lessons, serial vs
+parallel, with synthetic artwork. Layout inspected across the resulting 48-page
+initial gallery; short older-learner writing was tightened and final lesson-100
+pages inspected. The deterministic fixture package still spans multiple physical
+pages (10 for lesson 100 in the synthetic composition trial); page count/pacing
+requires live planner and human acceptance, not a claimed 2–3-page result.
+Benchmark times (~0.19–0.37 s warm with simulated 50 ms art delay) are not live
+performance or art-quality evidence. No new real artwork/PDF/profile/photo committed.
+
+**Next / promotion gate:** `docs/handoffs/on-demand-live-validation.md` gives
+Muse/Grok the branch, vault handling, existing $5 bound, lesson 100 regression,
+mandatory new-phone-photo test, frozen-content serial/parallel comparison, model
+routing/shadow Decisions experiments, artifact retention and actual AirPrint QA.
+Keep production `image_gen` default until live and human visual acceptance; this
+branch is ready for a draft PR, but publication was blocked: the GitHub
+tree-upload call returned "user rejected MCP tool call" with no further reason.
+Do not retry remote writes without renewed authorization. Local changes are
+committed and an applyable git patch is available to transfer. Do not infer ≥95% first-pass quality or <3 seconds from mock
+results. New capture/print UI and native AirPrint integration are outside this patch.
+
+
 ### Session 70 — 2026-10-07 (consolidate and prune redundant tests)
 
 **Owner scope:** Clean up tests on a new branch, validate, and promote to main.

@@ -8,9 +8,9 @@ from skill.contract import contract_for_skill, contract_for_skill_id
 # Next-step hint for the grown-up, printed on the package's last sheet.
 # Thresholds: Betts reading levels + UFLI-aligned practice (spec 2026-07-10).
 DECISION_HINT = (
-    "Mostly green + 9 of 10 right + no help: move on. "
-    "Mixed or some help: practice again with fresh words. "
-    "Mostly red or lots of help: step back one lesson."
+    "Mostly correct and comfortable without help: consider moving on. "
+    "Some errors or some help: practice again with fresh words. "
+    "Many errors or lots of help: review an easier activity with the teacher."
 )
 
 

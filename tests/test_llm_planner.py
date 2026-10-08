@@ -1164,3 +1164,43 @@ def test_retry_needs_verification_recorded_not_collapsed_to_pass(
     assert attempts["outcome"] == "objective_abstain_fallback"
     assert attempts["coverage_retry"]["attempted"] is True
     assert attempts["coverage_retry"]["second_outcome"] == "needs_verification"
+
+
+def test_engine_finalizes_capabilities_before_judging_and_hashing_the_plan(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from adapt import engine, llm_planner
+    from adapt.approval import package_hash
+    from adapt.schema import AdaptationCapabilities, AdaptedActivityModel
+
+    _planner_env(monkeypatch)
+    monkeypatch.setenv("WORKSHEET_PLANNER_V2", "1")
+    monkeypatch.delenv("WORKSHEET_OBJECTIVE_COVERAGE", raising=False)
+    plan = json.loads(_PLAN_JSON)
+    activity = plan["worksheets"][0]["activities"][0]
+    activity.update(
+        activity_type="match", response_format="match", words=["cake", "ride"], items=[]
+    )
+    monkeypatch.setattr(llm_planner, "_call_planner", lambda prompt: (json.dumps(plan), "fake"))
+    judged: list[str] = []
+
+    def judge(skill: object, worksheets: list[AdaptedActivityModel], samples: int) -> JudgeVerdict:
+        assert all(
+            item.response_format != "match"
+            for ws in worksheets
+            for chunk in ws.chunks
+            for item in chunk.items
+        )
+        judged.append(package_hash(worksheets))
+        return _verdict(True, 0.95)
+
+    monkeypatch.setattr(llm_planner, "judge_adaptation_samples", judge)
+    result = engine.adapt_lesson(
+        _skill(),
+        _profile(),
+        artifacts_dir=str(tmp_path),
+        capabilities=AdaptationCapabilities(picture_assets_guaranteed=False),
+    )
+    assert judged == [package_hash(result)]
+    assert json.loads((tmp_path / "judge_verdict.json").read_text())["package_hash"] == judged[0]

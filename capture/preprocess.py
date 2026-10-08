@@ -139,8 +139,7 @@ def _deskew(img: Image) -> tuple[Image, float]:
 
     # Collect angles of near-horizontal lines
     angles: list[float] = []
-    for line in lines:
-        x1, y1, x2, y2 = line[0]
+    for x1, y1, x2, y2 in lines.reshape(-1, 4):
         angle = np.degrees(np.arctan2(y2 - y1, x2 - x1))
         if abs(angle) < 15:  # Only near-horizontal lines
             angles.append(angle)

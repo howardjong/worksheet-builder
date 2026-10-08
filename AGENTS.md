@@ -18,6 +18,7 @@ make format       # ruff format .
 # Transform
 python transform.py --input photo.jpg --profile profiles/ian.yaml --theme space --output ./output/  # default render mode: image_gen
 python transform.py ... --render-mode pdf_classic    # opt out to the deterministic PDF renderer
+python transform.py ... --render-mode hybrid_shell   # on-demand art + vector text; live acceptance pending
 python transform.py ... --render-mode image_prompt   # offline prompt artifacts for image-model trials
 
 # Batch
@@ -79,6 +80,8 @@ Paper → Capture → Normalize → Source Extract → Skill Model → ADHD Adap
 - Text/vision models: `WORKSHEET_OPENROUTER_TEXT_MODELS` and `WORKSHEET_OPENROUTER_VISION_MODELS`; default GPT-5.5 plus Claude Sonnet 4.6 / Gemini 3.1 Pro fallbacks. Shared transport/configuration lives in `ai/openrouter.py`. Legacy adapter and image-provider names are compatibility aliases through OpenRouter; no direct SDK bypass exists. Audio judging uses `WORKSHEET_OPENROUTER_AUDIO_MODELS` and the actual waveform. Embeddings and speech synthesis are separate services.
 - Lesson mode (`--lesson N`) defaults `WORKSHEET_PLANNER_V2=1` + `WORKSHEET_LLM_ADAPT=1` + `WORKSHEET_OBJECTIVE_COVERAGE=1` (objective-sufficiency planning: sample word pools to thresholds within the ADHD time budget, not exhaustive source coverage) + `WORKSHEET_MAX_WORKSHEETS=auto` (per-lesson evidence-based package budget, `adapt/workload.py`: objective demand vs. the learner's attention capacity, computed up front, logged, persisted to `artifacts/workload_budget.json`; set an integer for a fixed cap; family-balanced trim in `adapt/section_cap.py:enforce_package_cap` — owner policy 2026-07-07: objectives first, but inside what the child can sustain in one sitting; see `docs/research/adhd-workload-budget.md`), scoped to the run; explicit values win, `WORKSHEET_LLM_ADAPT=0` is a real opt-out (`adapt.rules.llm_adapt_enabled()`), and an explicit `WORKSHEET_PLANNER_SLOT_CONTRACT` suppresses the objective default (mutually exclusive). The photo workflow's defaults are unchanged (legacy loop, strict full-coverage rubric, split-never-trim — a photographed single page CAN be fully covered; D30/D31 promotion gate still pending).
 - `WORKSHEET_SKIP_ASSET_GEN=1` disables all image generation and forces the deterministic `pdf_classic` fallback (used by tests/CI). Missing keys and exhausted attempts produce an explicitly reported PDF fallback by default; `WORKSHEET_ALLOW_PDF_FALLBACK=0` disables that degradation.
+
+- On-demand composed trials: `hybrid_shell` generates fresh text-free scenes with bounded parallelism (default 3) and draws actual activity text locally. This requires no prebuilt lesson/image library. Content is finalized before judging; approved content is frozen. Deterministic content defects block before image calls, and scene fallback is reported as degraded, not approved. See `docs/on-demand-rendering.md` and `docs/handoffs/on-demand-live-validation.md`. Keep `image_gen` as the default until live and human visual acceptance.
 
 ## Session Handoff
 

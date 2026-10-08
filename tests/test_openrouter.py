@@ -41,7 +41,11 @@ def _responses(
             raise response
         return response
 
-    monkeypatch.setattr(httpx, "post", post)
+    client = httpx.Client(
+        transport=httpx.MockTransport(lambda _request: httpx.Response(500)), trust_env=False
+    )
+    monkeypatch.setattr(client, "post", post)
+    monkeypatch.setattr(openrouter, "_client", client)
     return calls
 
 
@@ -180,6 +184,56 @@ def test_no_key_makes_no_request(monkeypatch: pytest.MonkeyPatch) -> None:
     calls = _responses(monkeypatch, [])
     assert openrouter.complete("prompt") is None
     assert openrouter.generate_with_fallbacks("page") is None
+    assert not calls
+
+
+def test_decisions_use_the_alpha_endpoint_and_typed_probabilities(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _responses(
+        monkeypatch,
+        [
+            httpx.Response(
+                200,
+                json={
+                    "answers": {
+                        "clear": {"type": "noul", "noul": 0.93},
+                    }
+                },
+            )
+        ],
+    )
+    result = openrouter.decide_yes_no(
+        "Read cat.",
+        {"clear": "Is the instruction clear?"},
+        model="openai/gpt-6-luna-decisions",
+        images=[_image()],
+    )
+    assert result == {"clear": 0.93}
+    assert calls[0]["url"] == "https://openrouter.ai/api/alpha/decisions"
+    assert calls[0]["json"]["state"][1]["image_url"]["url"].startswith("data:image/png")
+    assert calls[0]["json"]["questions"]["clear"]["type"] == "noul"
+
+
+@pytest.mark.parametrize(
+    "answer", [{}, {"type": "noul", "noul": True}, {"type": "noul", "noul": 1.2}]
+)
+def test_decisions_missing_or_invalid_answers_never_become_approval(
+    monkeypatch: pytest.MonkeyPatch,
+    answer: dict[str, Any],
+) -> None:
+    _responses(monkeypatch, [httpx.Response(200, json={"answers": {"clear": answer}})])
+    assert openrouter.decide_yes_no("text", {"clear": "Clear?"}, model="typesafe/jev-1.13") is None
+
+
+def test_jev_image_request_is_rejected_before_any_inference(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _responses(monkeypatch, [])
+    with pytest.raises(ValueError, match="text only"):
+        openrouter.decide_yes_no(
+            "text", {"clear": "Clear?"}, model="typesafe/jev-1.13", images=[_image()]
+        )
     assert not calls
 
 

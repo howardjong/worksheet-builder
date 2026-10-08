@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 from adapt.schema import AdaptedActivityModel
 from render.design_spec import RenderMode, WorksheetDesignSpec
-from render.pdf import render_worksheet
+from render.pdf import prepare_pdf_activity, render_worksheet
 from theme.schema import AssetManifest, ThemeConfig
 
 
@@ -23,6 +23,8 @@ class RenderResult(BaseModel):
     artifact_paths: list[str] = Field(default_factory=list)
     produces_pdf: bool = Field(description="Whether this render produced a PDF.")
     experimental: bool = Field(description="Whether this render mode is experimental.")
+    effective_activity: AdaptedActivityModel | None = None
+    artwork_approved: bool | None = None
 
 
 @dataclass(frozen=True)
@@ -59,31 +61,57 @@ class PdfClassicRenderer:
     experimental = False
 
     def render(self, context: RenderContext) -> RenderResult:
-        _render_pdf(context)
+        effective = _render_pdf(context)
         return RenderResult(
             renderer_id=self.renderer_id,
             pdf_path=str(context.output_path),
             artifact_paths=[str(context.output_path)],
             produces_pdf=self.produces_pdf,
             experimental=self.experimental,
+            effective_activity=effective,
         )
 
 
 class HybridShellRenderer:
-    """Experimental hybrid shell renderer using deterministic PDF text."""
+    """Live artwork composed with measured, deterministic PDF text."""
 
     renderer_id = "hybrid_shell"
     produces_pdf = True
     experimental = True
 
     def render(self, context: RenderContext) -> RenderResult:
-        _render_pdf(context)
+        from render.composed_pdf import render_composed_pdf
+        from render.live_scene import generate_scene
+
+        effective = cast(AdaptedActivityModel, context.adapted)
+        # Assets supporting tasks must be resolved before approval, not during render.
+        if any(
+            item.response_format == "match" for chunk in effective.chunks for item in chunk.items
+        ):
+            raise ValueError("hybrid_shell received unresolved picture matching")
+        scene_path = context.extra_artifacts.get("learning_scene")
+        if "scene_prepared" not in context.extra_artifacts:
+            scene_path = generate_scene(context)
+        render_composed_pdf(
+            effective,
+            cast(ThemeConfig, context.theme),
+            context.output_path,
+            context.artifacts_dir,
+            scene_path,
+            context.design_spec.learner_name,
+        )
         return RenderResult(
             renderer_id=self.renderer_id,
             pdf_path=str(context.output_path),
-            artifact_paths=[str(context.output_path)],
+            artifact_paths=[
+                str(context.output_path),
+                str(context.artifacts_dir / "learning_scene.json"),
+                *([scene_path] if scene_path else []),
+            ],
             produces_pdf=self.produces_pdf,
             experimental=self.experimental,
+            effective_activity=effective,
+            artwork_approved=bool(scene_path),
         )
 
 
@@ -149,20 +177,26 @@ def resolve_render_strategy(mode: str | None) -> RenderStrategy:
     return strategy
 
 
-def _render_pdf(context: RenderContext) -> None:
+def _render_pdf(context: RenderContext) -> AdaptedActivityModel | None:
+    effective = (
+        prepare_pdf_activity(context.adapted, context.asset_manifest)
+        if isinstance(context.adapted, AdaptedActivityModel)
+        else None
+    )
     render_worksheet(
-        cast(AdaptedActivityModel, context.adapted),
+        effective if effective is not None else cast(AdaptedActivityModel, context.adapted),
         cast(ThemeConfig, context.theme),
         str(context.output_path),
         avatar_image=context.avatar_image,
         asset_manifest=context.asset_manifest,
     )
+    return effective
 
 
 def _build_image_prompt(spec: WorksheetDesignSpec) -> str:
     required_text = "\n".join(f"- {text}" for text in spec.required_text)
     answer_zones = "\n".join(
-        (f"- item {zone.item_id} ({zone.response_format}): " f"{zone.prompt_text}")
+        (f"- item {zone.item_id} ({zone.response_format}): {zone.prompt_text}")
         for zone in spec.answer_zones
     )
     if not answer_zones:

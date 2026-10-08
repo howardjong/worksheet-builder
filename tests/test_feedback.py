@@ -95,7 +95,8 @@ def test_build_feedback_panel_defaults() -> None:
     assert panel.goal_statement == "I can read words with the a_e pattern"
     assert panel.parent_log_title == "Grown-up quick log"
     assert panel.show_decision_hint is False
-    assert "move on" in DECISION_HINT
+    assert "moving on" in DECISION_HINT
+    assert "green" not in DECISION_HINT and "9 of 10" not in DECISION_HINT
 
 
 def test_feedback_panel_has_no_child_strip() -> None:

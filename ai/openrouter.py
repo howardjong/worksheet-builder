@@ -6,11 +6,13 @@ the worksheet renderer owns retries for pages that fail its quality gates.
 
 from __future__ import annotations
 
+import atexit
 import base64
 import io
 import json
 import logging
 import os
+import threading
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -18,6 +20,8 @@ from typing import Any, Literal
 
 import httpx
 from PIL import Image
+
+from ai.telemetry import current_stage, record_call
 
 logger = logging.getLogger(__name__)
 Role = Literal["text", "vision", "image", "research", "audio"]
@@ -35,6 +39,19 @@ DEFAULT_MODELS: dict[Role, tuple[str, ...]] = {
 }
 _RETRYABLE = {408, 429, 500, 502, 503, 504}
 _AUTH_FAILURES = {401, 402}
+_client: httpx.Client | None = None
+_client_lock = threading.Lock()
+
+
+def _http_client() -> httpx.Client:
+    global _client
+    with _client_lock:
+        if _client is None or _client.is_closed:
+            _client = httpx.Client(
+                limits=httpx.Limits(max_connections=4, max_keepalive_connections=4)
+            )
+            atexit.register(_client.close)
+        return _client
 
 
 class CredentialsUnavailableError(RuntimeError):
@@ -62,6 +79,15 @@ def models(role: Role) -> list[str]:
     return list(dict.fromkeys(name.strip() for name in names if name.strip()))
 
 
+def stage_models(name: str, role: Role = "text") -> list[str]:
+    value = os.environ.get(f"WORKSHEET_OPENROUTER_{name.upper()}_MODELS")
+    return (
+        list(dict.fromkeys(item.strip() for item in value.split(",") if item.strip()))
+        if value
+        else models(role)
+    )
+
+
 def image_url(data: bytes) -> str:
     # Preserve the actual MIME type for photographed JPEGs and PNG references.
     with Image.open(io.BytesIO(data)) as image:
@@ -77,18 +103,35 @@ def _positive_float(name: str, default: float) -> float:
         return default
 
 
-def _request(endpoint: str, payload: dict[str, Any]) -> Mapping[str, Any] | None:
+def _request(
+    endpoint: str, payload: dict[str, Any], *, alpha: bool = False
+) -> Mapping[str, Any] | None:
     key = os.environ.get("OPENROUTER_API_KEY")
     if not key:
         return None
     base = os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/")
+    if alpha:
+        base = base.removesuffix("/v1")
     headers = {"Authorization": f"Bearer {key}", "X-Title": "Worksheet Builder"}
-    timeout = _positive_float("WORKSHEET_OPENROUTER_TIMEOUT", 180)
+    timeout = _positive_float(
+        f"WORKSHEET_OPENROUTER_{current_stage().split('_')[0].upper()}_TIMEOUT",
+        _positive_float("WORKSHEET_OPENROUTER_TIMEOUT", 180),
+    )
     # One bounded retry for transient transport/hosting failure. Bad credentials
     # and exhausted credit are not solved by replaying the same request.
     for attempt in range(2):
+        started = time.perf_counter()
+        event: dict[str, Any] = {
+            "endpoint": endpoint,
+            "model": str(payload.get("model", "")),
+            "attempt": attempt + 1,
+            "status": "transport_error",
+        }
         try:
-            response = httpx.post(base + endpoint, json=payload, headers=headers, timeout=timeout)
+            response = _http_client().post(
+                base + endpoint, json=payload, headers=headers, timeout=timeout
+            )
+            event["status"] = response.status_code
             if response.status_code in _RETRYABLE and attempt == 0:
                 try:
                     delay = min(5.0, max(0.0, float(response.headers.get("Retry-After", "1"))))
@@ -107,6 +150,16 @@ def _request(endpoint: str, payload: dict[str, Any]) -> Mapping[str, Any] | None
             if not isinstance(data, dict) or data.get("error"):
                 logger.warning("OpenRouter returned an invalid response or API error")
                 return None
+            usage = data.get("usage", {})
+            if isinstance(usage, dict):
+                for source, target in (
+                    ("prompt_tokens", "tokens_in"),
+                    ("completion_tokens", "tokens_out"),
+                    ("cost", "cost_usd"),
+                ):
+                    value = usage.get(source)
+                    if isinstance(value, int | float) and not isinstance(value, bool):
+                        event[target] = value
             return data
         except (httpx.TransportError, ValueError):
             # Avoid logging response bodies, headers, request payloads, or URLs
@@ -114,6 +167,9 @@ def _request(endpoint: str, payload: dict[str, Any]) -> Mapping[str, Any] | None
             logger.warning("OpenRouter %s transport/response failure", endpoint)
             if attempt == 0:
                 time.sleep(1)
+        finally:
+            event["elapsed_s"] = time.perf_counter() - started
+            record_call(event)
     return None
 
 
@@ -126,6 +182,7 @@ def complete(
     model_ids: Sequence[str] | None = None,
     max_tokens: int = 4096,
     accept: Callable[[str], bool] | None = None,
+    json_schema: Mapping[str, Any] | None = None,
 ) -> Completion | None:
     if not available():
         return None
@@ -139,14 +196,23 @@ def complete(
         for data, format in audio
     )
     for model in models(role) if model_ids is None else model_ids:
+        payload: dict[str, Any] = {
+            "model": model,
+            "messages": [{"role": "user", "content": content}],
+            "max_tokens": max_tokens,
+            "provider": {"allow_fallbacks": True},
+        }
+        if json_schema is not None:
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {"name": "worksheet_check", "schema": json_schema, "strict": False},
+            }
+        effort = os.environ.get("WORKSHEET_OPENROUTER_REASONING_EFFORT")
+        if effort in {"none", "minimal", "low", "medium", "high"}:
+            payload["reasoning"] = {"effort": effort}
         data = _request(
             "/chat/completions",
-            {
-                "model": model,
-                "messages": [{"role": "user", "content": content}],
-                "max_tokens": max_tokens,
-                "provider": {"allow_fallbacks": True},
-            },
+            payload,
         )
         if data and data.get("_terminal_auth_error"):
             break
@@ -184,6 +250,7 @@ def complete_json(
     model_ids: Sequence[str] | None = None,
     max_tokens: int = 4096,
     validate: Callable[[Mapping[str, Any]], bool] | None = None,
+    json_schema: Mapping[str, Any] | None = None,
 ) -> Mapping[str, Any] | None:
     def accepts(text: str) -> bool:
         value = json_value(text)
@@ -197,9 +264,61 @@ def complete_json(
         model_ids=model_ids,
         max_tokens=max_tokens,
         accept=accepts,
+        json_schema=json_schema,
     )
     value = json_value(result.text) if result else None
     return value if isinstance(value, dict) else None
+
+
+def decide_yes_no(
+    state: str,
+    questions: Mapping[str, str],
+    *,
+    model: str,
+    images: Sequence[bytes] = (),
+) -> dict[str, float] | None:
+    """Experimental Decisions adapter; probabilities never bypass worksheet gates."""
+    if not questions or len(questions) > 200:
+        raise ValueError("Decisions requires 1-200 named questions")
+    if images and model.startswith("typesafe/"):
+        raise ValueError("TypeSafe Jev decision models accept text only")
+    content: Any = state
+    if images:
+        content = [
+            state,
+            *({"type": "image_url", "image_url": {"url": image_url(data)}} for data in images),
+        ]
+    payload: dict[str, Any] = {
+        "model": model,
+        "state": content,
+        "questions": {
+            name: {
+                "type": "noul",
+                "instructions": question,
+                "criteria": {
+                    "true": "The criterion is satisfied.",
+                    "false": "The criterion is violated or cannot be verified.",
+                },
+            }
+            for name, question in questions.items()
+        },
+    }
+    data = _request("/alpha/decisions", payload, alpha=True)
+    answers = data.get("answers") if data else None
+    if not isinstance(answers, dict):
+        return None
+    result: dict[str, float] = {}
+    for name in questions:
+        answer = answers.get(name)
+        value = (
+            answer.get("noul")
+            if isinstance(answer, dict) and answer.get("type") == "noul"
+            else None
+        )
+        if not isinstance(value, int | float) or isinstance(value, bool) or not 0 <= value <= 1:
+            return None
+        result[name] = float(value)
+    return result
 
 
 def generate_image(
