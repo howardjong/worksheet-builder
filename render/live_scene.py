@@ -9,7 +9,7 @@ import os
 import time
 from pathlib import Path
 
-from PIL import Image
+from PIL import Image, ImageChops
 from pydantic import BaseModel, Field
 
 from ai import openrouter
@@ -21,7 +21,10 @@ from render.scene_geometry import meaningful_page_fraction
 from render.strategies import RenderContext
 from theme.schema import ThemeConfig
 
-SCENE_VERSION = "live_scene_v2_action_contract"
+SCENE_VERSION = "live_scene_v3_decisions"
+DECISIONS_MODEL = "openai/gpt-6-luna-decisions"
+# Provisional conservative trial policy, not a claim of calibrated accuracy.
+DECISION_THRESHOLD = 0.95
 
 
 class SceneAction(BaseModel):
@@ -29,9 +32,12 @@ class SceneAction(BaseModel):
     action: str
     props: str
     costume: str
+    section_number: int = 1
 
 
-def scene_action(spec: WorksheetDesignSpec, theme: ThemeConfig | None = None) -> SceneAction:
+def _legacy_scene_action(
+    spec: WorksheetDesignSpec, theme: ThemeConfig | None = None
+) -> SceneAction:
     """One declared dominant action per mini-worksheet, reused on continuation pages."""
     formats = [item.response_format for section in spec.sections for item in section.items]
     dominant = max(dict.fromkeys(formats), key=formats.count) if formats else "write"
@@ -84,6 +90,66 @@ def scene_action(spec: WorksheetDesignSpec, theme: ThemeConfig | None = None) ->
     )
 
 
+def scene_action(spec: WorksheetDesignSpec, theme: ThemeConfig | None = None) -> SceneAction:
+    """Model one concrete learner procedure; bind its illustration to that section."""
+    if not spec.sections:
+        return _legacy_scene_action(spec, theme)
+    # Prefer word manipulation when present; otherwise illustrate the first task,
+    # rather than letting a package-wide skill override what the child is doing.
+    index = next(
+        (
+            number
+            for number, section in enumerate(spec.sections)
+            if any(word in section.micro_goal.lower() for word in ("build", "chain", "segment"))
+        ),
+        0,
+    )
+    section = spec.sections[index]
+    formats = [item.response_format for item in section.items]
+    dominant = max(dict.fromkeys(formats), key=formats.count) if formats else "write"
+    goal = section.micro_goal.lower()
+    if "build" in goal or "chain" in goal:
+        kind, action, props = (
+            "build",
+            "moving one blank word-part tile to join another, demonstrating word building",
+            "two adjacent groups of unmarked word-part tiles and a spare tile",
+        )
+    elif dominant == "sound_box" or "segment" in goal:
+        kind, action, props = (
+            "segment",
+            "tapping one blank sound tile at a time while speaking",
+            "a row of blank sound tiles",
+        )
+    elif dominant in {"read_aloud", "verbal"}:
+        passage = any(len(item.content.split()) > 3 for item in section.items)
+        kind, action, props = (
+            "read",
+            "tracking a blank book line with a finger while reading aloud"
+            if passage
+            else "tracking successive blank word cards with a finger while reading aloud",
+            "an open blank book" if passage else "a row of blank word cards",
+        )
+    elif dominant == "circle":
+        kind, action, props = (
+            "choose",
+            "using a pencil to circle one blank choice card among several",
+            "a pencil and three blank choice cards",
+        )
+    else:
+        kind, action, props = (
+            "write",
+            "copying from a blank model card onto a blank writing line with a pencil",
+            "a blank model card, blank practice paper and pencil",
+        )
+    return SceneAction(
+        kind=kind,
+        action=action,
+        props=props,
+        costume=theme.character_spec.body_description if theme else "appropriate to the theme",
+        section_number=index + 1,
+    )
+
+
 class SceneGate(BaseModel):
     identity_ok: bool = Field(strict=True)
     supports_task: bool = Field(strict=True)
@@ -94,6 +160,7 @@ class SceneGate(BaseModel):
     no_answers: bool = Field(strict=True)
     bounds: tuple[float, float, float, float]
     issues: list[str] = Field(default_factory=list)
+    probabilities: dict[str, float] = Field(default_factory=dict)
 
     @property
     def approved(self) -> bool:
@@ -127,15 +194,17 @@ def _reference(identity: object | None) -> bytes | None:
     return None
 
 
-def scene_prompt(spec: WorksheetDesignSpec, theme: ThemeConfig, identity: object | None) -> str:
+def scene_prompt(
+    spec: WorksheetDesignSpec, theme: ThemeConfig, identity: object | None, *, legacy: bool = False
+) -> str:
     character = (
         identity.character_block
         if isinstance(identity, CharacterIdentity)
         else "a friendly learner"
     )
     tasks = "; ".join(section.micro_goal for section in spec.sections)
-    action = scene_action(spec, theme)
-    return (
+    action = _legacy_scene_action(spec, theme) if legacy else scene_action(spec, theme)
+    prompt = (
         "Draw only a substantial instructional illustration, never a worksheet. "
         "Landscape 16:9; fill the image with the meaningful scene, calm white background. "
         f"Show {character} {action.action}. Required props: {action.props}. "
@@ -148,12 +217,83 @@ def scene_prompt(spec: WorksheetDesignSpec, theme: ThemeConfig, identity: object
         "NO text, letters, numbers, labels, practice answers, borders or worksheet boxes. "
         "Do not depict blank easels or a character merely posing; show an actual learning action."
     )
+    if not legacy and spec.sections:
+        section = spec.sections[action.section_number - 1]
+        prompt += (
+            f" Focus ONLY on section {action.section_number}: {section.micro_goal}. "
+            "Model the procedure the child should perform in this section, not generic posing "
+            "or a comparison action just because the overall lesson includes comparisons. "
+            "Do not illustrate or reveal any of the student's target words or answers."
+        )
+    return prompt
 
 
 def judge_scene(
     png: bytes, reference: bytes | None, spec: WorksheetDesignSpec, theme: ThemeConfig | None = None
 ) -> SceneGate | None:
     action = scene_action(spec, theme)
+    if os.environ.get("WORKSHEET_SCENE_GATE_BACKEND", "decisions") == "decisions":
+        if not reference:
+            return None
+        questions = {
+            "identity_ok": (
+                "Does the LAST image preserve the FIRST reference's face, hair and proportions? "
+                "Theme clothing may change."
+            ),
+            "supports_task": (
+                "Does the LAST image clearly support the declared learning goal and activities "
+                "rather than being decorative posing?"
+            ),
+            "action_ok": (
+                "Does the LAST image depict the exact required learning action "
+                "with its required props?"
+            ),
+            "outfit_ok": "Is the character dressed appropriately for the declared theme costume?",
+            "child_safe": "Is the image safe, calm and appropriate for a child aged five to eight?",
+            "no_text": (
+                "Is the LAST image entirely free of visible letters, words, numbers or labels?"
+            ),
+            "no_answers": (
+                "Is the LAST image free of practice answers or clues that give away those answers?"
+            ),
+            "meaningful_area": (
+                "Does the actual learning character/action/material (excluding background/"
+                "decorations) occupy at least 55% of the LAST image?"
+            ),
+        }
+        state = (
+            "Evaluate the LAST image. FIRST image is canonical character reference. "
+            "Uncertainty or inability to verify must count as criterion not satisfied. "
+            f"Goal: {spec.learning_goal}. Required action: {action.action}. "
+            f"Props: {action.props}. Costume: {action.costume}. "
+            f"Activities: {[section.micro_goal for section in spec.sections]}."
+        )
+        probabilities = openrouter.decide_yes_no(
+            state, questions, model=_scene_judge_models()[0], images=[reference, png]
+        )
+        if probabilities is None or set(probabilities) != set(questions):
+            return None
+        passed = {name: value >= DECISION_THRESHOLD for name, value in probabilities.items()}
+        with Image.open(io.BytesIO(png)) as image:
+            rgba = image.convert("RGBA")
+            white = Image.new("RGBA", rgba.size, "white")
+            rgb = Image.alpha_composite(white, rgba).convert("RGB")
+            mask = ImageChops.difference(rgb, Image.new("RGB", rgb.size, "white"))
+            bounds = mask.convert("L").point(lambda value: 255 if value > 18 else 0).getbbox()
+            width, height = rgb.size
+        normalized = (
+            (bounds[0] / width, bounds[1] / height, bounds[2] / width, bounds[3] / height)
+            if bounds
+            else (0.0, 0.0, 0.0, 0.0)
+        )
+        return SceneGate(
+            **{name: value for name, value in passed.items() if name != "meaningful_area"},
+            bounds=normalized,
+            issues=[
+                name + " below provisional threshold" for name, value in passed.items() if not value
+            ],
+            probabilities=probabilities,
+        )
     prompt = (
         "Evaluate the LAST image as instructional artwork. The first image, if present, "
         "is the character reference. Compare stable face/hair/proportions; allow theme costumes. "
@@ -199,7 +339,86 @@ def judge_scene(
 
 
 def _scene_judge_models() -> list[str]:
+    backend = os.environ.get("WORKSHEET_SCENE_GATE_BACKEND", "decisions")
+    if backend == "decisions":
+        model = os.environ.get("WORKSHEET_OPENROUTER_SCENE_DECISIONS_MODEL", DECISIONS_MODEL)
+        if model != DECISIONS_MODEL:
+            raise ValueError(
+                "Composed Decisions gates require the verified image-capable Luna model"
+            )
+        return [model]
+    if backend != "vision":
+        raise ValueError("Unknown scene gate backend")
     return openrouter.stage_models("scene_judge", role="vision")
+
+
+def _scene_key(prompt: str, reference: bytes | None, *, legacy: bool = False) -> str:
+    return hashlib.sha256(
+        (
+            ("live_scene_v2_action_contract" if legacy else SCENE_VERSION)
+            + prompt
+            + json.dumps(openrouter.models("image"))
+            + json.dumps(
+                openrouter.stage_models("scene_judge", role="vision")
+                if legacy
+                else _scene_judge_models()
+            )
+            + ("" if legacy else str(DECISION_THRESHOLD))
+        ).encode()
+        + (reference or b"")
+    ).hexdigest()
+
+
+def _approved_scene(directory: Path, key: str, spec: WorksheetDesignSpec) -> str | None:
+    path = directory / "learning_scene.png"
+    try:
+        report = json.loads((directory / "learning_scene.json").read_text())
+        gate = SceneGate.model_validate(report["gate"])
+        png = path.read_bytes()
+        if (
+            report["key"] != key
+            or report["status"] != "approved"
+            or not gate.approved
+            or report["sha256"] != hashlib.sha256(png).hexdigest()
+        ):
+            return None
+        with Image.open(io.BytesIO(png)) as image:
+            width, height = image.size
+            image.verify()
+        if (
+            width < 800
+            or height < 450
+            or meaningful_page_fraction(width, height, gate.bounds)
+            < spec.learning_scene_min_area_fraction
+        ):
+            return None
+        return str(path)
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+
+
+def load_approved_scene(context: RenderContext) -> str | None:
+    """Read an unchanged gated scene without any inference or regeneration fallback."""
+    theme = ThemeConfig.model_validate(context.theme)
+    try:
+        report = json.loads((context.artifacts_dir / "learning_scene.json").read_text())
+    except (OSError, ValueError):
+        return None
+    version = report.get("scene_version")
+    if version not in {SCENE_VERSION, "live_scene_v2_action_contract"}:
+        return None
+    prompt = scene_prompt(
+        context.design_spec,
+        theme,
+        context.character_identity,
+        legacy=version == "live_scene_v2_action_contract",
+    )
+    key = _scene_key(
+        prompt,
+        _reference(context.character_identity),
+        legacy=version == "live_scene_v2_action_contract",
+    )
+    return _approved_scene(context.artifacts_dir, key, context.design_spec)
 
 
 def generate_scene(context: RenderContext) -> str | None:
@@ -216,29 +435,11 @@ def generate_scene(context: RenderContext) -> str | None:
     prompt = scene_prompt(spec, theme, context.character_identity)
     action = scene_action(spec, theme)
     reference = _reference(context.character_identity)
-    key = hashlib.sha256(
-        (
-            SCENE_VERSION
-            + prompt
-            + json.dumps(openrouter.models("image"))
-            + json.dumps(_scene_judge_models())
-        ).encode()
-        + (reference or b"")
-    ).hexdigest()
+    key = _scene_key(prompt, reference)
     path = directory / "learning_scene.png"
     report_path = directory / "learning_scene.json"
-    try:
-        cached = json.loads(report_path.read_text())
-        cached_gate = SceneGate.model_validate(cached["gate"])
-        if (
-            cached["key"] == key
-            and cached["status"] == "approved"
-            and cached_gate.approved
-            and cached["sha256"] == hashlib.sha256(path.read_bytes()).hexdigest()
-        ):
-            return str(path)
-    except (OSError, ValueError, KeyError, TypeError):
-        pass
+    if cached := _approved_scene(directory, key, spec):
+        return cached
 
     attempts: list[dict[str, object]] = []
 
@@ -249,6 +450,14 @@ def generate_scene(context: RenderContext) -> str | None:
                     "status": status,
                     "key": key,
                     "scene_version": SCENE_VERSION,
+                    "gate_models": _scene_judge_models(),
+                    "gate_backend": os.environ.get("WORKSHEET_SCENE_GATE_BACKEND", "decisions"),
+                    "decision_threshold": (
+                        DECISION_THRESHOLD
+                        if os.environ.get("WORKSHEET_SCENE_GATE_BACKEND", "decisions")
+                        == "decisions"
+                        else None
+                    ),
                     "action_contract": action.model_dump(),
                     "attempts": attempts,
                     **extra,

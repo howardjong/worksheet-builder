@@ -13,9 +13,17 @@ from reportlab.lib.colors import HexColor
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfgen.canvas import Canvas
-from reportlab.platypus import Flowable, KeepTogether, Paragraph, SimpleDocTemplate, Spacer, Table
+from reportlab.platypus import (
+    Flowable,
+    Image,
+    KeepTogether,
+    Paragraph,
+    SimpleDocTemplate,
+    Spacer,
+    Table,
+)
 
-from adapt.schema import ActivityItem, AdaptedActivityModel
+from adapt.schema import ActivityChunk, ActivityItem, AdaptedActivityModel
 from ai.telemetry import in_stage
 from render.pdf import (
     GRADE_FONT_SIZES,
@@ -48,6 +56,18 @@ class PracticeParagraph(Paragraph):  # type: ignore[misc]
             if isinstance(part, PracticeParagraph):
                 part.practice_pages = self.practice_pages
         return parts
+
+
+class LearningIllustration(Image):  # type: ignore[misc]
+    """Place a scene once alongside its task, never stamp it on continuation pages."""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.scene_pages: set[int] = set()
+
+    def draw(self) -> None:
+        self.scene_pages.add(self.canv.getPageNumber())
+        super().draw()
 
 
 class TracePractice(Flowable):  # type: ignore[misc]
@@ -110,7 +130,11 @@ def _paragraph(text: str, style: ParagraphStyle) -> Paragraph:
 
 
 def _practice(
-    item: ActivityItem, body: ParagraphStyle, theme: ThemeConfig, pages: set[int]
+    item: ActivityItem,
+    number: int,
+    body: ParagraphStyle,
+    theme: ThemeConfig,
+    pages: set[int],
 ) -> list[Flowable]:
     if item.response_format == "match":
         raise RenderContractError(
@@ -144,11 +168,11 @@ def _practice(
             leading=body.leading + 5,
             textColor=HexColor("#64748B"),
         )
-    paragraph = PracticeParagraph(escape(_printable_text(f"{item.item_id}. {item.content}")), style)
+    paragraph = PracticeParagraph(escape(_printable_text(f"{number}. {item.content}")), style)
     paragraph.practice_pages = pages
     result: list[Flowable] = [
         TracePractice(
-            _printable_text(f"{item.item_id}. {item.content}"), body.fontName, style.fontSize, pages
+            _printable_text(f"{number}. {item.content}"), body.fontName, style.fontSize, pages
         )
         if item.response_format == "trace"
         else paragraph
@@ -167,6 +191,33 @@ def _practice(
         result.append(ResponseLines(item.response_format))
     result.append(Spacer(1, 7))
     return result
+
+
+def _caregiver_rows(chunks: list[ActivityChunk]) -> list[str]:
+    """Score displayed tasks by section, never identifiers or a passage as one word."""
+    rows: list[str] = []
+    for number, chunk in enumerate(chunks, 1):
+        prefix = f"Section {number}: "
+        written = sum(
+            item.response_format in {"write", "trace", "fill_blank", "circle", "sound_box"}
+            for item in chunk.items
+        )
+        reading = [item for item in chunk.items if item.response_format == "read_aloud"]
+        words = [
+            item
+            for item in reading
+            if item.content.strip().replace("-", "").replace("'", "").isalpha()
+        ]
+        if written:
+            rows.append(prefix + f"Right: ___ of {written} tasks")
+        if words:
+            rows.append(prefix + f"Read correctly: ___ of {len(words)} words")
+        if len(reading) > len(words):
+            rows.append(prefix + "Reading: smooth / choppy")
+        if any(item.response_format == "verbal" for item in chunk.items):
+            rows.append(prefix + "Oral practice: done / needs help")
+    rows.append("Help: none / some / lots")
+    return rows
 
 
 @in_stage("composition")
@@ -210,10 +261,36 @@ def render_composed_pdf(
     story: list[Flowable] = []
     practice_pages: set[int] = set()
     last_practice: list[Flowable] = []
-    for chunk in adapted.chunks:
+    caregiver_rows = _caregiver_rows(adapted.chunks) if adapted.feedback else []
+    display_numbering: list[dict[str, int]] = []
+    scene_width = 0.0
+    illustration: LearningIllustration | None = None
+    scene_section = 1
+    if scene_path:
+        with PILImage.open(scene_path) as image:
+            pixel_width, pixel_height = image.size
+            scene_width, scene_height = scene_size(pixel_width, pixel_height)
+        receipt = json.loads((artifacts / "learning_scene.json").read_text())
+        bounds = receipt["gate"]["bounds"]
+        if meaningful_page_fraction(pixel_width, pixel_height, tuple(bounds)) < 0.10:
+            raise RenderContractError("learning scene occupies less than 10% of the page")
+        scene_section = receipt.get("action_contract", {}).get("section_number", 1)
+        if type(scene_section) is not int or not 1 <= scene_section <= len(adapted.chunks):
+            raise RenderContractError("learning scene references an absent section")
+        illustration = LearningIllustration(scene_path, width=scene_width, height=scene_height)
+        illustration.hAlign = "CENTER"
+    for section_number, chunk in enumerate(adapted.chunks, 1):
         if not chunk.items:
             raise RenderContractError("empty activity section")
-        header: list[Flowable] = [_paragraph(chunk.micro_goal, heading)]
+        header: list[Flowable] = [
+            _paragraph(f"Section {section_number}: {chunk.micro_goal}", heading)
+        ]
+        if illustration and section_number == scene_section:
+            header.extend([illustration, Spacer(1, 8)])
+        display_numbering.extend(
+            {"section": section_number, "item_id": item.item_id, "display_number": number}
+            for number, item in enumerate(chunk.items, 1)
+        )
         if chunk.time_estimate:
             header.append(_paragraph(chunk.time_estimate, body))
         header.extend(
@@ -234,8 +311,8 @@ def render_composed_pdf(
             # wasting a whole row on a short word. Long text stays full-width.
             for index in range(0, len(chunk.items), 2):
                 cells: list[list[Flowable]] = [
-                    _practice(item, body, theme, practice_pages)
-                    for item in chunk.items[index : index + 2]
+                    _practice(item, number, body, theme, practice_pages)
+                    for number, item in enumerate(chunk.items[index : index + 2], index + 1)
                 ]
                 if len(cells) == 1:
                     cells.append([])
@@ -255,7 +332,7 @@ def render_composed_pdf(
                 last_practice = block
         else:
             for index, item in enumerate(chunk.items):
-                practice = _practice(item, body, theme, practice_pages)
+                practice = _practice(item, index + 1, body, theme, practice_pages)
                 block = header + practice if index == 0 else practice
                 story.append(KeepTogether(block))
                 last_practice = block
@@ -265,13 +342,7 @@ def render_composed_pdf(
         tail.append(_paragraph("Brain break: " + adapted.break_prompt, body))
     if adapted.feedback:
         tail.append(_paragraph(adapted.feedback.parent_log_title, small))
-        scored = sum(
-            item.response_format not in {"read_aloud", "verbal"}
-            for chunk in adapted.chunks
-            for item in chunk.items
-        )
-        log = f"Right: ___ of {scored}    " if scored else ""
-        tail.append(_paragraph(log + "Reading: smooth / choppy    Help: none / some / lots", small))
+        tail.extend(_paragraph(row, small) for row in caregiver_rows)
         if adapted.feedback.show_decision_hint:
             from adapt.feedback import DECISION_HINT
 
@@ -282,17 +353,6 @@ def render_composed_pdf(
     if not story:
         raise RenderContractError("worksheet has no practice")
 
-    scene_width = 0.0
-    if scene_path:
-        with PILImage.open(scene_path) as image:
-            pixel_width, pixel_height = image.size
-            scene_width, scene_height = scene_size(pixel_width, pixel_height)
-        gate = json.loads((artifacts / "learning_scene.json").read_text())["gate"]
-        bounds = gate["bounds"]
-        if meaningful_page_fraction(pixel_width, pixel_height, tuple(bounds)) < 0.10:
-            raise RenderContractError("learning scene occupies less than 10% of the page")
-    else:
-        scene_height = 0.0
     title = _paragraph(adapted.worksheet_title or "Word practice", heading)
     _, title_height = title.wrap(CONTENT_WIDTH, HEIGHT)
     goal_text = (
@@ -307,8 +367,7 @@ def render_composed_pdf(
     header_height = title_height + goal_height + learner_height + 6
     if header_height > 110:
         raise RenderContractError("worksheet title, goal and learner name exceed the header space")
-    scene_top = HEIGHT - MARGIN - header_height - 10
-    content_top = scene_top - scene_height - 12
+    content_top = HEIGHT - MARGIN - header_height - 12
     output.parent.mkdir(parents=True, exist_ok=True)
     temporary = output.with_suffix(".building.pdf")
 
@@ -319,15 +378,6 @@ def render_composed_pdf(
         learner.drawOn(
             canvas, MARGIN, HEIGHT - MARGIN - title_height - goal_height - learner_height - 4
         )
-        if scene_path:
-            canvas.drawImage(
-                scene_path,
-                (WIDTH - scene_width) / 2,
-                scene_top - scene_height,
-                width=scene_width,
-                height=scene_height,
-                mask="auto",
-            )
         canvas.setFont(body_font, sizes["small"])
         canvas.setFillColor(HexColor(theme.colors.text))
         footer = (
@@ -374,6 +424,9 @@ def render_composed_pdf(
                     raise RenderContractError(
                         "required instruction, example or option absent from PDF"
                     )
+            for row in caregiver_rows:
+                if " ".join(_printable_text(row).split()) not in actual:
+                    raise RenderContractError("caregiver score or denominator absent from PDF")
             layout_report = {
                 "physical_pages": len(pdf),
                 "practice_pages": sorted(practice_pages),
@@ -388,6 +441,10 @@ def render_composed_pdf(
                     else None
                 ),
                 "raster_text": False,
+                "artwork_pages": sorted(illustration.scene_pages) if illustration else [],
+                "artwork_section": scene_section if illustration else None,
+                "display_numbering": display_numbering,
+                "caregiver_rows": caregiver_rows,
                 "page_count_requires_human_acceptance": True,
             }
             (artifacts / "layout_report.json").write_text(json.dumps(layout_report, indent=2))

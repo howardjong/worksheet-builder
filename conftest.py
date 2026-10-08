@@ -21,6 +21,9 @@ def _isolate_inference_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
         "WORKSHEET_RUN_MAX_CALLS",
         "WORKSHEET_CALL_CEILINGS_JSON",
         "WORKSHEET_OPENROUTER_REQUIRE_ZDR",
+        "WORKSHEET_SCENE_GATE_BACKEND",
+        "WORKSHEET_OPENROUTER_SCENE_DECISIONS_MODEL",
+        "WORKSHEET_OPENROUTER_REASONING_EFFORT",
     ):
         monkeypatch.delenv(name, raising=False)
 

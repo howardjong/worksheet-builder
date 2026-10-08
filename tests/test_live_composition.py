@@ -162,6 +162,7 @@ def test_approved_cache_is_bound_to_actual_art_bytes_and_configuration(
     assert calls == ["first"]
     (tmp_path / "learning_scene.png").write_bytes(b"corrupt")
     assert generate_scene(first)
+    monkeypatch.setenv("WORKSHEET_SCENE_GATE_BACKEND", "vision")
     monkeypatch.setenv("WORKSHEET_OPENROUTER_SCENE_JUDGE_MODELS", "new-judge")
     assert generate_scene(first)
     assert calls == ["first", "first", "first"]
@@ -185,17 +186,17 @@ def test_composed_pdf_has_real_text_art_and_no_caregiver_only_pages(
     grade: str,
 ) -> None:
     mock_images(monkeypatch)
-    current = context(tmp_path, grade)
+    current = context(tmp_path, grade, count=24)
     result = resolve_render_strategy("hybrid_shell").render(current)
     assert result.artwork_approved is True
     assert result.effective_activity == current.adapted
     assert validate_print_quality(str(current.output_path)).passed
     with fitz.open(current.output_path) as pdf:
         assert len(pdf) >= 2  # deliberately exercise pagination
-        for page in pdf:
+        for index, page in enumerate(pdf):
             text = page.get_text()
             assert "cat " in text and "Test Learner" in text
-            assert len(page.get_images()) == 1
+            assert len(page.get_images()) == (1 if index == 0 else 0)
             for span in (
                 span
                 for block in page.get_text("dict")["blocks"]
@@ -204,9 +205,10 @@ def test_composed_pdf_has_real_text_art_and_no_caregiver_only_pages(
                 for span in line["spans"]
             ):
                 assert span["size"] >= 10  # no invisible expected-text layer
-        assert "Right: ___ of 12" in pdf[-1].get_text()
+        assert "Right: ___ of 24" in pdf[-1].get_text()
     layout = json.loads((tmp_path / "layout_report.json").read_text())
     assert layout["physical_pages"] == len(layout["practice_pages"])
+    assert layout["artwork_pages"] == [1] and layout["artwork_section"] == 1
     assert layout["child_body_font_pt"] >= layout["child_min_font_pt"]
     assert 150 < layout["artwork_effective_ppi"] < 300
 
@@ -216,9 +218,128 @@ def test_artwork_fallback_does_not_claim_visual_approval(tmp_path: Path) -> None
     assert result.pdf_path and result.artwork_approved is False
 
 
+@pytest.mark.parametrize("grade,format", [("1", "write"), ("2", "write"), ("2", "trace")])
+def test_visible_numbers_restart_at_one_without_changing_approved_item_ids(
+    tmp_path: Path, grade: str, format: str
+) -> None:
+    from adapt.approval import package_hash
+
+    current = context(tmp_path, grade=grade, count=5)
+    assert isinstance(current.adapted, AdaptedActivityModel)
+    words = ["higher", "lower", "older", "newer", "taller"]
+    chunk = current.adapted.chunks[0]
+    chunk.response_format = format
+    chunk.items = [
+        ActivityItem(item_id=number + 1, content=word, response_format=format)
+        for number, word in enumerate(words, 1)
+    ]
+    original = package_hash([current.adapted])
+    resolve_render_strategy("hybrid_shell").render(current)
+    assert package_hash([current.adapted]) == original
+    with fitz.open(current.output_path) as pdf:
+        text = " ".join(page.get_text() for page in pdf)
+    for number, word in enumerate(words, 1):
+        assert f"{number}. {word}" in text
+    assert "6. taller" not in text
+    report = json.loads((tmp_path / "layout_report.json").read_text())
+    assert [row["item_id"] for row in report["display_numbering"]] == [2, 3, 4, 5, 6]
+    assert [row["display_number"] for row in report["display_numbering"]] == [1, 2, 3, 4, 5]
+
+
+def test_caregiver_scores_each_section_and_never_counts_a_passage_as_one_word(
+    tmp_path: Path,
+) -> None:
+    current = context(tmp_path, count=7)
+    assert isinstance(current.adapted, AdaptedActivityModel)
+    written = current.adapted.chunks[0]
+    read = written.model_copy(deep=True)
+    read.chunk_id = 10  # semantic identifiers need not be sequential
+    read.micro_goal = "Read 5 words"
+    read.response_format = "read_aloud"
+    read.instructions = [Step(number=1, text="Read each word aloud.")]
+    read.items = [
+        ActivityItem(item_id=i * 10, content=word, response_format="read_aloud")
+        for i, word in enumerate(["cat", "dog", "bag", "map", "jam"], 1)
+    ]
+    passage = read.model_copy(deep=True)
+    passage.micro_goal = "Read the story"
+    passage.items = [
+        ActivityItem(
+            item_id=1,
+            content="The taller cat sat near the smaller dog.",
+            response_format="read_aloud",
+        )
+    ]
+    current.adapted.chunks = [read, written, passage]
+    resolve_render_strategy("hybrid_shell").render(current)
+    with fitz.open(current.output_path) as pdf:
+        text = " ".join(" ".join(page.get_text().split()) for page in pdf)
+    assert "Section 1: Read correctly: ___ of 5 words" in text
+    assert "Section 2: Right: ___ of 7 tasks" in text
+    assert "Section 3: Reading: smooth / choppy" in text
+    assert "Section 3: Right:" not in text
+    report = json.loads((tmp_path / "layout_report.json").read_text())
+    assert report["caregiver_rows"] == [
+        "Section 1: Read correctly: ___ of 5 words",
+        "Section 2: Right: ___ of 7 tasks",
+        "Section 3: Reading: smooth / choppy",
+        "Help: none / some / lots",
+    ]
+
+
+@pytest.mark.parametrize(
+    "failed",
+    [
+        None,
+        "identity_ok",
+        "supports_task",
+        "action_ok",
+        "outfit_ok",
+        "child_safe",
+        "no_text",
+        "no_answers",
+        "meaningful_area",
+    ],
+)
+def test_luna_batches_all_scene_checks_and_fails_closed_on_uncertainty(
+    monkeypatch: pytest.MonkeyPatch, failed: str | None
+) -> None:
+    calls: list[str] = []
+
+    def decide(state: str, questions: dict[str, str], **kwargs: Any) -> dict[str, float]:
+        calls.append(str(kwargs["model"]))
+        assert "Required action:" in state and "Costume:" in state
+        assert len(kwargs["images"]) == 2
+        assert set(questions) == {
+            "identity_ok",
+            "supports_task",
+            "action_ok",
+            "outfit_ok",
+            "child_safe",
+            "no_text",
+            "no_answers",
+            "meaningful_area",
+        }
+        return {name: 0.94 if name == failed else 0.99 for name in questions}
+
+    monkeypatch.setattr("ai.openrouter.decide_yes_no", decide)
+    monkeypatch.setattr(
+        "ai.openrouter.complete_json", lambda *a, **k: pytest.fail("legacy fallback")
+    )
+    current = context(Path("unused"))
+    gate = judge_scene(synthetic_image(), synthetic_image(), current.design_spec)
+    assert gate is not None and gate.approved is (failed is None)
+    assert calls == ["openai/gpt-6-luna-decisions"]
+    assert gate.probabilities
+    assert judge_scene(synthetic_image(), None, current.design_spec) is None
+    assert len(calls) == 1  # absent reference cannot spend or approve
+
+
 def test_scene_gate_refuses_string_booleans_and_missing_checks(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("WORKSHEET_SCENE_GATE_BACKEND", "vision")
+
     def fake_complete(*args: Any, **kwargs: Any) -> None:
         validate = kwargs["validate"]
         assert not validate(
@@ -307,7 +428,8 @@ def test_novel_photo_reaches_a_merged_pdf_without_any_live_inference(
     with fitz.open(result.pdf_paths[0]) as pdf:
         text = " ".join(page.get_text() for page in pdf)
         assert all(word in text for word in ["cat", "bag", "map", "jam"])
-        assert all(page.get_images() for page in pdf)
+        assert any(page.get_images() for page in pdf)
+        assert any(not page.get_images() for page in pdf)  # no repeated continuation artwork
     timing = json.loads((tmp_path / "art/timing_summary.json").read_text())
     assert timing["completed"] and timing["inference_http_attempts"] == 0
     assert not timing["cost_is_complete"]  # mocked inference is not a live cost measurement
@@ -453,10 +575,11 @@ def test_a_near_miss_scene_never_passes_a_mandatory_check(failed_check: str) -> 
     assert not approved_gate().model_copy(update={failed_check: False}).approved
 
 
-def test_action_contract_follows_the_skill_and_is_shared_by_artist_and_gate(
+def test_action_contract_follows_the_task_and_is_shared_by_artist_and_gate(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    monkeypatch.setenv("WORKSHEET_SCENE_GATE_BACKEND", "vision")
     from render.live_scene import scene_action, scene_prompt
 
     current = context(tmp_path, count=2)
@@ -465,7 +588,7 @@ def test_action_contract_follows_the_skill_and_is_shared_by_artist_and_gate(
     assert isinstance(current.theme, ThemeConfig)
     current.design_spec.specific_skill = "suffix_er_est"
     action = scene_action(current.design_spec, current.theme)
-    assert action.kind == "compare"
+    assert action.kind == "write"  # comparison lesson must still model this writing task
     prompt = scene_prompt(current.design_spec, current.theme, None)
     assert action.action in prompt and action.props in prompt
     assert current.design_spec.learner_name not in prompt
@@ -522,3 +645,73 @@ def test_uncertain_photo_stops_before_planning_or_images(
             render_mode="hybrid_shell",
         )
     assert not json.loads((tmp_path / "art/validation_photo_intake.json").read_text())["passed"]
+
+
+@pytest.mark.parametrize(
+    "goal,format,content,kind,props",
+    [
+        ("Read 5 words", "read_aloud", "higher", "read", "word cards"),
+        ("Read the story", "read_aloud", "The cat is taller than the dog.", "read", "book"),
+        ("Write 5 words", "write", "higher", "write", "practice paper"),
+        ("Build 7 words", "write", "tall + -er", "build", "word-part tiles"),
+        ("Choose a word", "circle", "tall", "choose", "choice cards"),
+    ],
+)
+def test_suffix_scenes_model_different_learner_procedures(
+    tmp_path: Path, goal: str, format: str, content: str, kind: str, props: str
+) -> None:
+    from render.live_scene import scene_action, scene_prompt
+    from theme.schema import ThemeConfig
+
+    current = context(tmp_path, count=1)
+    current.design_spec.specific_skill = "suffix_er_est"
+    section = current.design_spec.sections[0]
+    section.micro_goal = goal
+    section.items[0].response_format = format
+    section.items[0].content = content
+    assert isinstance(current.theme, ThemeConfig)
+    contract = scene_action(current.design_spec, current.theme)
+    assert contract.kind == kind and props in contract.props
+    prompt = scene_prompt(current.design_spec, current.theme, None)
+    assert "Focus ONLY on section 1: " + goal in prompt
+    assert contract.action in prompt
+
+
+def test_illustration_is_placed_once_beside_its_declared_section(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from dataclasses import replace
+
+    from render.composed_pdf import render_composed_pdf
+    from theme.schema import ThemeConfig
+
+    mock_images(monkeypatch)
+    current = context(tmp_path, count=20)
+    assert isinstance(current.adapted, AdaptedActivityModel)
+    assert isinstance(current.theme, ThemeConfig)
+    second = current.adapted.chunks[0].model_copy(deep=True)
+    second.chunk_id = 2
+    second.micro_goal = "Build 20 words"
+    current.adapted.chunks.append(second)
+    current = replace(
+        current,
+        design_spec=compile_worksheet_design_spec(
+            current.adapted,
+            current.theme,
+            LearnerProfile(name="Test Learner", grade_level="2"),
+            render_mode="hybrid_shell",
+        ),
+    )
+    assert isinstance(current.adapted, AdaptedActivityModel)
+    assert isinstance(current.theme, ThemeConfig)
+    scene = generate_scene(current)
+    assert scene
+    render_composed_pdf(
+        current.adapted, current.theme, current.output_path, tmp_path, scene, "Test Learner"
+    )
+    report = json.loads((tmp_path / "layout_report.json").read_text())
+    assert report["artwork_section"] == 2 and len(report["artwork_pages"]) == 1
+    with fitz.open(current.output_path) as pdf:
+        assert sum(len(page.get_images()) for page in pdf) == 1
+        page = pdf[report["artwork_pages"][0] - 1]
+        assert "Section 2: Build 20 words" in page.get_text()

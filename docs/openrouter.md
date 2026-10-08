@@ -16,13 +16,15 @@ a failed review request with a configured key is not treated as approval.
 | Task | Ordered default models |
 | --- | --- |
 | Worksheet and asset images | `openai/gpt-image-2.5-sunburst`, `google/gemini-3-pro-image`, `bytedance-seed/seedream-5-0-pro`, `google/gemini-3.1-flash-image` |
-| Text | `openai/gpt-5.5`, `anthropic/claude-sonnet-4.6`, `google/gemini-3.1-pro-preview` |
-| Vision | `openai/gpt-5.5`, `google/gemini-3.1-pro-preview`, `anthropic/claude-sonnet-4.6` |
+| Text | `openai/gpt-6.1-sol` (medium effort) |
+| Vision | `openai/gpt-6.1-sol` (medium effort) |
+| Composed scene gate | `openai/gpt-6-luna-decisions` (one batched Decisions request) |
 | Web research | `perplexity/sonar-pro`, `perplexity/sonar` |
 | Audio judging | `google/gemini-3-flash-preview`, `google/gemini-2.5-flash` |
 
-These slugs and image reference/portrait capabilities were checked against the
-public catalogs on 2026-09-30; [the snapshot](openrouter-models-2026-09-30.json)
+Sol 6.1, medium effort and image-capable Luna Decisions were checked against
+official OpenRouter documentation on 2026-10-08. Image reference/portrait
+capabilities were checked against the public catalogs on 2026-09-30; [the snapshot](openrouter-models-2026-09-30.json)
 records the relevant capabilities. Catalog presence establishes API support,
 not comparative worksheet quality. A live visual comparison is still needed
 before deciding whether another model should become primary.
@@ -81,3 +83,12 @@ and exercise the fallback chain with the primary image model disabled. Offline
 tests cover API protocol, transient failures, malformed outputs, reference
 conditioning, gate failures, cache invalidation, and deterministic PDF fallback. Repository tests clear inherited inference
 credentials and block unmocked HTTP inference; no live LLM call is needed to run them.
+
+Text and vision default to Sol 6.1 with `reasoning.effort=medium`; existing explicit
+role/stage overrides still win. Clear old model overrides when testing this change.
+There is no automatic GPT-5.5 / Gemini 3.1 Pro / Sonnet 4.6 review fallback. Image
+generation, audio and research chains are separate and retain their existing models.
+Composed scene gates default to Luna Decisions, with eight mandatory named checks
+in one request and a provisional 0.95 threshold. Missing/invalid/uncertain results
+fail closed. Probabilities are retained for human calibration, not reported as accuracy.
+See [on-demand rendering](on-demand-rendering.md) for gate controls and trial limits.

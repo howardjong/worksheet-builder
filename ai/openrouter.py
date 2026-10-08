@@ -30,8 +30,8 @@ Role = Literal["text", "vision", "image", "research", "audio"]
 DEFAULT_MODELS: dict[Role, tuple[str, ...]] = {
     "audio": ("google/gemini-3-flash-preview", "google/gemini-2.5-flash"),
     "research": ("perplexity/sonar-pro", "perplexity/sonar"),
-    "text": ("openai/gpt-5.5", "anthropic/claude-sonnet-4.6", "google/gemini-3.1-pro-preview"),
-    "vision": ("openai/gpt-5.5", "google/gemini-3.1-pro-preview", "anthropic/claude-sonnet-4.6"),
+    "text": ("openai/gpt-6.1-sol",),
+    "vision": ("openai/gpt-6.1-sol",),
     "image": (
         "openai/gpt-image-2.5-sunburst",
         "google/gemini-3-pro-image",
@@ -254,7 +254,10 @@ def complete(
                 "type": "json_schema",
                 "json_schema": {"name": "worksheet_check", "schema": json_schema, "strict": False},
             }
-        effort = os.environ.get("WORKSHEET_OPENROUTER_REASONING_EFFORT")
+        effort = os.environ.get(
+            "WORKSHEET_OPENROUTER_REASONING_EFFORT",
+            "medium" if model == "openai/gpt-6.1-sol" else "",
+        )
         if effort in {"none", "minimal", "low", "medium", "high"}:
             payload["reasoning"] = {"effort": effort}
         data = _request(
@@ -324,7 +327,7 @@ def decide_yes_no(
     model: str,
     images: Sequence[bytes] = (),
 ) -> dict[str, float] | None:
-    """Experimental Decisions adapter; probabilities never bypass worksheet gates."""
+    """Typed Decisions transport; callers apply an explicit gate policy."""
     if not questions or len(questions) > 200:
         raise ValueError("Decisions requires 1-200 named questions")
     if images and model.startswith("typesafe/"):

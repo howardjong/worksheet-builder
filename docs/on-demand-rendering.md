@@ -42,19 +42,24 @@ sharing/printing flow. Test that flow on an actual phone and printer.
    limits, skill drift and response compatibility are blocking in this pilot.
    A worked example starts the package; continuation omissions remain advisory.
 4. Generate a text-free learning scene for each mini-worksheet, with bounded
-   overlap across independent worksheets. One combined vision call checks stable
+   overlap across independent worksheets. One batched Luna Decisions request checks stable
    character identity against its reference, the declared dominant action, theme
    outfit, child-safe calm imagery, no text/answers and substantial scene area.
-   `scene_action()` maps comparison, blending, segmentation, reading, choosing and
-   writing to concrete text-free actions/props. The same contract feeds the artist
+   `scene_action()` selects a specific section and models its reading, word-building,
+   segmentation, choosing or writing procedure with concrete text-free actions/props.
+   A comparison skill no longer overrides a reading/writing procedure. The same contract feeds the artist
    and judge and is saved with every candidate. Missing reference cannot pass
    actual identity judging. Provider fallback remains sequential for each
-   scene. One scene is reused on that worksheet's continuation pages.
+   scene. The illustration is placed once next to its declared section; continuation
+   pages use the space for practice instead of repeating the same artwork.
 5. Compose serially with ReportLab: measured headings, real practice text, dotted
    tracing, choices, sound boxes and writing areas. Short written items in grades
    2–3 can use numbered pairs; longer text and younger learners stay full-width.
    Check actual drawn instructions, examples, options and item text. Keep the
    final practice with its caregiver log; reject pages without child practice.
+   Visible item numbers restart at 1 within each section without changing source IDs
+   or approved content. Caregiver logs count tasks/words per section; passages receive
+   qualitative reading feedback rather than an invented denominator.
    Child-facing goal/name/break text uses the grade's body type; caregiver logs
    and footers use smaller type. `layout_report.json` records actual physical
    pages and effective raster PPI; 300ppi and compact packages are not assumed.
@@ -73,12 +78,14 @@ so a spacesuit does not contradict an ordinary-clothes identity reference.
 | `WORKSHEET_IMAGE_CONCURRENCY` | `3` | Independent scene jobs; clamped to 1–4. `1` gives a serial comparison. |
 | `WORKSHEET_SCENE_MAX_CANDIDATES` | `2` | Total image model candidates per scene; clamped to 1–4. One quality attempt per candidate. |
 | `WORKSHEET_OPENROUTER_IMAGE_MODELS` | Existing ordered chain | Models tried for each scene; only the first N candidates are considered. |
-| `WORKSHEET_OPENROUTER_SCENE_JUDGE_MODELS` | Existing vision chain | Combined scene gate model chain. |
-| `WORKSHEET_OPENROUTER_EXTRACTION_MODELS` | Existing vision chain | Independent photo transcription routing. |
-| `WORKSHEET_OPENROUTER_PLANNER_MODELS` | Existing text chain | Independent content authoring routing. |
-| `WORKSHEET_OPENROUTER_JUDGE_MODELS` | Existing text chain | Independent pedagogical approval routing. |
-| `WORKSHEET_OPENROUTER_REVIEW_MODELS` | Existing text chain | Review routing for unapproved content. |
-| `WORKSHEET_OPENROUTER_REASONING_EFFORT` | Provider default | Optional supported effort; evaluate low effort before adopting. |
+| `WORKSHEET_SCENE_GATE_BACKEND` | `decisions` | Batched Luna gate; explicit `vision` selects structured Sol vision review. No automatic backend fallback. |
+| `WORKSHEET_OPENROUTER_SCENE_DECISIONS_MODEL` | `openai/gpt-6-luna-decisions` | Only the verified image-capable Luna slug is accepted in this trial. |
+| `WORKSHEET_OPENROUTER_SCENE_JUDGE_MODELS` | Sol 6.1 | Overrides only explicit vision gate mode. |
+| `WORKSHEET_OPENROUTER_EXTRACTION_MODELS` | Sol 6.1 | Independent photo transcription routing. |
+| `WORKSHEET_OPENROUTER_PLANNER_MODELS` | Sol 6.1 | Independent content authoring routing. |
+| `WORKSHEET_OPENROUTER_JUDGE_MODELS` | Sol 6.1 | Independent pedagogical approval routing. |
+| `WORKSHEET_OPENROUTER_REVIEW_MODELS` | Sol 6.1 | Review routing for unapproved content. |
+| `WORKSHEET_OPENROUTER_REASONING_EFFORT` | `medium` for Sol 6.1 | Explicit supported effort overrides this default. |
 | `WORKSHEET_OPENROUTER_SCENE_TIMEOUT` | Global timeout (180 s) | Per-HTTP-attempt timeout for scene generation and scene gate. |
 | `WORKSHEET_OPENROUTER_PLANNER_TIMEOUT`, `...JUDGE_TIMEOUT`, `...REVIEW_TIMEOUT` | Global timeout | Corresponding per-attempt timeouts. |
 | `WORKSHEET_ALLOW_PDF_FALLBACK` | Enabled | `0` stops if artwork fails; otherwise emits a usable plain composed PDF with artwork approval false. |
@@ -130,6 +137,12 @@ planner call. `python -m experiments.live_replay --manifest ... --output ...` is
 no-inference dry-run by default. `--live` requires key/limits/prices, rejects cache
 contamination and produces no plain fallback; `--worksheet 1` allows a small trial.
 It reruns deterministic checks and refuses changed or unapproved content.
+`--reuse-scenes /private/saved-replay-root` recomposes without inference using
+unchanged approved `render_N/learning_scene.*` files, preserving content and
+image hashes. It rejects changed/missing/unapproved scenes and cannot be combined
+with `--live`. Legacy v2 scene receipts require the original image/vision model
+configuration to verify their old cache key; reading an old receipt is not a new
+Luna approval. This is layout QA, not a live performance benchmark.
 
 `experiments/photo_intake.py` lets the live tester freeze transcription for human
 comparison with the original photo before planning/art. It is dry by default;
@@ -140,10 +153,15 @@ mixed story/word-work layouts use semantic mapping rather than dropping a page.
 
 The Decisions adapter `ai.openrouter.decide_yes_no()` supports named probability
 checks using `/api/alpha/decisions`, separate from chat completions. Luna image
-checks and Jev text checks are experimental **shadow evaluation**: they cannot
-approve or override a worksheet. The documented image-state format was checked
+checks now power composed scene approval on this test branch only. Eight checks
+(identity, task relevance, action, outfit, safety, no text, no answers and meaningful
+area) must each reach the provisional conservative threshold 0.95. Invalid/missing
+results fail closed; there is no legacy-model escalation. Local pixel bounds
+add a geometry check, while the meaningful-area decision excludes decorative
+backgrounds. Jev and the separate CLI remain shadow-only and cannot approve
+content or bypass a gate. The documented image-state format was checked
 on 2026-10-08 (strings and image_url parts in a top-level state array).
-Live endpoint support, thresholds and false
+Live endpoint behavior, thresholds and false
 acceptance rates must be checked against human labels before promotion. A model's
 self-reported probability is not measured accuracy.
 

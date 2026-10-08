@@ -94,7 +94,7 @@ def _worksheet() -> AdaptedActivityModel:
 
 def test_openai_text_model_defaults_and_env_override(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("WORKSHEET_OPENROUTER_TEXT_MODELS", raising=False)
-    assert openai_text_model() == "openai/gpt-5.5"
+    assert openai_text_model() == "openai/gpt-6.1-sol"
     monkeypatch.setenv(
         "WORKSHEET_OPENROUTER_TEXT_MODELS", "anthropic/claude-sonnet-4.6,openai/gpt-5.5"
     )

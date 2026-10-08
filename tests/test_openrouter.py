@@ -244,6 +244,17 @@ def test_model_configuration_deduplicates_and_preserves_order(
     assert openrouter.models("image") == ["a", "b", "c"]
 
 
+def test_current_sol_defaults_have_medium_effort_and_no_old_model_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("WORKSHEET_OPENROUTER_TEXT_MODELS", raising=False)
+    monkeypatch.delenv("WORKSHEET_OPENROUTER_VISION_MODELS", raising=False)
+    calls = _responses(monkeypatch, [_text("ok")])
+    assert openrouter.models("text") == openrouter.models("vision") == ["openai/gpt-6.1-sol"]
+    assert openrouter.complete("prompt")
+    assert calls[0]["json"]["reasoning"] == {"effort": "medium"}
+
+
 def test_character_judge_uses_openrouter_without_direct_keys(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -303,6 +314,7 @@ def test_adapter_and_planner_prefer_router(monkeypatch: pytest.MonkeyPatch) -> N
 
 
 def test_empty_review_is_not_approval(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("WORKSHEET_OPENROUTER_REVIEW_MODELS", "review-a,review-b")
     from adapt.schema import AdaptedActivityModel
     from validate.ai_review import _run_review
 

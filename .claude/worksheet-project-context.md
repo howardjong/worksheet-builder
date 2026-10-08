@@ -8,6 +8,82 @@
 
 ## Current State
 
+### Session 74 — 2026-10-08 (live layout defects, instructional art and model refresh)
+
+**Owner scope:** Fix Muse's delivered-package defects and repetitive unhelpful art
+on the existing test branch; replace GPT-5.5 / Gemini 3.1 Pro / Sonnet 4.6 review
+with GPT-6.1 Sol medium and Luna Decisions. Existing test-branch publication
+approval persists. Main remains `78b00d5`; no merge or default-renderer promotion.
+Remote baseline is `2cc5e9a` / tree `8222147` (local equivalent `d8699db`).
+
+**Muse evidence, reported rather than rerun by Codex:** Approval handshake worked,
+lesson 100 judged 0.89. Full run hit the unchanged 180s deadline mid-art (13 calls,
+$0.58); one-worksheet replay took 54s and all-three replay 76s. Three scenes
+passed old vision gates; 10 pages (4+4+2), 277ppi art. Across that session: 31
+calls, $1.15 reconciled, $3.85 reported remaining. This is not a completed
+end-to-end run or controlled serial/parallel A/B. Private artifacts are on Muse's
+`~/workspace/wb-ondemand-run/`, not in Codex's workspace. New photo and AirPrint
+remain pending. Owner's educational-usefulness criticism is a merge blocker.
+
+**Implemented:**
+- `render/composed_pdf.py` numbers displayed items from 1 within each section,
+  retaining original IDs and approved content/package hashes. Section headers
+  identify caregiver rows. Logs separately count actual word-reading and written
+  tasks; passage reading gets qualitative feedback, never a blank denominator.
+  Layout reports include the visible-number mapping and actual printed log rows.
+- Repeated illustrations were deliberate layout behavior, not fallback. Scenes
+  now appear once next to their declared section, not in every page header.
+  Continuations use the space for practice. `scene_action()` models a particular
+  reading, word-building, segmentation, choosing or writing procedure; a global
+  comparative skill no longer forces identical comparison poses. No target
+  answers/text are placed in art. Still one on-demand scene per mini-worksheet,
+  generated in bounded parallel jobs, not a prebuilt library or a claim that
+  every task now has a pedagogically validated illustration.
+- `ai/openrouter.py` defaults text/vision to `openai/gpt-6.1-sol`, medium effort,
+  with no automatic legacy-model review fallback. Explicit stage overrides win.
+  Image generation/audio/research chains are separate and unchanged.
+- `render/live_scene.py` defaults composed artwork gating to one Luna Decisions
+  request batching eight mandatory checks (identity, relevance, action, outfit,
+  safety, no text, no answers, meaningful area). All probabilities must meet the
+  provisional 0.95 trial threshold plus local geometry. Missing/invalid/uncertain
+  results fail closed. No old-model escalation. Reports retain probabilities,
+  backend/models and threshold. This is not human-calibrated accuracy; promotion
+  requires false-accept/reject evaluation and human educational review. Explicit
+  `vision` backend uses Sol. New scene-version/key binds prompt/models/reference
+  and threshold; old gates cannot silently become new Luna approvals.
+- `experiments/live_replay.py --reuse-scenes ROOT` recomposes without inference,
+  verifying genuine frozen approval, original coverage, scene receipt/cache key,
+  PNG byte hash, dimensions and mandatory gates. Rejects missing/changed art;
+  no regeneration fallback, even with a key present. Source is a successful
+  replay root containing `render_N/`; original worksheet indexes are preserved.
+  Legacy v2 receipts verify under the exact old image/vision configuration and
+  old prompt; copied provenance stays old. Cannot combine reuse with `--live` or
+  count it as fresh-art performance. Report includes receipt provenance and no
+  served gate models for recomposition.
+
+**Verification:** Full offline suite 1,167 passed, 23 skipped, one existing Pillow
+warning; lint/format and strict mypy pass (221 files). Focused provider/gate/replay
+checks rerun after provenance-report additions. Synthetic page previews verified
+numbering/logs, no clipped text/caregiver-only page, one scene alongside section 2
+and none on continuation pages; these are layout fixtures, not live art quality.
+No paid inference or OpenRouter key used. Official OpenRouter Sol/Luna/reasoning
+and Decisions image-state documentation verified 2026-10-08. Runtime invocation:
+`PYTHONPATH=.venv/lib/python3.12/site-packages python -m pytest ...`.
+
+**Next / handoff:** Publish the reviewed delta on the same test branch with a
+lease against `2cc5e9a`, compare local/remote tree and verify main unchanged.
+Muse follows `docs/handoffs/on-demand-live-validation.md`: first recompose the
+real frozen package/saved scenes with zero API calls, restoring original model
+configuration solely for old receipt verification. Inspect the three reported
+score/numbering defects and new page count; return actual private JSON if an
+error is embedded in approved text. Then restore Sol medium + Luna, price every
+configured model, reconcile the $3.85 remainder, shadow-test labelled accepted
+and rejected scenes, and only then pay for a small task-specific scene trial.
+The 180s full-run deadline and $5 total session cap remain. New full end-to-end
+run, educational usefulness, false accept rate, photo intake and physical print
+acceptance remain unresolved. Do not infer 3-second feasibility from model
+advertisements or 76-second render-only replay.
+
 ### Session 73 — 2026-10-08 (live-discovered objective approval handshake)
 
 **Owner scope:** Resolve Muse's live failure on the existing test branch, preserve
