@@ -16,6 +16,11 @@ def _isolate_inference_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
         "ANTHROPIC_API_KEY",
         "PERPLEXITY_API_KEY",
         "OPENROUTER_BASE_URL",
+        "WORKSHEET_RUN_MAX_USD",
+        "WORKSHEET_RUN_DEADLINE_S",
+        "WORKSHEET_RUN_MAX_CALLS",
+        "WORKSHEET_CALL_CEILINGS_JSON",
+        "WORKSHEET_OPENROUTER_REQUIRE_ZDR",
     ):
         monkeypatch.delenv(name, raising=False)
 

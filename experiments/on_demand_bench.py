@@ -48,6 +48,9 @@ def benchmark(artifacts_dir: str, lesson: int, workers: int, delay_s: float) -> 
     gate = SceneGate(
         identity_ok=True,
         supports_task=True,
+        action_ok=True,
+        outfit_ok=True,
+        child_safe=True,
         no_text=True,
         no_answers=True,
         bounds=(0.02, 0.02, 0.98, 0.98),

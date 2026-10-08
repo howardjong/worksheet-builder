@@ -8,6 +8,75 @@
 
 ## Current State
 
+### Session 72 — 2026-10-08 (pre-live safeguards from Grok's revised plan)
+
+**Owner scope:** Add the useful parts of the revised plan and update the live-test
+handoff, on `codex/on-demand-composed-worksheets`. No paid inference, main changes
+or promotion. The previous remote tree upload was rejected without a stated
+reason; no retry of remote writes was made. An updated applyable git patch carries
+both implementation sessions if the remote branch remains unavailable.
+
+**Implemented:**
+- Composed photo intake validates transcription with a full Pydantic response
+  contract, supports semantic non-UFLI layouts and separate extraction routing,
+  propagates uncertainty/corpus mismatch flags, and blocks unidentified skills
+  or uncertain photos before planning. Cached extraction now uses original photo
+  bytes plus transcription version/model chain, excluding old confidence-free caches.
+  Student-facing regions lost in mapping also block; mixed word-work/story pages
+  use semantic mapping. `experiments/photo_intake.py` provides a bounded, explicit
+  live extraction-only pause for human photo review, reused by the full run.
+- `validate/photo_coverage.py` builds exhaustive, item-referenced practice evidence
+  for all source targets/list/chain words, student sentences and full passages.
+  Headings/examples/distractors aren't practice. Valid production answers count;
+  teacher scripts don't. Lesson objective sampling is preserved. Pre-art checks
+  also enforce instruction limits, specific-skill/response compatibility and
+  actual renderer instruction contracts. Worked examples start the package;
+  repeated examples may fade on continuation worksheets. Fixed the domain matrix
+  that omitted legitimate fill-blank and sound-box formats.
+- Scene v2 declares one dominant learning action/props/costume per mini-worksheet
+  for both artist and combined gate. Action, outfit and child safety are mandatory
+  alongside identity/no-text/answers/area; missing reference can't pass identity.
+  All returned candidates are kept privately with outcome, gate, hash and selected
+  status; telemetry correlates candidate/request IDs and records Decisions token names.
+- `ai/run_limits.py`: thread-safe, run-scoped USD reservations, attempt cap and
+  cooperative deadline across roles/retries/fallbacks. Missing costs stay reserved;
+  missing/understated model ceilings block. No guessed default prices. An external
+  key/account cap is still required: running requests may outlive deadlines or bill
+  beyond declared assumptions. Limits reset per public run, not across a session.
+- Planner/adaptation prompts omit learner names; composed PDF adds them locally.
+  Opt-in `WORKSHEET_OPENROUTER_REQUIRE_ZDR=1` enforces ZDR plus denied collection
+  on chat/images/Decisions without weaker routing. Uploaded text/character sheets
+  can still contain identifying information; handoff requires redaction/private storage.
+- Frozen approved inputs/policy are persisted before artwork. Executable
+  `experiments/live_replay.py` is dry by default, verifies unchanged affirmative
+  approval, reruns deterministic checks and avoids cache-contaminated comparisons;
+  supports a single-worksheet live compatibility trial. `live_decisions.py` provides
+  bounded explicit-live shadow probes that never approve worksheets. Official
+  multimodal Decisions wire format and ZDR routing were checked on 2026-10-08;
+  endpoint behavior/calibration remain untested live.
+- Child-facing goal/name/time/break cues now use readable grade body type;
+  caregiver log/footer can be smaller. Layout reports expose physical pages,
+  practice pages, type sizes and effective artwork PPI. Do not claim 300ppi from
+  1K artwork or treat mini-worksheet count as physical page count.
+
+**Evidence:** Full offline suite: 1,131 passed, 23 skipped, one existing Pillow
+deprecation warning; lint and strict typing pass (221 Python files). New cases
+cover coverage omissions, malformed/uncertain extraction, wrong scene actions,
+retained failures, parallel reservations/retries/unknown charges/deadlines,
+privacy routing, frozen replay integrity and no-spend default probes. HTTP stays
+blocked in tests. Synthetic lesson-100 composition is still 10 physical pages
+at about 185ppi for the 1024x576 art slot; this is layout/overlap evidence only,
+not live speed, artwork quality or parent acceptance. Header/practice/log pages
+were visually reviewed; human print/pacing acceptance remains mandatory.
+
+**Next:** Follow `docs/handoffs/on-demand-live-validation.md`: current branch or
+updated patch, vault runtime key, $5 total across probes/failures/replays, verified
+per-call ceilings and external cap, small compatibility probe, lesson 100, then
+a genuinely new authorized phone photo. Keep the pedagogical judge in the pilot.
+Measure each fast-model substitution independently using frozen inputs and human
+labels. Failures are failures; never approve a near-miss image to meet a deadline.
+Do not merge or switch the production default until live and AirPrint acceptance.
+
 ### Session 71 — 2026-10-08 (on-demand artwork and composed PDFs)
 
 **Owner scope:** Implement the quality/latency fix, with fresh images generated

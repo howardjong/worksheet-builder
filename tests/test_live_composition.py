@@ -85,6 +85,9 @@ def approved_gate() -> SceneGate:
     return SceneGate(
         identity_ok=True,
         supports_task=True,
+        action_ok=True,
+        outfit_ok=True,
+        child_safe=True,
         no_text=True,
         no_answers=True,
         bounds=(0.02, 0.02, 0.98, 0.98),
@@ -142,6 +145,10 @@ def test_scene_quality_failure_advances_with_a_total_candidate_budget(
     assert generate_scene(context(tmp_path)) is None
     assert calls == ["first", "second"]
     assert json.loads((tmp_path / "learning_scene.json").read_text())["status"] == "fallback"
+    report = json.loads((tmp_path / "learning_scene.json").read_text())
+    assert all(not attempt["selected"] for attempt in report["attempts"])
+    assert all((tmp_path / attempt["image_path"]).is_file() for attempt in report["attempts"])
+    assert report["action_contract"]["kind"] == "write"
 
 
 def test_approved_cache_is_bound_to_actual_art_bytes_and_configuration(
@@ -198,6 +205,10 @@ def test_composed_pdf_has_real_text_art_and_no_caregiver_only_pages(
             ):
                 assert span["size"] >= 10  # no invisible expected-text layer
         assert "Right: ___ of 12" in pdf[-1].get_text()
+    layout = json.loads((tmp_path / "layout_report.json").read_text())
+    assert layout["physical_pages"] == len(layout["practice_pages"])
+    assert layout["child_body_font_pt"] >= layout["child_min_font_pt"]
+    assert 150 < layout["artwork_effective_ppi"] < 300
 
 
 def test_artwork_fallback_does_not_claim_visual_approval(tmp_path: Path) -> None:
@@ -435,3 +446,79 @@ def test_content_defect_stops_before_any_artwork_request(
         )
     report = json.loads((tmp_path / "validation_before_artwork.json").read_text())
     assert not report["passed"] and not report["blocking_gates"]["passed"]
+
+
+@pytest.mark.parametrize("failed_check", ["action_ok", "outfit_ok", "child_safe"])
+def test_a_near_miss_scene_never_passes_a_mandatory_check(failed_check: str) -> None:
+    assert not approved_gate().model_copy(update={failed_check: False}).approved
+
+
+def test_action_contract_follows_the_skill_and_is_shared_by_artist_and_gate(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from render.live_scene import scene_action, scene_prompt
+
+    current = context(tmp_path, count=2)
+    from theme.schema import ThemeConfig
+
+    assert isinstance(current.theme, ThemeConfig)
+    current.design_spec.specific_skill = "suffix_er_est"
+    action = scene_action(current.design_spec, current.theme)
+    assert action.kind == "compare"
+    prompt = scene_prompt(current.design_spec, current.theme, None)
+    assert action.action in prompt and action.props in prompt
+    assert current.design_spec.learner_name not in prompt
+
+    def gate(*args: Any, **kwargs: Any) -> dict[str, Any]:
+        assert action.action in args[0] and action.costume in args[0]
+        return approved_gate().model_dump()
+
+    monkeypatch.setattr("ai.openrouter.complete_json", gate)
+    verdict = judge_scene(synthetic_image(), synthetic_image(), current.design_spec, current.theme)
+    assert verdict and verdict.approved
+
+
+def test_uncertain_photo_stops_before_planning_or_images(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import transform
+    from extract.schema import SourceRegion, SourceWorksheetModel
+
+    photo = tmp_path / "photo.png"
+    Image.new("RGB", (1000, 1300), "white").save(photo)
+    source = SourceWorksheetModel(
+        source_image_hash="test",
+        pipeline_version="test",
+        template_type="unknown",
+        regions=[
+            SourceRegion(
+                type="word_list",
+                content="[unreadable]",
+                bbox=(0, 0, 1, 1),
+                confidence=0.2,
+                metadata={},
+            )
+        ],
+        raw_text="[unreadable]",
+        ocr_engine="test",
+        low_confidence_flags=[],
+    )
+    monkeypatch.setattr(transform, "extract_with_vision", lambda *args: source)
+    monkeypatch.setattr(
+        transform,
+        "_run_from_skill_model",
+        lambda *args, **kwargs: pytest.fail("planned uncertain photo"),
+    )
+    with pytest.raises(transform.UnapprovedPackageError, match="Photo extraction"):
+        transform.run_pipeline_collect_artifacts(
+            str(photo),
+            "unused-profile",
+            "space",
+            str(tmp_path / "out"),
+            str(tmp_path / "art"),
+            index_results=False,
+            render_mode="hybrid_shell",
+        )
+    assert not json.loads((tmp_path / "art/validation_photo_intake.json").read_text())["passed"]

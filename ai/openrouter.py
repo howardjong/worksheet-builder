@@ -11,6 +11,7 @@ import base64
 import io
 import json
 import logging
+import math
 import os
 import threading
 import time
@@ -21,6 +22,7 @@ from typing import Any, Literal
 import httpx
 from PIL import Image
 
+from ai.run_limits import current_limits
 from ai.telemetry import current_stage, record_call
 
 logger = logging.getLogger(__name__)
@@ -113,6 +115,13 @@ def _request(
     if alpha:
         base = base.removesuffix("/v1")
     headers = {"Authorization": f"Bearer {key}", "X-Title": "Worksheet Builder"}
+    if os.environ.get("WORKSHEET_OPENROUTER_REQUIRE_ZDR") == "1":
+        # Never weaken routing when an eligible endpoint is unavailable.
+        payload = {
+            **payload,
+            "provider": {**payload.get("provider", {}), "zdr": True, "data_collection": "deny"},
+        }
+    limits = current_limits()
     timeout = _positive_float(
         f"WORKSHEET_OPENROUTER_{current_stage().split('_')[0].upper()}_TIMEOUT",
         _positive_float("WORKSHEET_OPENROUTER_TIMEOUT", 180),
@@ -120,6 +129,9 @@ def _request(
     # One bounded retry for transient transport/hosting failure. Bad credentials
     # and exhausted credit are not solved by replaying the same request.
     for attempt in range(2):
+        remaining = limits.remaining_s() if limits else None
+        request_timeout = min(timeout, remaining) if remaining is not None else timeout
+        reservation = limits.reserve(str(payload.get("model", ""))) if limits else 0.0
         started = time.perf_counter()
         event: dict[str, Any] = {
             "endpoint": endpoint,
@@ -129,7 +141,7 @@ def _request(
         }
         try:
             response = _http_client().post(
-                base + endpoint, json=payload, headers=headers, timeout=timeout
+                base + endpoint, json=payload, headers=headers, timeout=request_timeout
             )
             event["status"] = response.status_code
             if response.status_code in _RETRYABLE and attempt == 0:
@@ -137,6 +149,10 @@ def _request(
                     delay = min(5.0, max(0.0, float(response.headers.get("Retry-After", "1"))))
                 except ValueError:
                     delay = 1.0
+                if limits:
+                    remaining = limits.remaining_s()
+                    if remaining is not None:
+                        delay = min(delay, remaining)
                 time.sleep(delay)
                 continue
             if response.status_code >= 400:
@@ -158,18 +174,49 @@ def _request(
                     ("cost", "cost_usd"),
                 ):
                     value = usage.get(source)
-                    if isinstance(value, int | float) and not isinstance(value, bool):
+                    if (
+                        isinstance(value, int | float)
+                        and not isinstance(value, bool)
+                        and math.isfinite(value)
+                        and value >= 0
+                    ):
                         event[target] = value
+                # Decisions uses input_tokens/output_tokens instead of chat names.
+                for source, target in (
+                    ("input_tokens", "tokens_in"),
+                    ("output_tokens", "tokens_out"),
+                ):
+                    value = usage.get(source)
+                    if (
+                        target not in event
+                        and isinstance(value, int)
+                        and not isinstance(value, bool)
+                        and value >= 0
+                    ):
+                        event[target] = value
+            for source, target in (
+                ("id", "request_id"),
+                ("model", "served_model"),
+                ("provider", "provider"),
+            ):
+                value = data.get(source)
+                if isinstance(value, str):
+                    event[target] = value
             return data
         except (httpx.TransportError, ValueError):
             # Avoid logging response bodies, headers, request payloads, or URLs
             # that may expose a secret or private learner content.
             logger.warning("OpenRouter %s transport/response failure", endpoint)
             if attempt == 0:
-                time.sleep(1)
+                remaining = limits.remaining_s() if limits else None
+                time.sleep(min(1, remaining) if remaining is not None else 1)
         finally:
             event["elapsed_s"] = time.perf_counter() - started
+            if limits:
+                limits.settle(reservation, event.get("cost_usd"))
             record_call(event)
+            if limits:
+                limits.check()
     return None
 
 

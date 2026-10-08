@@ -1,18 +1,22 @@
-"""Vision-based worksheet extraction using Gemini as fallback for poor OCR results."""
+"""Schema-validated photo transcription through OpenRouter, with explicit uncertainty."""
 
 from __future__ import annotations
 
 import logging
 import os
 import re
-from typing import Any
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ai import openrouter
+from ai.run_limits import RunLimitExceededError
 from extract.schema import (
     PIPELINE_VERSION,
     OCRResult,
     SourceRegion,
     SourceWorksheetModel,
+    flag_low_confidence,
 )
 
 logger = logging.getLogger(__name__)
@@ -21,9 +25,50 @@ logger = logging.getLogger(__name__)
 MAX_FRAGMENTS_PER_PAGE = 80  # too many tiny blocks = fragmented OCR
 MIN_AVG_CONFIDENCE = 0.5  # average confidence too low
 
+
 # Vision model: use gemini-3-flash-preview for reliable image reading
 # (gemini-3.1-flash-lite-preview hallucinated content in testing)
-_VISION_MODEL = "gemini-3-flash-preview"
+class VisionRegion(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    type: Literal[
+        "concept_label",
+        "sample_words",
+        "word_chain",
+        "chain_script",
+        "sight_word_list",
+        "practice_sentences",
+        "story_title",
+        "decodable_passage",
+        "title",
+        "instruction",
+        "question",
+        "word_list",
+        "passage",
+        "sentence",
+    ]
+    content: str = Field(min_length=1, strict=True)
+    confidence: float = Field(ge=0, le=1, strict=True)
+
+    @field_validator("content")
+    @classmethod
+    def nonblank(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("Empty transcription")
+        return value
+
+
+class VisionExtraction(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    template_type: Literal["ufli_word_work", "ufli_decodable_story", "unknown"]
+    regions: list[VisionRegion] = Field(min_length=1)
+
+
+def _valid_extraction(value: object) -> bool:
+    try:
+        VisionExtraction.model_validate(value)
+        return True
+    except ValueError:
+        return False
 
 
 def _configured_api_key() -> str:
@@ -57,11 +102,7 @@ def extract_with_vision(
     image_path: str,
     source_image_hash: str,
 ) -> SourceWorksheetModel | None:
-    """Extract worksheet content using Gemini vision as a fallback.
-
-    Sends the image directly to Gemini and asks it to identify the template,
-    regions, and content. Returns a SourceWorksheetModel or None if unavailable.
-    """
+    """Transcribe the original photo; confidence is a review signal, not proof."""
     api_key = _configured_api_key()
     if not api_key:
         logger.info("No OPENROUTER_API_KEY — vision fallback unavailable")
@@ -78,23 +119,23 @@ def extract_with_vision(
             prompt,
             images=[image_bytes],
             role="vision",
-            validate=lambda value: (
-                isinstance(value.get("regions"), list) and bool(value["regions"])
-            ),
+            model_ids=openrouter.stage_models("extraction", role="vision"),
+            validate=_valid_extraction,
+            json_schema=VisionExtraction.model_json_schema(),
+            max_tokens=4096,
         )
         if result is None:
             return None
-        data = dict(result)
-
-        template_type = data.get("template_type", "unknown")
-        raw_regions = data.get("regions", [])
+        data = VisionExtraction.model_validate(result)
+        template_type: str = data.template_type
+        raw_regions = data.regions
 
         regions: list[SourceRegion] = []
         all_text_parts: list[str] = []
 
-        for i, r in enumerate(raw_regions):
-            content = str(r.get("content", ""))
-            region_type = str(r.get("type", "word_list"))
+        for r in raw_regions:
+            content = r.content
+            region_type = r.type
             if not content.strip():
                 continue
 
@@ -102,9 +143,9 @@ def extract_with_vision(
                 SourceRegion(
                     type=region_type,
                     content=content,
-                    bbox=(0.0, float(i * 50), 500.0, float(i * 50 + 40)),
-                    confidence=0.85,
-                    metadata={"source": provider},
+                    bbox=(0.0, 0.0, 0.0, 0.0),
+                    confidence=r.confidence,
+                    metadata={"source": provider, "bbox_unavailable": True},
                 )
             )
             all_text_parts.append(content)
@@ -144,11 +185,13 @@ def extract_with_vision(
             regions=regions,
             raw_text="\n".join(all_text_parts),
             ocr_engine=provider,
-            low_confidence_flags=[],
+            low_confidence_flags=flag_low_confidence(regions),
         )
 
+    except RunLimitExceededError:
+        raise
     except Exception as e:
-        logger.warning(f"Gemini vision extraction failed: {e}")
+        logger.warning("OpenRouter vision extraction failed (%s)", type(e).__name__)
         return None
 
 
@@ -161,7 +204,7 @@ def _build_vision_prompt() -> str:
     )
     return (
         "You are analyzing a photo of a K-3 literacy worksheet "
-        "(UFLI Foundations).\n\n"
+        "from any literacy curriculum. Do not assume it is UFLI.\n\n"
         "FIRST decide the template type by looking at the page layout:\n"
         "- ufli_decodable_story: has a STORY TITLE, an illustration box, "
         "and a multi-sentence READING PASSAGE (paragraph text). "
@@ -171,7 +214,9 @@ def _build_vision_prompt() -> str:
         "instructions, IRREGULAR WORDS list, and PRACTICE SENTENCES.\n\n"
         "If the page has a reading passage (multiple sentences forming "
         "a story/narrative), it is ufli_decodable_story — NOT word work.\n"
-        "If BOTH pages are visible side by side, treat LEFT as ufli_word_work.\n\n"
+        "- unknown: other literacy layouts; retain semantic regions without forcing UFLI.\n"
+        "If BOTH pages are visible, transcribe BOTH; "
+        "flag unreadable content with low confidence.\n\n"
         "CRITICAL: Extract ONLY what is actually visible in the image. "
         "Do NOT invent or hallucinate content that is not on the page. "
         "If the page says 'Lesson 72', do not change it to a different "
@@ -193,18 +238,21 @@ def _build_vision_prompt() -> str:
         "Keep it as ONE region.\n\n"
         "Respond with ONLY this JSON (no markdown fences):\n"
         "{\n"
-        '  "template_type": "ufli_word_work" or "ufli_decodable_story",\n'
+        '  "template_type": "ufli_word_work", "ufli_decodable_story" or "unknown",\n'
         '  "regions": [\n'
         "    {\n"
         f'      "type": one of [{region_types}],\n'
-        '      "content": "the actual text"\n'
+        '      "content": "the actual text",\n'
+        '      "confidence": 0.0 to 1.0 (below 0.7 for uncertain or illegible content)\n'
         "    }\n"
         "  ]\n"
         "}\n\n"
         "Extract TEXT CONTENT accurately — transcribe exactly what you see. "
         "Include arrows for chains (e.g., tune -> tone -> cone -> cane). "
         "List sample words comma-separated. "
-        "Include full sentence and passage text."
+        "Include full sentence and passage text. Other layouts may use instruction, "
+        "question, word_list, sentence and passage regions. Never omit an unreadable "
+        "required region silently: transcribe [unreadable] and confidence 0.0."
     )
 
 
@@ -299,6 +347,11 @@ def _validate_template_type(template_type: str, regions: list[SourceRegion]) -> 
 
     has_passage = "decodable_passage" in region_types or "story_title" in region_types
     has_word_work = bool(region_types & {"word_chain", "chain_script", "sample_words"})
+
+    if has_passage and has_word_work:
+        # Generic semantic mapping preserves both activities; a forced single-page
+        # UFLI mapper would silently drop regions from the other visible page.
+        return "unknown"
 
     if template_type == "ufli_word_work" and has_passage and not has_word_work:
         logger.info(

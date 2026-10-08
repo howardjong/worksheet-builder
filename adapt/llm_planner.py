@@ -346,7 +346,7 @@ Source sections:
 {contract_block}{objective_block}
 ## Learner Profile
 
-Name: {profile.name}
+Learner: anonymous (name is added locally to the PDF)
 Grade: {current_grade(profile)}
 Response format preferences: {profile.accommodations.response_format_prefs}
 

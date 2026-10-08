@@ -83,6 +83,17 @@ Paper → Capture → Normalize → Source Extract → Skill Model → ADHD Adap
 
 - On-demand composed trials: `hybrid_shell` generates fresh text-free scenes with bounded parallelism (default 3) and draws actual activity text locally. This requires no prebuilt lesson/image library. Content is finalized before judging; approved content is frozen. Deterministic content defects block before image calls, and scene fallback is reported as degraded, not approved. See `docs/on-demand-rendering.md` and `docs/handoffs/on-demand-live-validation.md`. Keep `image_gen` as the default until live and human visual acceptance.
 
+- Composed photo acceptance: schema-validated transcription with uncertainty flags;
+  unknown layouts are supported but unidentified skills/uncertain content stop before
+  planning. Exhaustive practice evidence is separate from lesson objective sampling.
+  Scene action/outfit/safety are mandatory, alongside identity/no-text/area checks.
+  Preserve every rejected candidate privately; never relax gates for a deadline.
+  `WORKSHEET_RUN_MAX_USD`, `WORKSHEET_CALL_CEILINGS_JSON`, `WORKSHEET_RUN_MAX_CALLS`
+  and `WORKSHEET_RUN_DEADLINE_S` provide shared admission controls, not provider
+  billing or hard wall-time guarantees. Keep an external cap. Frozen replay and
+  Decisions probes in `experiments/live_replay.py` / `live_decisions.py` are dry-run
+  by default; live requires explicit `--live`, a vault key and verified limits.
+
 ## Session Handoff
 
 At session end, update `.claude/worksheet-project-context.md` with: milestone/checkpoint status, what was completed, what's next (specific files/functions), decisions or open questions, and any gotchas discovered. Commit the context update alongside other changes.

@@ -183,6 +183,9 @@ def render_composed_pdf(
     _register_fonts(theme)
     body_font = "Lexend" if "Lexend" in pdfmetrics.getRegisteredFontNames() else theme.fonts.primary
     sizes = GRADE_FONT_SIZES.get(adapted.grade_level, GRADE_FONT_SIZES["1"])
+    child_min_size = {"K": 16, "1": 14, "2": 12, "3": 12}.get(adapted.grade_level, 14)
+    if min(sizes["body"], sizes["heading"]) < child_min_size:
+        raise RenderContractError("child-facing type is below the grade minimum")
     body = ParagraphStyle(
         "practice",
         fontName=body_font,
@@ -212,7 +215,7 @@ def render_composed_pdf(
             raise RenderContractError("empty activity section")
         header: list[Flowable] = [_paragraph(chunk.micro_goal, heading)]
         if chunk.time_estimate:
-            header.append(_paragraph(chunk.time_estimate, small))
+            header.append(_paragraph(chunk.time_estimate, body))
         header.extend(
             _paragraph(f"{step.number}. {step.text}", body) for step in chunk.instructions
         )
@@ -259,7 +262,7 @@ def render_composed_pdf(
 
     tail: list[Flowable] = []
     if adapted.break_prompt:
-        tail.append(_paragraph("Brain break: " + adapted.break_prompt, small))
+        tail.append(_paragraph("Brain break: " + adapted.break_prompt, body))
     if adapted.feedback:
         tail.append(_paragraph(adapted.feedback.parent_log_title, small))
         scored = sum(
@@ -297,9 +300,9 @@ def render_composed_pdf(
         if adapted.feedback
         else adapted.specific_skill.replace("_", " ")
     )
-    goal = _paragraph(goal_text, small)
+    goal = _paragraph(goal_text, body)
     _, goal_height = goal.wrap(CONTENT_WIDTH, HEIGHT)
-    learner = _paragraph("For " + learner_name, small)
+    learner = _paragraph("For " + learner_name, body)
     _, learner_height = learner.wrap(CONTENT_WIDTH, HEIGHT)
     header_height = title_height + goal_height + learner_height + 6
     if header_height > 110:
@@ -371,6 +374,23 @@ def render_composed_pdf(
                     raise RenderContractError(
                         "required instruction, example or option absent from PDF"
                     )
+            layout_report = {
+                "physical_pages": len(pdf),
+                "practice_pages": sorted(practice_pages),
+                "child_min_font_pt": child_min_size,
+                "child_body_font_pt": sizes["body"],
+                "caregiver_font_pt": sizes["small"],
+                "artwork_effective_ppi": (
+                    round(
+                        min(pixel_width / (scene_width / 72), pixel_height / (scene_height / 72)), 1
+                    )
+                    if scene_path
+                    else None
+                ),
+                "raster_text": False,
+                "page_count_requires_human_acceptance": True,
+            }
+            (artifacts / "layout_report.json").write_text(json.dumps(layout_report, indent=2))
         temporary.replace(output)
     finally:
         temporary.unlink(missing_ok=True)

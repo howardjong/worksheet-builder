@@ -52,8 +52,7 @@ def _decodable_skill() -> LiteracySkillModel:
             SourceItem(
                 item_type="passage",
                 content=(
-                    "A Fine Slide. The slide was quite tall. "
-                    "The kids made a line and took turns."
+                    "A Fine Slide. The slide was quite tall. The kids made a line and took turns."
                 ),
                 source_region_index=0,
             ),
@@ -340,3 +339,103 @@ def test_decodable_passage_fails_without_read_aloud_passage_coverage() -> None:
 
     assert not result.passed
     assert any(v.check == "decodable_passage_coverage" for v in result.violations)
+
+
+def test_photo_coverage_requires_every_target_for_generic_and_ufli_templates() -> None:
+    from validate.photo_coverage import validate_photo_coverage
+
+    for template in ["unknown", "ufli_word_work"]:
+        skill = _word_work_skill(["grade", "slide", "quite", "these", "froze"])
+        skill.template_type = template
+        result, ledger = validate_photo_coverage(
+            skill,
+            [
+                _adapted(
+                    [
+                        "grade slide quite these",
+                        "tune tone cone cane",
+                        "The slide is quite tall.",
+                    ]
+                )
+            ],
+        )
+        assert not result.passed
+        assert any(entry.source == "froze" and not entry.practice_refs for entry in ledger)
+
+
+def test_photo_goals_examples_and_distractors_do_not_count_as_practice() -> None:
+    from validate.photo_coverage import validate_photo_coverage
+
+    worksheet = _adapted(["grade"])
+    worksheet.worksheet_title = "slide quite tune tone cone cane The slide is quite tall"
+    worksheet.chunks[0].items[0].options = ["slide", "quite"]
+    result, _ = validate_photo_coverage(_word_work_skill(), [worksheet])
+    assert not result.passed
+
+
+def test_photo_sentence_coverage_requires_every_sentence_including_long_ones() -> None:
+    from validate.photo_coverage import validate_photo_coverage
+
+    skill = _word_work_skill()
+    skill.source_items.append(
+        SourceItem(item_type="sentence", source_region_index=3, content="These froze in the cave.")
+    )
+    result, _ = validate_photo_coverage(
+        skill,
+        [
+            _adapted(
+                [
+                    "grade slide quite tune tone cone cane",
+                    "The slide is quite tall.",
+                ]
+            )
+        ],
+    )
+    assert not result.passed
+    assert any(v.check == "source_sentence" for v in result.violations)
+
+
+def test_photo_passage_requires_full_reading_not_title_or_excerpt() -> None:
+    from validate.photo_coverage import validate_photo_coverage
+
+    skill = _decodable_skill()
+    skill.target_words = ["slide", "quite"]
+    title_only, _ = validate_photo_coverage(skill, [_adapted(["A Fine Slide"], "read_aloud")])
+    split, ledger = validate_photo_coverage(
+        skill,
+        [
+            _adapted(
+                [
+                    "A Fine Slide. The slide was quite tall.",
+                    "The kids made a line and took turns.",
+                ],
+                "read_aloud",
+            )
+        ],
+    )
+    assert not title_only.passed and split.passed
+    assert len(next(e for e in ledger if e.kind == "source_passage").practice_refs) == 2
+
+
+def test_photo_coverage_accepts_real_production_and_ignores_teacher_script() -> None:
+    from validate.photo_coverage import validate_photo_coverage
+
+    skill = _word_work_skill(["slide"])
+    skill.source_items = [
+        SourceItem(item_type="sentence", content="The slide is quite tall.", source_region_index=0),
+        SourceItem(
+            item_type="sentence",
+            content="Tell the learner to start.",
+            source_region_index=1,
+            metadata={"teacher_only": True},
+        ),
+        SourceItem(
+            item_type="chain_script",
+            content="Tell the child to change the sound.",
+            source_region_index=2,
+        ),
+    ]
+    worksheet = _adapted(["The ____ is quite tall."], "fill_blank")
+    worksheet.chunks[0].items[0].answer = "slide"
+    result, ledger = validate_photo_coverage(skill, [worksheet])
+    assert result.passed and all(e.practice_refs for e in ledger)

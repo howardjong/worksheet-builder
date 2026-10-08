@@ -210,12 +210,29 @@ def _source_model_with_cache(
     if not cache_dir:
         return _resolve_source_model(input_path, preprocessed_path, image_hash)
 
-    cache_path = Path(cache_dir) / f"{image_hash}.source_model.json"
+    from ai import openrouter
+
+    original = Path(input_path)
+    photo_hash = (
+        hashlib.sha256(original.read_bytes()).hexdigest() if original.is_file() else image_hash
+    )
+    cache_key = hashlib.sha256(
+        (
+            "transcription_v2:"
+            + photo_hash
+            + json.dumps(openrouter.stage_models("extraction", role="vision"))
+        ).encode()
+    ).hexdigest()
+    cache_path = Path(cache_dir) / f"{cache_key}.source_model.json"
     if cache_path.exists():
         logger.info("  Using frozen (cached) extraction: %s", cache_path)
-        return SourceWorksheetModel.model_validate_json(cache_path.read_text())
+        return SourceWorksheetModel.model_validate_json(cache_path.read_text()).model_copy(
+            update={"source_image_hash": image_hash}
+        )
 
-    model = _resolve_source_model(input_path, preprocessed_path, image_hash)
+    model = _resolve_source_model(input_path, preprocessed_path, image_hash).model_copy(
+        update={"source_image_hash": image_hash}
+    )
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     cache_path.write_text(model.model_dump_json(indent=2))
     return model
@@ -268,6 +285,62 @@ def run_pipeline_collect_artifacts(
     skill_json = artifacts / "skill_model.json"
     skill_json.write_text(skill_model.model_dump_json(indent=2))
     logger.info("  Domain: %s, Skill: %s", skill_model.domain, skill_model.specific_skill)
+
+    if render_mode == "hybrid_shell":
+        # Uncertainty must be resolved before planning/art, not hidden by a PDF fallback.
+        from extract.schema import flag_low_confidence
+        from validate.schema import ValidationResult
+
+        intake = ValidationResult(validator="photo_intake", passed=True, checks_run=4)
+        uncertain = sorted(
+            set(source_model.low_confidence_flags + flag_low_confidence(source_model.regions))
+        )
+        if uncertain:
+            intake.add_violation(
+                check="source_confidence",
+                message="Photo transcription needs review",
+                details={"region_indices": ",".join(map(str, uncertain))},
+            )
+        practice_region_types = {
+            "sample_words",
+            "word_list",
+            "sight_word_list",
+            "word_chain",
+            "practice_sentences",
+            "question",
+            "decodable_passage",
+            "passage",
+            "sentence",
+        }
+        mapped_regions = {item.source_region_index for item in skill_model.source_items}
+        dropped_regions = [
+            index
+            for index, region in enumerate(source_model.regions)
+            if region.type in practice_region_types and index not in mapped_regions
+        ]
+        if dropped_regions:
+            intake.add_violation(
+                check="source_regions_preserved",
+                message="Skill mapping dropped student-facing source regions",
+                details={"region_indices": ",".join(map(str, dropped_regions))},
+            )
+        if (
+            skill_model.specific_skill in {"unknown", "phonics_pattern"}
+            or not skill_model.source_items
+        ):
+            intake.add_violation(
+                check="identified_skill", message="Photo has no verifiable supported literacy skill"
+            )
+        if os.environ.get("WORKSHEET_OBJECTIVE_COVERAGE") == "1":
+            intake.add_violation(
+                check="photo_full_coverage",
+                message="Objective sampling is not allowed for this photo trial",
+            )
+        (artifacts / "validation_photo_intake.json").write_text(intake.model_dump_json(indent=2))
+        if not intake.passed:
+            raise UnapprovedPackageError(
+                "Photo extraction requires review before planning or artwork"
+            )
 
     return _run_from_skill_model(
         skill_model,
@@ -687,6 +760,23 @@ def _run_single_worksheet_pipeline(
 
     reviewed_hash = package_hash([adapted])
     apply_theme(adapted, theme)
+    if render_mode == "hybrid_shell":
+        from render.replay import save_frozen_package
+
+        identity = resolve_character_identity(
+            profile, theme_id, character_spec=theme.character_spec
+        )
+        save_frozen_package(
+            artifacts,
+            [adapted],
+            skill_model,
+            profile,
+            theme,
+            identity,
+            single_judge_passed is True,
+            reviewed_hash,
+            objective_mode=os.environ.get("WORKSHEET_OBJECTIVE_COVERAGE") == "1",
+        )
 
     avatar_path: str | None = None
     if profile.avatar and render_mode != "hybrid_shell":
@@ -1017,6 +1107,19 @@ def _run_multi_worksheet_pipeline(
         from render.live_scene import generate_scene
 
         _validate_before_artwork(skill_model, worksheets, profile, artifacts)
+        from render.replay import save_frozen_package
+
+        save_frozen_package(
+            artifacts,
+            worksheets,
+            skill_model,
+            profile,
+            theme,
+            character_identity,
+            pedagogical_judge_passed is True,
+            judged_hash,
+            objective_mode=os.environ.get("WORKSHEET_OBJECTIVE_COVERAGE") == "1",
+        )
         contexts = [
             RenderContext(
                 design_spec=compile_worksheet_design_spec(
@@ -1287,28 +1390,60 @@ def _validate_before_artwork(
     worksheets: list[AdaptedActivityModel],
     profile: object,
     artifacts: Path,
+    *,
+    objective_mode: bool | None = None,
 ) -> None:
     """Reject locally verifiable content defects before spending on illustrations."""
     from adapt.objective_ledger import build_objective_ledger
     from companion.schema import LearnerProfile
+    from render.pdf import RenderContractError, _validate_render_inputs
     from validate.blocking_gates import run_blocking_gates
+    from validate.schema import ValidationResult
 
     assert isinstance(profile, LearnerProfile)
+    if objective_mode is None:
+        objective_mode = os.environ.get("WORKSHEET_OBJECTIVE_COVERAGE") == "1"
     gates = run_blocking_gates(worksheets, build_objective_ledger(skill))
     results = [validate_lesson_time_budget(worksheets)]
-    for worksheet in worksheets:
+    for worksheet_index, worksheet in enumerate(worksheets):
+        render_inputs = ValidationResult(validator="composed_inputs", passed=True, checks_run=1)
+        try:
+            _validate_render_inputs(worksheet, None)
+        except RenderContractError as error:
+            render_inputs.add_violation(check="render_input_contract", message=str(error))
+        adhd = validate_adhd_compliance(worksheet, rules=build_rules(profile))
+        # The modeled example starts the package; repetitions can fade on later sheets.
+        if worksheet_index > 0:
+            for violation in adhd.violations:
+                if violation.check == "worked_example_present":
+                    violation.check = "continuation_example_advisory"
         results.extend(
             [
                 validate_skill_parity(skill, worksheet),
                 validate_age_band(worksheet, current_grade(profile)),
-                validate_adhd_compliance(worksheet, rules=build_rules(profile)),
+                adhd,
+                render_inputs,
             ]
         )
     coverage_ok = (
         _validate_package_objective_coverage(skill, worksheets, artifacts)
-        if os.environ.get("WORKSHEET_OBJECTIVE_COVERAGE")
-        else _validate_package_content_coverage(skill, worksheets, artifacts).passed
+        if objective_mode
+        else _validate_photo_practice_coverage(skill, worksheets, artifacts)
     )
+    # These usability requirements are blocking in the composed pilot, not advisory.
+    hard_checks = {
+        "instruction_step_limit",
+        "instruction_word_limit",
+        "worked_example_present",
+        "skill_preserved",
+        "response_types_compatible",
+    }
+    for result in results:
+        if any(v.check in hard_checks for v in result.violations):
+            result.passed = False
+            for violation in result.violations:
+                if violation.check in hard_checks:
+                    violation.severity = "error"
     passed = gates.passed and coverage_ok and all(result.passed for result in results)
     (artifacts / "validation_before_artwork.json").write_text(
         json.dumps(
@@ -1324,6 +1459,24 @@ def _validate_before_artwork(
     )
     if not passed:
         raise UnapprovedPackageError("Deterministic content validation failed before artwork")
+
+
+def _validate_photo_practice_coverage(
+    skill: LiteracySkillModel, worksheets: list[AdaptedActivityModel], artifacts: Path
+) -> bool:
+    from validate.photo_coverage import validate_photo_coverage
+
+    result, ledger = validate_photo_coverage(skill, worksheets)
+    (artifacts / "photo_coverage_ledger.json").write_text(
+        json.dumps(
+            {
+                "coverage": result.model_dump(mode="json"),
+                "practice_evidence": [entry.model_dump() for entry in ledger],
+            },
+            indent=2,
+        )
+    )
+    return result.passed
 
 
 def _render_artifacts_dir(artifacts: Path, strategy: RenderStrategy, worksheet_number: int) -> Path:

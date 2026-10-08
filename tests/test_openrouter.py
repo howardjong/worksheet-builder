@@ -275,8 +275,10 @@ def test_photo_extraction_with_only_router_key(
             _text(
                 json.dumps(
                     {
-                        "template_type": "word_list",
-                        "regions": [{"type": "word_list", "content": "ship shop fish"}],
+                        "template_type": "unknown",
+                        "regions": [
+                            {"type": "word_list", "content": "ship shop fish", "confidence": 0.95}
+                        ],
                     }
                 )
             )
@@ -492,3 +494,23 @@ def test_audio_judge_cannot_degrade_to_transcript_only(tmp_path: Path) -> None:
     (tmp_path / "missing.mp3").write_bytes(b"")
     with pytest.raises(ValueError, match="nonempty"):
         _build_judge_audio(tmp_path, clip)
+
+
+@pytest.mark.parametrize(
+    "endpoint,alpha",
+    [
+        ("/chat/completions", False),
+        ("/images", False),
+        ("/alpha/decisions", True),
+    ],
+)
+def test_privacy_routing_is_enforced_without_weaker_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+    endpoint: str,
+    alpha: bool,
+) -> None:
+    monkeypatch.setenv("WORKSHEET_OPENROUTER_REQUIRE_ZDR", "1")
+    calls = _responses(monkeypatch, [httpx.Response(400)])
+    assert openrouter._request(endpoint, {"model": "test-model"}, alpha=alpha) is None
+    assert calls[0]["json"]["provider"] == {"zdr": True, "data_collection": "deny"}
+    assert len(calls) == 1

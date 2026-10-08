@@ -13,10 +13,13 @@ from functools import wraps
 from pathlib import Path
 from typing import Any, ParamSpec, TypeVar
 
+from ai.run_limits import RunLimits, check_run_limits, run_limits
+
 _P = ParamSpec("_P")
 _T = TypeVar("_T")
 _recorder: ContextVar[Recorder | None] = ContextVar("worksheet_recorder", default=None)
 _stage: ContextVar[str] = ContextVar("worksheet_stage", default="pipeline")
+_candidate: ContextVar[str | None] = ContextVar("worksheet_candidate", default=None)
 
 
 class Recorder:
@@ -30,7 +33,12 @@ class Recorder:
     def record(self, event: dict[str, Any]) -> None:
         with self.lock:
             self.events.append(
-                {"stage": _stage.get(), "finished_s": time.perf_counter() - self.started, **event}
+                {
+                    "stage": _stage.get(),
+                    "candidate_id": _candidate.get(),
+                    "finished_s": time.perf_counter() - self.started,
+                    **event,
+                }
             )
 
     def record_span(self, name: str, started: float) -> None:
@@ -75,6 +83,15 @@ def current_stage() -> str:
     return _stage.get()
 
 
+@contextmanager
+def candidate(identifier: str) -> Iterator[None]:
+    token = _candidate.set(identifier)
+    try:
+        yield
+    finally:
+        _candidate.reset(token)
+
+
 def in_stage(name: str) -> Callable[[Callable[_P, _T]], Callable[_P, _T]]:
     def decorate(function: Callable[_P, _T]) -> Callable[_P, _T]:
         @wraps(function)
@@ -89,6 +106,7 @@ def in_stage(name: str) -> Callable[[Callable[_P, _T]], Callable[_P, _T]]:
 
 @contextmanager
 def stage(name: str) -> Iterator[None]:
+    check_run_limits()
     started = time.perf_counter()
     token = _stage.set(name)
     try:
@@ -107,15 +125,21 @@ def traced_pipeline(function: Callable[_P, _T]) -> Callable[_P, _T]:
     def traced(*args: _P.args, **kwargs: _P.kwargs) -> _T:
         bound = signature.bind(*args, **kwargs)
         recorder = Recorder(Path(str(bound.arguments["artifacts_dir"])))
+        limits = RunLimits.from_env()
         token = _recorder.set(recorder)
         succeeded = False
         try:
-            result = function(*args, **kwargs)
-            succeeded = True
-            return result
+            with run_limits(limits):
+                result = function(*args, **kwargs)
+                limits.check()
+                succeeded = True
+                return result
         finally:
             try:
                 recorder.save(succeeded)
+                (recorder.directory / "run_limits.json").write_text(
+                    json.dumps(limits.snapshot(), indent=2)
+                )
             finally:
                 _recorder.reset(token)
 

@@ -36,8 +36,7 @@ def validate_skill_parity(
         result.add_violation(
             check="domain_preserved",
             message=(
-                f"Domain drift: source is '{source_skill.domain}', "
-                f"adapted is '{adapted.domain}'"
+                f"Domain drift: source is '{source_skill.domain}', adapted is '{adapted.domain}'"
             ),
             details={"source": source_skill.domain, "adapted": adapted.domain},
         )
@@ -126,8 +125,7 @@ def validate_age_band(
         result.add_violation(
             check="grade_match",
             message=(
-                f"Adapted grade '{adapted.grade_level}' doesn't match "
-                f"target grade '{target_grade}'"
+                f"Adapted grade '{adapted.grade_level}' doesn't match target grade '{target_grade}'"
             ),
             severity="warning",
         )
@@ -152,8 +150,7 @@ def validate_age_band(
             result.add_violation(
                 check="item_count_sanity",
                 message=(
-                    f"Chunk {chunk.chunk_id} has {len(chunk.items)} items "
-                    f"(max recommended: 10)"
+                    f"Chunk {chunk.chunk_id} has {len(chunk.items)} items (max recommended: 10)"
                 ),
             )
 
@@ -163,10 +160,19 @@ def validate_age_band(
 def _compatible_formats_for_domain(domain: str) -> set[str]:
     """Return response formats that are compatible with a literacy domain."""
     return {
-        "phonemic_awareness": {"circle", "verbal", "match", "write"},
-        "phonics": {"write", "circle", "match", "verbal", "trace", "read_aloud"},
+        "phonemic_awareness": {"circle", "verbal", "match", "write", "sound_box"},
+        "phonics": {
+            "write",
+            "circle",
+            "match",
+            "verbal",
+            "trace",
+            "read_aloud",
+            "fill_blank",
+            "sound_box",
+        },
         "fluency": {"read_aloud", "verbal"},
-        "vocabulary": {"write", "circle", "match", "verbal"},
-        "comprehension": {"write", "circle", "verbal", "match"},
-        "writing": {"write", "trace"},
+        "vocabulary": {"write", "circle", "match", "verbal", "fill_blank"},
+        "comprehension": {"write", "circle", "verbal", "match", "fill_blank"},
+        "writing": {"write", "trace", "fill_blank"},
     }.get(domain, {"write", "circle", "verbal"})
