@@ -709,7 +709,9 @@ def test_suffix_scenes_model_different_learner_procedures(
     contract = scene_action(current.design_spec, current.theme)
     assert contract.kind == kind and props in contract.props
     prompt = scene_prompt(current.design_spec, current.theme, None)
-    assert "Focus ONLY on section 1: " + goal in prompt
+    assert "Focus ONLY on section 1." in prompt
+    assert content not in prompt
+    assert goal not in prompt
     assert contract.action in prompt
 
 

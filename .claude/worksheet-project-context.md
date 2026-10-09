@@ -8,6 +8,58 @@
 
 ## Current State
 
+### Session 79 — 2026-10-09 (expressive references in fresh full pipeline)
+
+**Owner request:** Publish the targeted generator changes and provide Muse a fresh
+end-to-end live-test prompt. Explicit one-run authorization supersedes Session 78's
+screen-first ordering. Main and production renderer defaults remain unchanged.
+
+**Publication checkpoint:** The full 44-item approved reference library and earlier
+experiment changes are verified remote at `bbd06aec20663f7678d7c1cff6fed9240be09f00`
+(tree `0d276ab1b093ae1d9c34589194239c3750157a65`). The archival learning-moods sheet
+is lossless WebP with verified identical RGBA pixels; the individual model-input
+PNGs retain their original bytes/hashes. No vector database is needed to use them.
+
+**Changes:**
+- New `companion/reference_library.py` shares the existing owner/hash/dimension/PNG
+  validator with experiments (compatibility exports retained).
+- `render/live_scene.py` accepts opt-in `WORKSHEET_SCENE_REFERENCE_LIBRARY`: original
+  authority first, approved action expression second, astronaut costume third.
+  Building uses happy-open-smile, choosing uses thinking, other procedures use
+  concentrating. Unrelated characters/themes or invalid items fail before image
+  inference; Muse must run the zero-cost profile/library preflight before planning.
+- The new prompt preserves original proportions/style, allows facial expression
+  variation, excludes contradictory theme anatomy, models only the selected
+  procedure, omits raw worksheet content/goals and uses a calm sparse background.
+  The earlier unsuccessful structured-prompt bundle is not promoted.
+- Judge identity authority and all v5 gate thresholds remain unchanged. New ordered
+  reference hashes/prompt version bind cache entries; historical v2/v3/v4/v5 scene
+  receipts retain original prompt/gate provenance and cannot certify the new pack.
+- Save exact scene prompts and reference roles/hashes/expression/manifest/judge hash.
+  Quality auto/background opaque are explicit; provider fallback is disabled only
+  for the opt-in multi-reference pack. Other defaults retain their prior policy.
+
+**Handoff:** `docs/handoffs/expressive-reference-end-to-end.md`: one fresh lesson-100
+full run with Sol 6.1 medium planner/content judge, Sunburst only, Luna Decisions
+v5, concurrency three, one scene candidate, no PDF fallback, 300s cooperative
+deadline/40-call cap. Reconcile the existing cumulative $5 session budget (prior
+unmeasured-screen/reservation ambiguity); allocate at most min($1.50, remaining).
+Verify per-call ceilings including three references before inference. Use the
+vault surrogate; preserve original authority bytes; no whole-run retries or gate
+relaxation. No PDF is failure; planner/transport retries disqualify strict
+first-pass success. Return all fresh scenes/PDF for separate owner likeness review.
+
+**Validation:** `make test-all`: 1210 passed / 27 skipped (one warning);
+`make lint` clean; strict `make typecheck` clean (229 source files). Eight
+new regression cases cover runtime selection/transport, original judge authority,
+cache separation, invalid-pack rejection and historical v5 compatibility.
+Handoff zero-cost reference preflight executed successfully with an anonymous
+profile; actual Muse original hash must still match its previous private screen.
+No Codex paid calls. Live first-pass quality/latency, phone-photo intake and
+physical AirPrint remain pending. One successful run would establish feasibility,
+not a population pass rate or p95. Keep main untouched until acceptance.
+
+
 ### Session 78 — 2026-10-09 (approved reference library and conditioning screen)
 
 Howard approves the generated reference library and requests publication plus a

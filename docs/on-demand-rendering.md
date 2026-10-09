@@ -15,6 +15,11 @@ The parent/teacher capture UI and native AirPrint integration are outside this
 Python change. The output is a standard Letter PDF for the existing phone
 sharing/printing flow. Test that flow on an actual phone and printer.
 
+Latest fresh end-to-end trial: [expressive-reference handoff](handoffs/expressive-reference-end-to-end.md).
+The composed scene prompt preserves reference anatomy/style, allows natural expressions,
+models only its declared action and avoids passing raw worksheet text to the artist.
+New prompt/reference hashes invalidate older artwork caches; gate v5 is unchanged.
+
 ## Request path
 
 1. Capture and extract the original photo with a validated transcription schema,
@@ -77,6 +82,7 @@ so a spacesuit does not contradict an ordinary-clothes identity reference.
 | Variable | Default | Effect |
 |---|---|---|
 | `WORKSHEET_IMAGE_CONCURRENCY` | `3` | Independent scene jobs; clamped to 1–4. `1` gives a serial comparison. |
+| `WORKSHEET_SCENE_REFERENCE_LIBRARY` | Unset | Opt-in approved rainbow-buddy/space manifest: original + action expression + astronaut references; original-only identity judge, hash/approval validation, provider fallback disabled for this pack. |
 | `WORKSHEET_SCENE_MAX_CANDIDATES` | `2` | Total image model candidates per scene; clamped to 1–4. One quality attempt per candidate. |
 | `WORKSHEET_OPENROUTER_IMAGE_MODELS` | Existing ordered chain | Models tried for each scene; only the first N candidates are considered. |
 | `WORKSHEET_SCENE_GATE_BACKEND` | `decisions` | Batched Luna gate; explicit `vision` selects the configured structured vision model. No automatic backend fallback. |

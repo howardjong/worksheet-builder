@@ -16,12 +16,14 @@ from ai import openrouter
 from ai.run_limits import RunLimitExceededError, check_run_limits
 from ai.telemetry import candidate, stage
 from companion.character_identity import CharacterIdentity
+from companion.reference_library import approved_supplements
 from render.design_spec import WorksheetDesignSpec
 from render.scene_geometry import meaningful_page_fraction
 from render.strategies import RenderContext
 from theme.schema import ThemeConfig
 
 SCENE_VERSION = "live_scene_v5_relevant_procedure"
+PROMPT_VERSION = "live_scene_prompt_v2_identity_procedure"
 HAIKU_MODEL = "anthropic/claude-haiku-5.5"
 DECISIONS_MODEL = "openai/gpt-6-luna-decisions"
 # Owner-reviewed trial art was relevant at 0.40 task / 0.42 action / 0.90
@@ -246,6 +248,53 @@ def generation_reference_pack(
     return pack
 
 
+class SceneReferences(BaseModel):
+    images: list[bytes] = Field(default_factory=list)
+    roles: list[str] = Field(default_factory=list)
+    expression: str | None = None
+    library_sha256: str | None = None
+
+    @property
+    def hashes(self) -> tuple[str, ...]:
+        return tuple(hashlib.sha256(raw).hexdigest() for raw in self.images)
+
+
+def scene_expression(action: SceneAction) -> str:
+    return {"build": "happy-open-smile", "choose": "thinking"}.get(action.kind, "concentrating")
+
+
+def scene_references(
+    spec: WorksheetDesignSpec,
+    theme: ThemeConfig,
+    identity: object | None,
+) -> SceneReferences:
+    """Opt-in approved generation supplements; judge authority is never replaced."""
+    primary = judge_reference(identity)
+    references = SceneReferences(
+        images=[primary] if primary else [],
+        roles=["original_identity"] if primary else [],
+    )
+    configured = os.environ.get("WORKSHEET_SCENE_REFERENCE_LIBRARY")
+    if not configured:
+        return references
+    if (
+        not primary
+        or not isinstance(identity, CharacterIdentity)
+        or identity.base_character != "rainbow_roblox"
+        or spec.theme_id != "space"
+    ):
+        raise ValueError("Approved scene library requires the rainbow buddy and space theme")
+    manifest = Path(configured)
+    expression = scene_expression(scene_action(spec, theme))
+    face, outfit = approved_supplements(manifest, expression)
+    return SceneReferences(
+        images=[primary, face, outfit],
+        roles=["original_identity", "expression_detail", "theme_costume"],
+        expression=expression,
+        library_sha256=hashlib.sha256(manifest.read_bytes()).hexdigest(),
+    )
+
+
 def derive_face_crop(
     png: bytes, rect: tuple[float, float, float, float]
 ) -> tuple[bytes, dict[str, object]]:
@@ -289,7 +338,54 @@ def scene_prompt(
     *,
     legacy: bool = False,
     prior_rubric: bool = False,
+    prior_prompt: bool = False,
+    reference_roles: tuple[str, ...] = (),
 ) -> str:
+    if not (legacy or prior_rubric or prior_prompt):
+        action = scene_action(spec, theme)
+        mood = {
+            "happy-open-smile": "a cheerful open smile while building",
+            "thinking": "a thoughtful expression while considering the choices",
+            "concentrating": "an engaged, concentrating expression",
+        }[scene_expression(action)]
+        roles = (
+            (
+                "Image 1 fixes the original character's identity and illustration style. "
+                "Copy its face shape, eye construction and spacing, hair silhouette and "
+                "colors, skin colors, and original head/body/limb proportions. "
+            )
+            if reference_roles
+            else (
+                "Preserve the original reference character's identity and illustration style: "
+                "face shape, eye construction, hair, skin colors and body proportions. "
+            )
+        )
+        if "expression_detail" in reference_roles:
+            roles += (
+                "Image 2 supplies approved face/hair detail and expression. "
+                "Image 3 supplies the same buddy's costume, not its standing pose. "
+            )
+        costume = (
+            "an astronaut spacesuit with a transparent round helmet, with the face and "
+            "distinctive hair clearly visible"
+            if spec.theme_id == "space"
+            else theme.character_spec.body_description
+        )
+        return (
+            "Draw only a substantial instructional illustration, never a worksheet. "
+            "Landscape 16:9 with a calm, sparse white background. "
+            + roles
+            + "All supplied references depict one established buddy; show that buddy once. "
+            "Expression, eyebrows, gaze and mouth opening may change naturally without "
+            "redesigning the face or changing its proportions. "
+            f"Use {mood}. Dress the buddy in {costume}; clothing must not reshape the body. "
+            f"Focus ONLY on section {action.section_number}. Show the buddy {action.action}. "
+            f"Required props: {action.props}. Model this one learning procedure clearly. "
+            "Keep the face, hands and materials visible and together dominant in the frame. "
+            "Use completely blank, unmarked learning materials. "
+            "NO text, letters, numbers, labels, practice answers, marked correct choices, "
+            "borders or worksheet boxes. No decorative posing or dense background scenery."
+        )
     character = (
         identity.character_block
         if isinstance(identity, CharacterIdentity)
@@ -490,6 +586,8 @@ def _scene_key(
     legacy: bool = False,
     prior_calibration: bool = False,
     prior_rubric: bool = False,
+    prompt_version: str | None = None,
+    generation_reference_hashes: tuple[str, ...] = (),
 ) -> str:
     version = (
         "live_scene_v2_action_contract"
@@ -500,39 +598,47 @@ def _scene_key(
         if prior_rubric
         else SCENE_VERSION
     )
-    return hashlib.sha256(
-        (
-            version
-            + prompt
-            + json.dumps(openrouter.models("image"))
-            + json.dumps(
-                openrouter.stage_models("scene_judge", role="vision")
-                if legacy
-                else _scene_judge_models()
+    payload = (
+        version
+        + prompt
+        + json.dumps(openrouter.models("image"))
+        + json.dumps(
+            openrouter.stage_models("scene_judge", role="vision")
+            if legacy
+            else _scene_judge_models()
+        )
+        + (
+            ""
+            if legacy
+            else json.dumps(
+                0.95
+                if prior_calibration
+                else PRIOR_DECISION_THRESHOLDS
+                if prior_rubric
+                else {
+                    "thresholds": DECISION_THRESHOLDS,
+                    "area_policy": AREA_POLICY,
+                    "effort": os.environ.get(
+                        "WORKSHEET_OPENROUTER_SCENE_JUDGE_REASONING_EFFORT",
+                        "low"
+                        if _scene_judge_models() == [HAIKU_MODEL]
+                        else os.environ.get("WORKSHEET_OPENROUTER_REASONING_EFFORT", "medium"),
+                    ),
+                }
             )
-            + (
-                ""
-                if legacy
-                else json.dumps(
-                    0.95
-                    if prior_calibration
-                    else PRIOR_DECISION_THRESHOLDS
-                    if prior_rubric
-                    else {
-                        "thresholds": DECISION_THRESHOLDS,
-                        "area_policy": AREA_POLICY,
-                        "effort": os.environ.get(
-                            "WORKSHEET_OPENROUTER_SCENE_JUDGE_REASONING_EFFORT",
-                            "low"
-                            if _scene_judge_models() == [HAIKU_MODEL]
-                            else os.environ.get("WORKSHEET_OPENROUTER_REASONING_EFFORT", "medium"),
-                        ),
-                    }
-                )
-            )
+        )
+    ).encode() + (reference or b"")
+    if prompt_version is not None:
+        payload += json.dumps(
+            {
+                "prompt_version": prompt_version,
+                "generation_references": generation_reference_hashes,
+                "quality": "auto",
+                "background": "opaque",
+            },
+            sort_keys=True,
         ).encode()
-        + (reference or b"")
-    ).hexdigest()
+    return hashlib.sha256(payload).hexdigest()
 
 
 def _approved_scene(directory: Path, key: str, spec: WorksheetDesignSpec) -> str | None:
@@ -578,12 +684,24 @@ def load_approved_scene(context: RenderContext) -> str | None:
         "live_scene_v2_action_contract",
     }:
         return None
+    prompt_version = report.get("prompt_version")
+    if prompt_version not in {None, PROMPT_VERSION}:
+        return None
+    if prompt_version is None and os.environ.get("WORKSHEET_SCENE_REFERENCE_LIBRARY"):
+        return None
+    references = (
+        scene_references(context.design_spec, theme, context.character_identity)
+        if prompt_version is not None
+        else SceneReferences()
+    )
     prompt = scene_prompt(
         context.design_spec,
         theme,
         context.character_identity,
         legacy=version == "live_scene_v2_action_contract",
         prior_rubric=version in {"live_scene_v3_decisions", "live_scene_v4_luna_calibrated"},
+        prior_prompt=prompt_version is None,
+        reference_roles=tuple(references.roles),
     )
     key = _scene_key(
         prompt,
@@ -591,6 +709,8 @@ def load_approved_scene(context: RenderContext) -> str | None:
         legacy=version == "live_scene_v2_action_contract",
         prior_calibration=version == "live_scene_v3_decisions",
         prior_rubric=version == "live_scene_v4_luna_calibrated",
+        prompt_version=prompt_version,
+        generation_reference_hashes=references.hashes,
     )
     return _approved_scene(context.artifacts_dir, key, context.design_spec)
 
@@ -606,10 +726,18 @@ def generate_scene(context: RenderContext) -> str | None:
     theme = ThemeConfig.model_validate(context.theme)
     directory = context.artifacts_dir
     directory.mkdir(parents=True, exist_ok=True)
-    prompt = scene_prompt(spec, theme, context.character_identity)
+    references = scene_references(spec, theme, context.character_identity)
+    prompt = scene_prompt(
+        spec, theme, context.character_identity, reference_roles=tuple(references.roles)
+    )
     action = scene_action(spec, theme)
-    reference = _reference(context.character_identity)
-    key = _scene_key(prompt, reference)
+    reference = judge_reference(context.character_identity)
+    key = _scene_key(
+        prompt,
+        reference,
+        prompt_version=PROMPT_VERSION,
+        generation_reference_hashes=references.hashes,
+    )
     path = directory / "learning_scene.png"
     report_path = directory / "learning_scene.json"
     if cached := _approved_scene(directory, key, spec):
@@ -624,6 +752,15 @@ def generate_scene(context: RenderContext) -> str | None:
                     "status": status,
                     "key": key,
                     "scene_version": SCENE_VERSION,
+                    "prompt_version": PROMPT_VERSION,
+                    "generation_reference_hashes": references.hashes,
+                    "generation_reference_roles": references.roles,
+                    "expression": references.expression,
+                    "reference_library_sha256": references.library_sha256,
+                    "allow_provider_fallback": references.library_sha256 is None,
+                    "judge_reference_sha256": hashlib.sha256(reference).hexdigest()
+                    if reference
+                    else None,
                     "gate_models": _scene_judge_models(),
                     "gate_backend": os.environ.get("WORKSHEET_SCENE_GATE_BACKEND", "decisions"),
                     "decision_thresholds": (
@@ -653,6 +790,7 @@ def generate_scene(context: RenderContext) -> str | None:
     except ValueError:
         budget = 2
     models = openrouter.models("image")[:budget]
+    (directory / "scene_prompt.txt").write_text(prompt)
     reason = "no OpenRouter key or artwork generation disabled"
     if openrouter.available() and os.environ.get("WORKSHEET_SKIP_ASSET_GEN") != "1":
         for model in models:
@@ -670,7 +808,13 @@ def generate_scene(context: RenderContext) -> str | None:
             with stage(f"scene_{spec.worksheet_number}"), candidate(candidate_id):
                 try:
                     png = openrouter.generate_image(
-                        prompt, reference, model=model, aspect_ratio="16:9"
+                        prompt,
+                        reference_pngs=references.images or None,
+                        model=model,
+                        aspect_ratio="16:9",
+                        quality="auto",
+                        background="opaque",
+                        allow_provider_fallback=references.library_sha256 is None,
                     )
                     if png:
                         candidate_path = directory / f"{candidate_id}.png"

@@ -1,0 +1,139 @@
+"""Runtime reference conditioning, cache separation and original judge authority."""
+
+from __future__ import annotations
+
+import hashlib
+import json
+from dataclasses import replace
+from pathlib import Path
+from typing import Any
+
+import pytest
+
+from companion.character_identity import resolve_character_identity
+from companion.schema import LearnerProfile
+from render.live_scene import (
+    PROMPT_VERSION,
+    judge_reference,
+    load_approved_scene,
+    scene_prompt,
+    scene_references,
+)
+from tests.test_live_composition import approved_gate, context, synthetic_image
+from theme.schema import ThemeConfig
+
+LIBRARY = (
+    Path(__file__).resolve().parents[1]
+    / "assets/characters/rainbow_learning_buddy/reference_library/v1/manifest.json"
+)
+
+
+@pytest.mark.parametrize(
+    "goal,format,expected",
+    [
+        ("Build 7 words", "write", "happy-open-smile"),
+        ("Choose a word", "circle", "thinking"),
+        ("Write 5 words", "write", "concentrating"),
+    ],
+)
+def test_runtime_selects_approved_expression_and_costume_without_changing_judge(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, goal: str, format: str, expected: str
+) -> None:
+    current = context(tmp_path, count=1)
+    assert isinstance(current.theme, ThemeConfig)
+    identity = resolve_character_identity(LearnerProfile(name="Test", grade_level="2"), "space")
+    authority = judge_reference(identity)
+    assert authority is not None
+    current.design_spec.sections[0].micro_goal = goal
+    current.design_spec.sections[0].items[0].response_format = format
+    monkeypatch.setenv("WORKSHEET_SCENE_REFERENCE_LIBRARY", str(LIBRARY))
+    pack = scene_references(current.design_spec, current.theme, identity)
+    assert pack.roles == ["original_identity", "expression_detail", "theme_costume"]
+    assert pack.expression == expected
+    catalog = json.loads(LIBRARY.read_text())
+    face = next(x for x in catalog["items"] if x["group"] == "expressions" and x["id"] == expected)
+    outfit = next(
+        x for x in catalog["items"] if x["group"] == "wardrobe" and x["id"] == "astronaut"
+    )
+    assert pack.hashes == (hashlib.sha256(authority).hexdigest(), face["sha256"], outfit["sha256"])
+    assert judge_reference(identity) == authority == pack.images[0]
+    prompt = scene_prompt(
+        current.design_spec, current.theme, identity, reference_roles=tuple(pack.roles)
+    )
+    assert "Image 1 fixes the original character" in prompt
+    assert "Image 2 supplies approved face/hair detail and expression" in prompt
+    assert "costume, not its standing pose" in prompt
+    assert "mouth opening may change naturally" in prompt
+    assert "large head" not in prompt and "soft rounded" not in prompt
+    assert current.design_spec.sections[0].items[0].content not in prompt
+    assert "Activities:" not in prompt and "Learning goal:" not in prompt
+    if expected == "happy-open-smile":
+        assert "cheerful open smile" in prompt
+
+
+def test_full_scene_transport_sends_pack_and_original_judge_and_separates_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from render.live_scene import generate_scene
+
+    identity = resolve_character_identity(LearnerProfile(name="Test", grade_level="2"), "space")
+    current = replace(context(tmp_path, count=1), character_identity=identity)
+    sent: list[list[bytes]] = []
+    judged: list[bytes | None] = []
+    monkeypatch.setenv("OPENROUTER_API_KEY", "offline-test-surrogate")
+    monkeypatch.setenv("WORKSHEET_OPENROUTER_IMAGE_MODELS", "offline-image")
+    monkeypatch.setenv("WORKSHEET_SCENE_REFERENCE_LIBRARY", str(LIBRARY))
+
+    def generate(*args: Any, **kwargs: Any) -> bytes:
+        sent.append(kwargs["reference_pngs"])
+        assert kwargs["quality"] == "auto" and kwargs["background"] == "opaque"
+        assert kwargs["allow_provider_fallback"] is (len(kwargs["reference_pngs"]) == 1)
+        return synthetic_image()
+
+    def judge(png: bytes, reference: bytes | None, *args: Any) -> Any:
+        judged.append(reference)
+        return approved_gate()
+
+    monkeypatch.setattr("ai.openrouter.generate_image", generate)
+    monkeypatch.setattr("render.live_scene.judge_scene", judge)
+    assert generate_scene(current)
+    assert len(sent) == 1 and len(sent[0]) == 3
+    assert judged == [judge_reference(identity)]
+    assert load_approved_scene(current)
+    assert generate_scene(current)  # same reference hashes: actual cache hit
+    assert len(sent) == 1
+    report = json.loads((tmp_path / "learning_scene.json").read_text())
+    assert report["prompt_version"] == PROMPT_VERSION
+    assert report["generation_reference_hashes"] == [hashlib.sha256(x).hexdigest() for x in sent[0]]
+    assert report["judge_reference_sha256"] == report["generation_reference_hashes"][0]
+    assert (tmp_path / "scene_prompt.txt").is_file()
+    monkeypatch.delenv("WORKSHEET_SCENE_REFERENCE_LIBRARY")
+    assert load_approved_scene(current) is None  # pack receipt cannot certify original-only request
+    assert generate_scene(current)
+    assert len(sent) == 2 and len(sent[1]) == 1
+    assert judged == [judge_reference(identity)] * 2
+
+
+@pytest.mark.parametrize("invalid", ["missing", "wrong-character", "wrong-theme"])
+def test_invalid_runtime_pack_blocks_before_art_inference(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, invalid: str
+) -> None:
+    from render.live_scene import generate_scene
+
+    identity = resolve_character_identity(LearnerProfile(name="Test", grade_level="2"), "space")
+    current = replace(context(tmp_path, count=1), character_identity=identity)
+    monkeypatch.setenv("WORKSHEET_SCENE_REFERENCE_LIBRARY", str(LIBRARY))
+    if invalid == "missing":
+        monkeypatch.setenv("WORKSHEET_SCENE_REFERENCE_LIBRARY", str(tmp_path / "missing.json"))
+    elif invalid == "wrong-character":
+        current = replace(
+            current, character_identity=identity.model_copy(update={"base_character": "other"})
+        )
+    else:
+        current.design_spec.theme_id = "dinosaur"
+    monkeypatch.setattr(
+        "ai.openrouter.generate_image",
+        lambda *a, **k: pytest.fail("invalid pack reached inference"),
+    )
+    with pytest.raises((ValueError, FileNotFoundError)):
+        generate_scene(current)

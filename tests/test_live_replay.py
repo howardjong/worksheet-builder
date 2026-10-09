@@ -219,6 +219,7 @@ def test_legacy_scene_receipt_can_be_recomposed_without_new_gate_approval(
     monkeypatch.setenv("WORKSHEET_OPENROUTER_SCENE_JUDGE_MODELS", "original-judge")
     path = source / "render_1/learning_scene.json"
     receipt = json.loads(path.read_text())
+    receipt.pop("prompt_version", None)
     receipt["scene_version"] = "live_scene_v2_action_contract"
     receipt["key"] = _scene_key(
         scene_prompt(spec, package.theme, package.identity, legacy=True),
@@ -246,9 +247,10 @@ def test_v3_luna_scene_receipt_preserves_its_original_cache_key(
     )
     receipt_path = source / "render_1/learning_scene.json"
     receipt = json.loads(receipt_path.read_text())
+    receipt.pop("prompt_version", None)
     receipt["scene_version"] = "live_scene_v3_decisions"
     receipt["key"] = _scene_key(
-        scene_prompt(spec, package.theme, package.identity),
+        scene_prompt(spec, package.theme, package.identity, prior_rubric=True),
         _reference(package.identity),
         prior_calibration=True,
     )
@@ -287,6 +289,7 @@ def test_v4_receipt_retains_its_original_policy_and_is_not_a_v5_approval(
     )
     path = source / "render_1/learning_scene.json"
     receipt = json.loads(path.read_text())
+    receipt.pop("prompt_version", None)
     receipt["scene_version"] = "live_scene_v4_luna_calibrated"
     original_key_input = (
         "live_scene_v4_luna_calibrated"
@@ -303,3 +306,32 @@ def test_v4_receipt_retains_its_original_policy_and_is_not_a_v5_approval(
     assert isinstance(provenance, list)
     assert provenance[0]["scene_version"] == "live_scene_v4_luna_calibrated"
     assert provenance[0]["new_gate_performed"] is False
+
+
+def test_historical_v5_receipt_replays_only_under_original_prompt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from render.design_spec import compile_worksheet_design_spec
+    from render.live_scene import _reference, _scene_key, scene_prompt
+
+    frozen, source = saved_scenes(tmp_path, monkeypatch)
+    package = FrozenRenderPackage.model_validate_json(frozen.read_text())
+    spec = compile_worksheet_design_spec(
+        package.worksheets[0], package.theme, package.profile, render_mode="hybrid_shell"
+    )
+    path = source / "render_1/learning_scene.json"
+    receipt = json.loads(path.read_text())
+    receipt.pop("prompt_version", None)
+    receipt["key"] = _scene_key(
+        scene_prompt(spec, package.theme, package.identity, prior_prompt=True),
+        _reference(package.identity),
+    )
+    path.write_text(json.dumps(receipt))
+    forbid_inference(monkeypatch)
+    assert (
+        replay(str(tmp_path / "recomposed-v5"), str(frozen), reuse_scenes=str(source))["mode"]
+        == "recompose_no_inference"
+    )
+    monkeypatch.setenv("WORKSHEET_SCENE_REFERENCE_LIBRARY", "new-pack.json")
+    with pytest.raises(ValueError, match="incompatible"):
+        replay(str(tmp_path / "not-new-pack-approval"), str(frozen), reuse_scenes=str(source))

@@ -1,5 +1,8 @@
 # Approved character references: next live consistency screen
 
+> Latest owner-authorized full run: [expressive-reference-end-to-end.md](expressive-reference-end-to-end.md).
+> Its one-run ordering supersedes the screen-first sequence below.
+
 This is the next experiment handoff on `codex/on-demand-composed-worksheets`.
 Keep main unchanged. No renderer promotion or merge is authorized here.
 

@@ -1,5 +1,8 @@
 # Muse / Grok: live validation handoff
 
+> Latest owner-authorized full run: [expressive-reference-end-to-end.md](expressive-reference-end-to-end.md).
+> Its one-run ordering supersedes the screen-first sequence below.
+
 Next live trial: [approved reference consistency screen](approved-reference-consistency.md).
 This supersedes earlier experiment ordering and spend snapshots.
 
