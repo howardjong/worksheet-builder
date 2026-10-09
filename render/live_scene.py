@@ -219,6 +219,69 @@ def _reference(identity: object | None) -> bytes | None:
     return None
 
 
+def judge_reference(identity: object | None) -> bytes | None:
+    """Immutable identity authority for gate evaluation.
+
+    Always resolves exactly what ``_reference()`` resolves today. Changing a
+    generation reference pack must never change these bytes or their hash:
+    scenes are always judged against the original customized character, never
+    a derived anchor, crop, or pose variant.
+    """
+    return _reference(identity)
+
+
+def generation_reference_pack(
+    identity: object | None, extra: tuple[bytes, ...] = ()
+) -> list[bytes]:
+    """Ordered reference pack for image generation: primary first, then extras.
+
+    The primary is the same original ``_reference()`` returns; ``extra`` holds
+    experiment inputs such as a face/hair crop derived from original bytes.
+    Order is significant: prompts must bind ordinal phrases ("first image")
+    to this order.
+    """
+    primary = _reference(identity)
+    pack = [primary] if primary else []
+    pack.extend(extra)
+    return pack
+
+
+def derive_face_crop(
+    png: bytes, rect: tuple[float, float, float, float]
+) -> tuple[bytes, dict[str, object]]:
+    """Crop a fractional rect (x0, y0, x1, y1) from original reference bytes.
+
+    No generative retouching: a straight pixel crop of the supplied bytes.
+    Returns the cropped PNG and its provenance (rect, source hash, size).
+    """
+    import hashlib
+
+    from PIL import Image
+
+    with Image.open(io.BytesIO(png)) as image:
+        image.load()
+        width, height = image.size
+        x0, y0, x1, y1 = rect
+        box = (
+            int(x0 * width),
+            int(y0 * height),
+            int(x1 * width),
+            int(y1 * height),
+        )
+        cropped = image.crop(box)
+        buffer = io.BytesIO()
+        cropped.save(buffer, format="PNG")
+        out = buffer.getvalue()
+    provenance: dict[str, object] = {
+        "rect": [x0, y0, x1, y1],
+        "source_sha256": hashlib.sha256(png).hexdigest(),
+        "crop_sha256": hashlib.sha256(out).hexdigest(),
+        "crop_size": [cropped.size[0], cropped.size[1]],
+        "source_size": [width, height],
+    }
+    return out, provenance
+
+
 def scene_prompt(
     spec: WorksheetDesignSpec,
     theme: ThemeConfig,

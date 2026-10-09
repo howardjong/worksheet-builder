@@ -384,20 +384,47 @@ def generate_image(
     *,
     model: str,
     aspect_ratio: str = "3:4",
+    reference_pngs: list[bytes] | None = None,
+    quality: str | None = None,
+    background: str | None = None,
+    allow_provider_fallback: bool = True,
 ) -> bytes | None:
+    """Generate one image via OpenRouter's dedicated Images API.
+
+    ``reference_png`` keeps the legacy single-reference call shape;
+    ``reference_pngs`` supplies an ordered multi-reference pack instead.
+    Passing both is a caller error. ``quality``/``background`` must name
+    endpoint-supported values; unsupported seed/strength/fidelity controls
+    are intentionally absent. Set ``allow_provider_fallback=False`` to pin
+    the advertised route for experiments (where the endpoint honors it).
+    """
+    if reference_png is not None and reference_pngs is not None:
+        raise ValueError("Pass reference_png or reference_pngs, not both")
+    references = [reference_png] if reference_png is not None else list(reference_pngs or [])
+    if len(references) > 16:
+        raise ValueError(f"At most 16 input references supported, got {len(references)}")
+    if quality is not None and quality not in {"auto", "low", "medium", "high", "xhigh", "max"}:
+        raise ValueError(f"Unsupported quality value: {quality!r}")
+    if background is not None and background not in {"auto", "transparent", "opaque"}:
+        raise ValueError(f"Unsupported background value: {background!r}")
     payload: dict[str, Any] = {
         "model": model,
         "prompt": prompt,
         "n": 1,
         "aspect_ratio": aspect_ratio,
-        "provider": {"allow_fallbacks": True},
+        "provider": {"allow_fallbacks": allow_provider_fallback},
     }
-    if reference_png:
+    if quality is not None:
+        payload["quality"] = quality
+    if background is not None:
+        payload["background"] = background
+    if references:
         payload["input_references"] = [
             {
                 "type": "image_url",
-                "image_url": {"url": image_url(reference_png)},
+                "image_url": {"url": image_url(reference)},
             }
+            for reference in references
         ]
     data = _request("/images", payload)
     if data and data.get("_terminal_auth_error"):
@@ -409,10 +436,17 @@ def generate_image(
         raw = base64.b64decode(encoded, validate=True)
         # Normalize actual raster content to PNG. Truncated data, SVGs, and
         # base64 text pretending to be an image never enter the page cache.
+        # Preserve RGBA when transparency is present; flattening to RGB would
+        # silently drop alpha the caller asked for via background=transparent.
         with Image.open(io.BytesIO(raw)) as image:
             image.load()
             buffer = io.BytesIO()
-            image.convert("RGB").save(buffer, format="PNG")
+            if image.mode in ("RGBA", "LA") or (
+                image.mode == "P" and image.info.get("transparency") is not None
+            ):
+                image.save(buffer, format="PNG")
+            else:
+                image.convert("RGB").save(buffer, format="PNG")
             return buffer.getvalue()
     except (KeyError, IndexError, TypeError, ValueError, OSError):
         logger.warning("OpenRouter model %s returned no usable image", model)
