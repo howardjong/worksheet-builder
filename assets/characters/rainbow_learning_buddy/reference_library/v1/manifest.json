@@ -1,0 +1,1487 @@
+{
+  "schema_version": 1,
+  "created_at": "2026-10-09",
+  "character_id": "rainbow_learning_buddy",
+  "status": "OWNER_APPROVED_REFERENCE_LIBRARY_NOT_CANON_REPLACEMENT",
+  "counts": {
+    "expressions": 12,
+    "poses": 12,
+    "wardrobe": 8,
+    "accessories": 12,
+    "total": 44,
+    "sheets": 6
+  },
+  "generation_method": "built-in GPT image generation; not the OpenRouter API or a live worksheet test",
+  "identity_authority": {
+    "path": "original-authority/neutral-full-body.png",
+    "sha256": "411075874590ba3504dc5ac9e5cf6f046bcc684e68e079dd9dd6e32874699208",
+    "note": "Owner original cropped in prior pack; generated assets never silently replace it. Original pages and source crop provenance included."
+  },
+  "reference_selection_policy": {
+    "start_with": [
+      "original-authority/neutral-full-body.png"
+    ],
+    "supplement_with": "Only relevant reviewed expression, pose or outfit images. Do not send entire catalogue. Begin with 2-3 references, test capability/support and accuracy. Not all items need separate conditioning.",
+    "roles": "Original defines identity/proportions; selected expression controls emotion, pose controls procedure, wardrobe controls clothing. State roles explicitly. Conflicting references should not be combined.",
+    "evaluation": "Keep original immutable for identity judging; 0.85 remains the product bar. Owner likeness approval and gate first-pass yield are distinct."
+  },
+  "sheets": [
+    {
+      "id": "expressions-foundation",
+      "group": "expressions",
+      "path": "sheets/expressions-foundation.png",
+      "dimensions": [
+        1536,
+        1024
+      ],
+      "sha256": "7d9d4419df1976b6df0e46506b3dd5a3dc3c580c6f0a56eb9f00458349de1fae",
+      "grid": [
+        3,
+        2
+      ],
+      "prompt_path": "prompts/expressions-foundation.txt",
+      "generation_reference_sha256": [
+        "411075874590ba3504dc5ac9e5cf6f046bcc684e68e079dd9dd6e32874699208",
+        "940e6124bbf21966d0812a8cd06657d8e1bf7eca31b0a3cdc700d9141b2dc561",
+        "5673d89aa1dad6c769eae58803d359f8bca4faf3f77925d82f494406add28544",
+        "6350ecb2b26c27de59340a6890a5a8f552b8718084b04f053da28a8df2005d9c"
+      ],
+      "status": "owner_approved_reference_sheet"
+    },
+    {
+      "id": "expressions-learning-moods",
+      "group": "expressions",
+      "path": "sheets/expressions-learning-moods.webp",
+      "dimensions": [
+        1536,
+        1024
+      ],
+      "sha256": "1b915ff83473e3d9cf095b7479d746467d9fac8127ab5323b7abfc68c00132ab",
+      "grid": [
+        3,
+        2
+      ],
+      "prompt_path": "prompts/expressions-learning-moods.txt",
+      "generation_reference_sha256": [
+        "411075874590ba3504dc5ac9e5cf6f046bcc684e68e079dd9dd6e32874699208",
+        "940e6124bbf21966d0812a8cd06657d8e1bf7eca31b0a3cdc700d9141b2dc561",
+        "5673d89aa1dad6c769eae58803d359f8bca4faf3f77925d82f494406add28544",
+        "6350ecb2b26c27de59340a6890a5a8f552b8718084b04f053da28a8df2005d9c"
+      ],
+      "status": "owner_approved_reference_sheet",
+      "source_png_sha256": "64f3d34bf5da365e35c055670aa13112224654795a0d5f59fe3fc5223e50f88d",
+      "source_png_bytes": 1467615,
+      "storage_note": "Lossless WebP for GitHub transport. Decoded RGBA pixels verified identical to original source PNG; native individual PNG crops unchanged."
+    },
+    {
+      "id": "poses-study",
+      "group": "poses",
+      "path": "sheets/poses-study.png",
+      "dimensions": [
+        1536,
+        1024
+      ],
+      "sha256": "4709487d4b49472991f0d051326fdcd8481ecfe3bd069ed8ac5d612b960699c8",
+      "grid": [
+        3,
+        2
+      ],
+      "prompt_path": "prompts/poses-study.txt",
+      "generation_reference_sha256": [
+        "411075874590ba3504dc5ac9e5cf6f046bcc684e68e079dd9dd6e32874699208",
+        "940e6124bbf21966d0812a8cd06657d8e1bf7eca31b0a3cdc700d9141b2dc561",
+        "5673d89aa1dad6c769eae58803d359f8bca4faf3f77925d82f494406add28544",
+        "6350ecb2b26c27de59340a6890a5a8f552b8718084b04f053da28a8df2005d9c"
+      ],
+      "status": "owner_approved_reference_sheet"
+    },
+    {
+      "id": "poses-support-and-reward",
+      "group": "poses",
+      "path": "sheets/poses-support-and-reward.png",
+      "dimensions": [
+        1536,
+        1024
+      ],
+      "sha256": "1145162aec93d0ebd0463eebc6549767cfa721d448cf53c1f6314f0963dc8ee9",
+      "grid": [
+        3,
+        2
+      ],
+      "prompt_path": "prompts/poses-support-and-reward.txt",
+      "generation_reference_sha256": [
+        "411075874590ba3504dc5ac9e5cf6f046bcc684e68e079dd9dd6e32874699208",
+        "940e6124bbf21966d0812a8cd06657d8e1bf7eca31b0a3cdc700d9141b2dc561",
+        "5673d89aa1dad6c769eae58803d359f8bca4faf3f77925d82f494406add28544",
+        "6350ecb2b26c27de59340a6890a5a8f552b8718084b04f053da28a8df2005d9c"
+      ],
+      "status": "owner_approved_reference_sheet"
+    },
+    {
+      "id": "wardrobe-themes",
+      "group": "wardrobe",
+      "path": "sheets/wardrobe-themes.png",
+      "dimensions": [
+        1536,
+        1024
+      ],
+      "sha256": "b21c064ab8f3693fcc286e2398b2e5b0c5ceb94da0041a40e4ab6438d25c2812",
+      "grid": [
+        4,
+        2
+      ],
+      "prompt_path": "prompts/wardrobe-themes.txt",
+      "generation_reference_sha256": [
+        "411075874590ba3504dc5ac9e5cf6f046bcc684e68e079dd9dd6e32874699208",
+        "940e6124bbf21966d0812a8cd06657d8e1bf7eca31b0a3cdc700d9141b2dc561",
+        "5673d89aa1dad6c769eae58803d359f8bca4faf3f77925d82f494406add28544",
+        "6350ecb2b26c27de59340a6890a5a8f552b8718084b04f053da28a8df2005d9c"
+      ],
+      "status": "owner_approved_reference_sheet"
+    },
+    {
+      "id": "accessories-and-materials",
+      "group": "accessories",
+      "path": "sheets/accessories-and-materials.png",
+      "dimensions": [
+        1536,
+        1024
+      ],
+      "sha256": "bd91e64e139e130cb9ca783f120ade36d90f93e5f5fc7de455a202900e872ec8",
+      "grid": [
+        4,
+        3
+      ],
+      "prompt_path": "prompts/accessories-and-materials.txt",
+      "generation_reference_sha256": [],
+      "status": "owner_approved_reference_sheet"
+    }
+  ],
+  "items": [
+    {
+      "id": "neutral-friendly",
+      "group": "expressions",
+      "path": "items/expressions/neutral-friendly.png",
+      "sheet_id": "expressions-foundation",
+      "cell": {
+        "row": 1,
+        "column": 1
+      },
+      "crop_xyxy": [
+        84,
+        11,
+        482,
+        495
+      ],
+      "dimensions": [
+        398,
+        484
+      ],
+      "sha256": "9289fd141a7eb41075b238db273fd285bfcaba424ab38a8960c2ef4b49e8c1fb",
+      "intended_label": "neutral friendly",
+      "owner_approved": true,
+      "live_identity_gate_passed": false,
+      "is_original": false,
+      "background": "opaque white",
+      "framing": "head_and_hair",
+      "qa_notes": [],
+      "boundary_review_required": false
+    },
+    {
+      "id": "happy-open-smile",
+      "group": "expressions",
+      "path": "items/expressions/happy-open-smile.png",
+      "sheet_id": "expressions-foundation",
+      "cell": {
+        "row": 1,
+        "column": 2
+      },
+      "crop_xyxy": [
+        562,
+        15,
+        963,
+        500
+      ],
+      "dimensions": [
+        401,
+        485
+      ],
+      "sha256": "5662d824ecb395df20001ebc9d37888ec4ebb799c519780624e62d73fe4da0b6",
+      "intended_label": "happy open smile",
+      "owner_approved": true,
+      "live_identity_gate_passed": false,
+      "is_original": false,
+      "background": "opaque white",
+      "framing": "head_and_hair",
+      "qa_notes": [],
+      "boundary_review_required": false
+    },
+    {
+      "id": "surprised",
+      "group": "expressions",
+      "path": "items/expressions/surprised.png",
+      "sheet_id": "expressions-foundation",
+      "cell": {
+        "row": 1,
+        "column": 3
+      },
+      "crop_xyxy": [
+        1064,
+        13,
+        1469,
+        502
+      ],
+      "dimensions": [
+        405,
+        489
+      ],
+      "sha256": "34f81bc210df098ff87d0750a8c0efb2ab3157206a5f4f7187624e79d65fc686",
+      "intended_label": "surprised",
+      "owner_approved": true,
+      "live_identity_gate_passed": false,
+      "is_original": false,
+      "background": "opaque white",
+      "framing": "head_and_hair",
+      "qa_notes": [],
+      "boundary_review_required": false
+    },
+    {
+      "id": "concentrating",
+      "group": "expressions",
+      "path": "items/expressions/concentrating.png",
+      "sheet_id": "expressions-foundation",
+      "cell": {
+        "row": 2,
+        "column": 1
+      },
+      "crop_xyxy": [
+        80,
+        512,
+        481,
+        990
+      ],
+      "dimensions": [
+        401,
+        478
+      ],
+      "sha256": "bbb405309b65d5400c566439386d0a4c2cbbcec5a0ec2ff07f1c957e64506d08",
+      "intended_label": "concentrating",
+      "owner_approved": true,
+      "live_identity_gate_passed": false,
+      "is_original": false,
+      "background": "opaque white",
+      "framing": "head_and_hair",
+      "qa_notes": [
+        "Concentration and determined-persistence have similar brows/smiles. Treat the distinction as an intended label, not validated emotion recognition."
+      ],
+      "boundary_review_required": false
+    },
+    {
+      "id": "thinking",
+      "group": "expressions",
+      "path": "items/expressions/thinking.png",
+      "sheet_id": "expressions-foundation",
+      "cell": {
+        "row": 2,
+        "column": 2
+      },
+      "crop_xyxy": [
+        568,
+        512,
+        973,
+        994
+      ],
+      "dimensions": [
+        405,
+        482
+      ],
+      "sha256": "d6a82502c6a8b542175408e22161e2b86a5733e6df0a9fb03f7ae074576e076a",
+      "intended_label": "thinking",
+      "owner_approved": true,
+      "live_identity_gate_passed": false,
+      "is_original": false,
+      "background": "opaque white",
+      "framing": "head_and_hair",
+      "qa_notes": [],
+      "boundary_review_required": false
+    },
+    {
+      "id": "determined-persistence",
+      "group": "expressions",
+      "path": "items/expressions/determined-persistence.png",
+      "sheet_id": "expressions-foundation",
+      "cell": {
+        "row": 2,
+        "column": 3
+      },
+      "crop_xyxy": [
+        1068,
+        512,
+        1470,
+        994
+      ],
+      "dimensions": [
+        402,
+        482
+      ],
+      "sha256": "8bb21b8f80224b407f9976cefb8905444f66cc94431e4c2ae21d2c626821e812",
+      "intended_label": "determined persistence",
+      "owner_approved": true,
+      "live_identity_gate_passed": false,
+      "is_original": false,
+      "background": "opaque white",
+      "framing": "head_and_hair",
+      "qa_notes": [
+        "Visually similar to concentrating; do not infer a learner emotional state from this art."
+      ],
+      "boundary_review_required": false
+    },
+    {
+      "id": "puzzled",
+      "group": "expressions",
+      "path": "items/expressions/puzzled.png",
+      "sheet_id": "expressions-learning-moods",
+      "cell": {
+        "row": 1,
+        "column": 1
+      },
+      "crop_xyxy": [
+        87,
+        13,
+        476,
+        475
+      ],
+      "dimensions": [
+        389,
+        462
+      ],
+      "sha256": "e8bb0f65ed50c79879d84c95f32c6226901c241be1b3ef8e881ef3127be60ffd",
+      "intended_label": "puzzled",
+      "owner_approved": true,
+      "live_identity_gate_passed": false,
+      "is_original": false,
+      "background": "opaque white",
+      "framing": "head_and_hair",
+      "qa_notes": [],
+      "boundary_review_required": false
+    },
+    {
+      "id": "curious",
+      "group": "expressions",
+      "path": "items/expressions/curious.png",
+      "sheet_id": "expressions-learning-moods",
+      "cell": {
+        "row": 1,
+        "column": 2
+      },
+      "crop_xyxy": [
+        569,
+        13,
+        960,
+        477
+      ],
+      "dimensions": [
+        391,
+        464
+      ],
+      "sha256": "386112139d5fe89cc3aac964023fb9cae02a668e48e08a041ab80fbf2b2598a0",
+      "intended_label": "curious",
+      "owner_approved": true,
+      "live_identity_gate_passed": false,
+      "is_original": false,
+      "background": "opaque white",
+      "framing": "head_and_hair",
+      "qa_notes": [],
+      "boundary_review_required": false
+    },
+    {
+      "id": "mild-frustration",
+      "group": "expressions",
+      "path": "items/expressions/mild-frustration.png",
+      "sheet_id": "expressions-learning-moods",
+      "cell": {
+        "row": 1,
+        "column": 3
+      },
+      "crop_xyxy": [
+        1063,
+        13,
+        1453,
+        477
+      ],
+      "dimensions": [
+        390,
+        464
+      ],
+      "sha256": "42b85e59cc66ee2553fa72ab8fc6f774df8dac88072cdfe627af64ad28e6dc3e",
+      "intended_label": "mild frustration",
+      "owner_approved": true,
+      "live_identity_gate_passed": false,
+      "is_original": false,
+      "background": "opaque white",
+      "framing": "head_and_hair",
+      "qa_notes": [],
+      "boundary_review_required": false
+    },
+    {
+      "id": "relieved",
+      "group": "expressions",
+      "path": "items/expressions/relieved.png",
+      "sheet_id": "expressions-learning-moods",
+      "cell": {
+        "row": 2,
+        "column": 1
+      },
+      "crop_xyxy": [
+        82,
+        512,
+        477,
+        988
+      ],
+      "dimensions": [
+        395,
+        476
+      ],
+      "sha256": "0e2c4b074f1be05fcacfdde61fb05f4549be0c2e70fa694f471ec4bacd51df4f",
+      "intended_label": "relieved",
+      "owner_approved": true,
+      "live_identity_gate_passed": false,
+      "is_original": false,
+      "background": "opaque white",
+      "framing": "head_and_hair",
+      "qa_notes": [
+        "Reads as broad cheerful delight more than quiet relief; expression suitability needs review."
+      ],
+      "boundary_review_required": false
+    },
+    {
+      "id": "proud",
+      "group": "expressions",
+      "path": "items/expressions/proud.png",
+      "sheet_id": "expressions-learning-moods",
+      "cell": {
+        "row": 2,
+        "column": 2
+      },
+      "crop_xyxy": [
+        564,
+        512,
+        969,
+        988
+      ],
+      "dimensions": [
+        405,
+        476
+      ],
+      "sha256": "e959705705b7fd54d80fdfed87ec7224afbe00127631b398aaf7d94bcac407fd",
+      "intended_label": "proud",
+      "owner_approved": true,
+      "live_identity_gate_passed": false,
+      "is_original": false,
+      "background": "opaque white",
+      "framing": "head_and_hair",
+      "qa_notes": [],
+      "boundary_review_required": false
+    },
+    {
+      "id": "tired-needs-break",
+      "group": "expressions",
+      "path": "items/expressions/tired-needs-break.png",
+      "sheet_id": "expressions-learning-moods",
+      "cell": {
+        "row": 2,
+        "column": 3
+      },
+      "crop_xyxy": [
+        1063,
+        513,
+        1463,
+        988
+      ],
+      "dimensions": [
+        400,
+        475
+      ],
+      "sha256": "249b0284db6d15c8b4c93e3f772f9c5058b7a84006b9af35f0fb820260beb292",
+      "intended_label": "tired needs break",
+      "owner_approved": true,
+      "live_identity_gate_passed": false,
+      "is_original": false,
+      "background": "opaque white",
+      "framing": "head_and_hair",
+      "qa_notes": [],
+      "boundary_review_required": false
+    },
+    {
+      "id": "standing-ready",
+      "group": "poses",
+      "path": "items/poses/standing-ready.png",
+      "sheet_id": "poses-study",
+      "cell": {
+        "row": 1,
+        "column": 1
+      },
+      "crop_xyxy": [
+        103,
+        0,
+        396,
+        512
+      ],
+      "dimensions": [
+        293,
+        512
+      ],
+      "sha256": "efc34434652abb244713675547c589854eae062994f0d464b5bd07daedb5b6e5",
+      "intended_label": "standing ready",
+      "owner_approved": true,
+      "live_identity_gate_passed": false,
+      "is_original": false,
+      "background": "opaque white",
+      "framing": "full_body",
+      "qa_notes": [],
+      "boundary_review_required": false
+    },
+    {
+      "id": "reading-book",
+      "group": "poses",
+      "path": "items/poses/reading-book.png",
+      "sheet_id": "poses-study",
+      "cell": {
+        "row": 1,
+        "column": 2
+      },
+      "crop_xyxy": [
+        585,
+        21,
+        967,
+        511
+      ],
+      "dimensions": [
+        382,
+        490
+      ],
+      "sha256": "45d423ccec683ff1d5fea3e1b3deb1b0607ec02db59062897ee2c64658f57fed",
+      "intended_label": "reading book",
+      "owner_approved": true,
+      "live_identity_gate_passed": false,
+      "is_original": false,
+      "background": "opaque white",
+      "framing": "full_body",
+      "qa_notes": [],
+      "boundary_review_required": false
+    },
+    {
+      "id": "writing-on-paper",
+      "group": "poses",
+      "path": "items/poses/writing-on-paper.png",
+      "sheet_id": "poses-study",
+      "cell": {
+        "row": 1,
+        "column": 3
+      },
+      "crop_xyxy": [
+        1081,
+        2,
+        1502,
+        512
+      ],
+      "dimensions": [
+        421,
+        510
+      ],
+      "sha256": "e385ac621dbb8df2438d4552e5185d0039c65f709239aefe27f9bf8bd6d72c6e",
+      "intended_label": "writing on paper",
+      "owner_approved": true,
+      "live_identity_gate_passed": false,
+      "is_original": false,
+      "background": "opaque white",
+      "framing": "full_body",
+      "qa_notes": [],
+      "boundary_review_required": false
+    },
+    {
+      "id": "building-with-tiles",
+      "group": "poses",
+      "path": "items/poses/building-with-tiles.png",
+      "sheet_id": "poses-study",
+      "cell": {
+        "row": 2,
+        "column": 1
+      },
+      "crop_xyxy": [
+        20,
+        512,
+        499,
+        1002
+      ],
+      "dimensions": [
+        479,
+        490
+      ],
+      "sha256": "cd3deb03805786ff742e488f7626caae249e7f86ed927da8416b38b3fa9e4e65",
+      "intended_label": "building with tiles",
+      "owner_approved": true,
+      "live_identity_gate_passed": false,
+      "is_original": false,
+      "background": "opaque white",
+      "framing": "upper_body_at_work_surface",
+      "qa_notes": [
+        "Upper-body/work-surface view; lower body not shown. Broad tile-moving gesture, not a validated word-building sequence."
+      ],
+      "boundary_review_required": false
+    },
+    {
+      "id": "considering-choices",
+      "group": "poses",
+      "path": "items/poses/considering-choices.png",
+      "sheet_id": "poses-study",
+      "cell": {
+        "row": 2,
+        "column": 2
+      },
+      "crop_xyxy": [
+        550,
+        512,
+        986,
+        1002
+      ],
+      "dimensions": [
+        436,
+        490
+      ],
+      "sha256": "939434d14c52d78a5e555254ca880238b2c1cfed7656a212326c9cbfd0d039ee",
+      "intended_label": "considering choices",
+      "owner_approved": true,
+      "live_identity_gate_passed": false,
+      "is_original": false,
+      "background": "opaque white",
+      "framing": "upper_body_at_work_surface",
+      "qa_notes": [
+        "Upper-body/work-surface view; lower body not shown. Pencil appears above unmarked cards, no selected answer."
+      ],
+      "boundary_review_required": false
+    },
+    {
+      "id": "finger-tracking",
+      "group": "poses",
+      "path": "items/poses/finger-tracking.png",
+      "sheet_id": "poses-study",
+      "cell": {
+        "row": 2,
+        "column": 3
+      },
+      "crop_xyxy": [
+        1140,
+        512,
+        1469,
+        1023
+      ],
+      "dimensions": [
+        329,
+        511
+      ],
+      "sha256": "27794fa26cc3ccd3ad788420e5ba61d2d141a9d40b7fc83e7e07136598abb3e9",
+      "intended_label": "finger tracking",
+      "owner_approved": true,
+      "live_identity_gate_passed": false,
+      "is_original": false,
+      "background": "opaque white",
+      "framing": "full_body",
+      "qa_notes": [
+        "Points toward a blank page; not a validated finger-in-contact tracking sequence."
+      ],
+      "boundary_review_required": false
+    },
+    {
+      "id": "asking-for-help",
+      "group": "poses",
+      "path": "items/poses/asking-for-help.png",
+      "sheet_id": "poses-support-and-reward",
+      "cell": {
+        "row": 1,
+        "column": 1
+      },
+      "crop_xyxy": [
+        124,
+        9,
+        457,
+        512
+      ],
+      "dimensions": [
+        333,
+        503
+      ],
+      "sha256": "b21e25dd7f6dfed1debee9e4edb74cdf41daf579604b7557d4c6b7bfba5b5748",
+      "intended_label": "asking for help",
+      "owner_approved": true,
+      "live_identity_gate_passed": false,
+      "is_original": false,
+      "background": "opaque white",
+      "framing": "full_body",
+      "qa_notes": [
+        "Raised arm may also read as greeting; use the task prompt to specify asking for help."
+      ],
+      "boundary_review_required": false
+    },
+    {
+      "id": "thinking-hand-on-chin",
+      "group": "poses",
+      "path": "items/poses/thinking-hand-on-chin.png",
+      "sheet_id": "poses-support-and-reward",
+      "cell": {
+        "row": 1,
+        "column": 2
+      },
+      "crop_xyxy": [
+        654,
+        9,
+        912,
+        512
+      ],
+      "dimensions": [
+        258,
+        503
+      ],
+      "sha256": "9a01d717727150d4638074b77128a9ad598e41ac92cbfe42291386bbfdea0780",
+      "intended_label": "thinking hand on chin",
+      "owner_approved": true,
+      "live_identity_gate_passed": false,
+      "is_original": false,
+      "background": "opaque white",
+      "framing": "full_body",
+      "qa_notes": [],
+      "boundary_review_required": false
+    },
+    {
+      "id": "try-again-determined",
+      "group": "poses",
+      "path": "items/poses/try-again-determined.png",
+      "sheet_id": "poses-support-and-reward",
+      "cell": {
+        "row": 1,
+        "column": 3
+      },
+      "crop_xyxy": [
+        1103,
+        15,
+        1388,
+        508
+      ],
+      "dimensions": [
+        285,
+        493
+      ],
+      "sha256": "66c5618a559a488074a907e4483a5c0a166b2e696df0b66e3304b283f6c185f6",
+      "intended_label": "try again determined",
+      "owner_approved": true,
+      "live_identity_gate_passed": false,
+      "is_original": false,
+      "background": "opaque white",
+      "framing": "full_body",
+      "qa_notes": [],
+      "boundary_review_required": false
+    },
+    {
+      "id": "celebrating-thumbs-up",
+      "group": "poses",
+      "path": "items/poses/celebrating-thumbs-up.png",
+      "sheet_id": "poses-support-and-reward",
+      "cell": {
+        "row": 2,
+        "column": 1
+      },
+      "crop_xyxy": [
+        129,
+        512,
+        459,
+        1013
+      ],
+      "dimensions": [
+        330,
+        501
+      ],
+      "sha256": "4dd8d802b8c160297e7be0ba56ab1c0df453431be795b7c729bebf30c4173641",
+      "intended_label": "celebrating thumbs up",
+      "owner_approved": true,
+      "live_identity_gate_passed": false,
+      "is_original": false,
+      "background": "opaque white",
+      "framing": "full_body",
+      "qa_notes": [],
+      "boundary_review_required": false
+    },
+    {
+      "id": "stretch-break",
+      "group": "poses",
+      "path": "items/poses/stretch-break.png",
+      "sheet_id": "poses-support-and-reward",
+      "cell": {
+        "row": 2,
+        "column": 2
+      },
+      "crop_xyxy": [
+        570,
+        512,
+        966,
+        1010
+      ],
+      "dimensions": [
+        396,
+        498
+      ],
+      "sha256": "2fad056a7808d44afa603ec5fe18e637edf5ede256f379d03ee4de2807ce6223",
+      "intended_label": "stretch break",
+      "owner_approved": true,
+      "live_identity_gate_passed": false,
+      "is_original": false,
+      "background": "opaque white",
+      "framing": "full_body",
+      "qa_notes": [],
+      "boundary_review_required": false
+    },
+    {
+      "id": "calm-breath",
+      "group": "poses",
+      "path": "items/poses/calm-breath.png",
+      "sheet_id": "poses-support-and-reward",
+      "cell": {
+        "row": 2,
+        "column": 3
+      },
+      "crop_xyxy": [
+        1138,
+        512,
+        1395,
+        1014
+      ],
+      "dimensions": [
+        257,
+        502
+      ],
+      "sha256": "15eb551c4227f8083850b948477a10f125dea16bf154ccf7f8ddb63fb7fe6377",
+      "intended_label": "calm breath",
+      "owner_approved": true,
+      "live_identity_gate_passed": false,
+      "is_original": false,
+      "background": "opaque white",
+      "framing": "full_body",
+      "qa_notes": [],
+      "boundary_review_required": false
+    },
+    {
+      "id": "original-casual",
+      "group": "wardrobe",
+      "path": "items/wardrobe/original-casual.png",
+      "sheet_id": "wardrobe-themes",
+      "cell": {
+        "row": 1,
+        "column": 1
+      },
+      "crop_xyxy": [
+        39,
+        0,
+        316,
+        495
+      ],
+      "dimensions": [
+        277,
+        495
+      ],
+      "sha256": "3567fb88b85444007c2b2234d242fa6391f5865971d76338366de0e1c60e43e7",
+      "intended_label": "original casual",
+      "owner_approved": true,
+      "live_identity_gate_passed": false,
+      "is_original": false,
+      "background": "opaque white",
+      "framing": "full_body",
+      "qa_notes": [],
+      "boundary_review_required": false
+    },
+    {
+      "id": "astronaut",
+      "group": "wardrobe",
+      "path": "items/wardrobe/astronaut.png",
+      "sheet_id": "wardrobe-themes",
+      "cell": {
+        "row": 1,
+        "column": 2
+      },
+      "crop_xyxy": [
+        425,
+        0,
+        712,
+        495
+      ],
+      "dimensions": [
+        287,
+        495
+      ],
+      "sha256": "47e2775e6f1d9e2bcad6002980833c0766da9891d65fc63fe30c66c6426ffa1f",
+      "intended_label": "astronaut",
+      "owner_approved": true,
+      "live_identity_gate_passed": false,
+      "is_original": false,
+      "background": "opaque white",
+      "framing": "full_body",
+      "qa_notes": [],
+      "boundary_review_required": false
+    },
+    {
+      "id": "scientist",
+      "group": "wardrobe",
+      "path": "items/wardrobe/scientist.png",
+      "sheet_id": "wardrobe-themes",
+      "cell": {
+        "row": 1,
+        "column": 3
+      },
+      "crop_xyxy": [
+        809,
+        0,
+        1089,
+        495
+      ],
+      "dimensions": [
+        280,
+        495
+      ],
+      "sha256": "44ea1a2626ba755d90a518d313eb6e98d9834d9f8fca3707bdc1256d42fd248b",
+      "intended_label": "scientist",
+      "owner_approved": true,
+      "live_identity_gate_passed": false,
+      "is_original": false,
+      "background": "opaque white",
+      "framing": "full_body",
+      "qa_notes": [],
+      "boundary_review_required": false
+    },
+    {
+      "id": "explorer",
+      "group": "wardrobe",
+      "path": "items/wardrobe/explorer.png",
+      "sheet_id": "wardrobe-themes",
+      "cell": {
+        "row": 1,
+        "column": 4
+      },
+      "crop_xyxy": [
+        1190,
+        0,
+        1469,
+        495
+      ],
+      "dimensions": [
+        279,
+        495
+      ],
+      "sha256": "fddef07f68a16ad13045cc9ec74942ca5599255d86a261183e3c3e78c36a6756",
+      "intended_label": "explorer",
+      "owner_approved": true,
+      "live_identity_gate_passed": false,
+      "is_original": false,
+      "background": "opaque white",
+      "framing": "full_body",
+      "qa_notes": [],
+      "boundary_review_required": false
+    },
+    {
+      "id": "artist",
+      "group": "wardrobe",
+      "path": "items/wardrobe/artist.png",
+      "sheet_id": "wardrobe-themes",
+      "cell": {
+        "row": 2,
+        "column": 1
+      },
+      "crop_xyxy": [
+        38,
+        512,
+        319,
+        1009
+      ],
+      "dimensions": [
+        281,
+        497
+      ],
+      "sha256": "f2fa62275b4fa1a0f6e8ac9885071c5761463eb601f2e850b8e380fd0f7c7bfe",
+      "intended_label": "artist",
+      "owner_approved": true,
+      "live_identity_gate_passed": false,
+      "is_original": false,
+      "background": "opaque white",
+      "framing": "full_body",
+      "qa_notes": [],
+      "boundary_review_required": false
+    },
+    {
+      "id": "gardener",
+      "group": "wardrobe",
+      "path": "items/wardrobe/gardener.png",
+      "sheet_id": "wardrobe-themes",
+      "cell": {
+        "row": 2,
+        "column": 2
+      },
+      "crop_xyxy": [
+        422,
+        512,
+        704,
+        1009
+      ],
+      "dimensions": [
+        282,
+        497
+      ],
+      "sha256": "fccf3b16052e8244707f2a22f628ecf5acb2e65c6241968450206462aefcb635",
+      "intended_label": "gardener",
+      "owner_approved": true,
+      "live_identity_gate_passed": false,
+      "is_original": false,
+      "background": "opaque white",
+      "framing": "full_body",
+      "qa_notes": [],
+      "boundary_review_required": false
+    },
+    {
+      "id": "underwater-diver",
+      "group": "wardrobe",
+      "path": "items/wardrobe/underwater-diver.png",
+      "sheet_id": "wardrobe-themes",
+      "cell": {
+        "row": 2,
+        "column": 3
+      },
+      "crop_xyxy": [
+        805,
+        512,
+        1099,
+        1010
+      ],
+      "dimensions": [
+        294,
+        498
+      ],
+      "sha256": "cb63c925085fb6bb63284f17929fc2bd8327ceeeda9eddb8e316452d139f1848",
+      "intended_label": "underwater diver",
+      "owner_approved": true,
+      "live_identity_gate_passed": false,
+      "is_original": false,
+      "background": "opaque white",
+      "framing": "full_body",
+      "qa_notes": [
+        "Stylized fictional clear-dome costume, not realistic diving equipment or safety guidance."
+      ],
+      "boundary_review_required": false
+    },
+    {
+      "id": "winter-outdoors",
+      "group": "wardrobe",
+      "path": "items/wardrobe/winter-outdoors.png",
+      "sheet_id": "wardrobe-themes",
+      "cell": {
+        "row": 2,
+        "column": 4
+      },
+      "crop_xyxy": [
+        1190,
+        512,
+        1475,
+        1009
+      ],
+      "dimensions": [
+        285,
+        497
+      ],
+      "sha256": "49a0f085ede0a5a7314181eadd852cb88d7ea682df2fbd25a00e81e1ffd35e64",
+      "intended_label": "winter outdoors",
+      "owner_approved": true,
+      "live_identity_gate_passed": false,
+      "is_original": false,
+      "background": "opaque white",
+      "framing": "full_body",
+      "qa_notes": [],
+      "boundary_review_required": false
+    },
+    {
+      "id": "yellow-pencil",
+      "group": "accessories",
+      "path": "items/accessories/yellow-pencil.png",
+      "sheet_id": "accessories-and-materials",
+      "cell": {
+        "row": 1,
+        "column": 1
+      },
+      "crop_xyxy": [
+        60,
+        35,
+        325,
+        337
+      ],
+      "dimensions": [
+        265,
+        302
+      ],
+      "sha256": "d2d1352ff08ec6f9b7304fc356bb035f4da2667eb5c5ea8f6f168d82761fa525",
+      "intended_label": "yellow pencil",
+      "owner_approved": true,
+      "live_identity_gate_passed": false,
+      "is_original": false,
+      "background": "opaque white",
+      "framing": "object",
+      "qa_notes": [],
+      "boundary_review_required": false,
+      "extraction_method": "manually reviewed object bounds; objects need not align to nominal cell edges"
+    },
+    {
+      "id": "blank-open-notebook",
+      "group": "accessories",
+      "path": "items/accessories/blank-open-notebook.png",
+      "sheet_id": "accessories-and-materials",
+      "cell": {
+        "row": 1,
+        "column": 2
+      },
+      "crop_xyxy": [
+        385,
+        52,
+        778,
+        330
+      ],
+      "dimensions": [
+        393,
+        278
+      ],
+      "sha256": "01fb06c56cb89c0946f2dfe8d6ad1f3e672a2dd37001779e315e9e9e9d5a1025",
+      "intended_label": "blank open notebook",
+      "owner_approved": true,
+      "live_identity_gate_passed": false,
+      "is_original": false,
+      "background": "opaque white",
+      "framing": "object",
+      "qa_notes": [],
+      "boundary_review_required": false,
+      "extraction_method": "manually reviewed object bounds; objects need not align to nominal cell edges"
+    },
+    {
+      "id": "blank-clipboard",
+      "group": "accessories",
+      "path": "items/accessories/blank-clipboard.png",
+      "sheet_id": "accessories-and-materials",
+      "cell": {
+        "row": 1,
+        "column": 3
+      },
+      "crop_xyxy": [
+        846,
+        23,
+        1102,
+        338
+      ],
+      "dimensions": [
+        256,
+        315
+      ],
+      "sha256": "9d26f20c2dc89dc44e25171577336d9ed983417611d989023d38d61c45481f76",
+      "intended_label": "blank clipboard",
+      "owner_approved": true,
+      "live_identity_gate_passed": false,
+      "is_original": false,
+      "background": "opaque white",
+      "framing": "object",
+      "qa_notes": [],
+      "boundary_review_required": false,
+      "extraction_method": "manually reviewed object bounds; objects need not align to nominal cell edges"
+    },
+    {
+      "id": "blank-word-tiles",
+      "group": "accessories",
+      "path": "items/accessories/blank-word-tiles.png",
+      "sheet_id": "accessories-and-materials",
+      "cell": {
+        "row": 1,
+        "column": 4
+      },
+      "crop_xyxy": [
+        1166,
+        87,
+        1510,
+        284
+      ],
+      "dimensions": [
+        344,
+        197
+      ],
+      "sha256": "97388992b874764f1841222e1d39bab38f3662af5be5719418875b18d9495394",
+      "intended_label": "blank word tiles",
+      "owner_approved": true,
+      "live_identity_gate_passed": false,
+      "is_original": false,
+      "background": "opaque white",
+      "framing": "object",
+      "qa_notes": [],
+      "boundary_review_required": false,
+      "extraction_method": "manually reviewed object bounds; objects need not align to nominal cell edges"
+    },
+    {
+      "id": "blank-choice-cards",
+      "group": "accessories",
+      "path": "items/accessories/blank-choice-cards.png",
+      "sheet_id": "accessories-and-materials",
+      "cell": {
+        "row": 2,
+        "column": 1
+      },
+      "crop_xyxy": [
+        16,
+        435,
+        401,
+        669
+      ],
+      "dimensions": [
+        385,
+        234
+      ],
+      "sha256": "693893ceca8a89818460d28d71a4c3e4d02e806620a32585605363a7c8855763",
+      "intended_label": "blank choice cards",
+      "owner_approved": true,
+      "live_identity_gate_passed": false,
+      "is_original": false,
+      "background": "opaque white",
+      "framing": "object",
+      "qa_notes": [],
+      "boundary_review_required": false,
+      "extraction_method": "manually reviewed object bounds; objects need not align to nominal cell edges"
+    },
+    {
+      "id": "orange-backpack",
+      "group": "accessories",
+      "path": "items/accessories/orange-backpack.png",
+      "sheet_id": "accessories-and-materials",
+      "cell": {
+        "row": 2,
+        "column": 2
+      },
+      "crop_xyxy": [
+        425,
+        363,
+        767,
+        687
+      ],
+      "dimensions": [
+        342,
+        324
+      ],
+      "sha256": "62c4bdc9a06d145313df0c678293dc0de94fc9b7a9c7f81b5958dc4c5d95718a",
+      "intended_label": "orange backpack",
+      "owner_approved": true,
+      "live_identity_gate_passed": false,
+      "is_original": false,
+      "background": "opaque white",
+      "framing": "object",
+      "qa_notes": [],
+      "boundary_review_required": false,
+      "extraction_method": "manually reviewed object bounds; objects need not align to nominal cell edges"
+    },
+    {
+      "id": "blue-ear-defenders",
+      "group": "accessories",
+      "path": "items/accessories/blue-ear-defenders.png",
+      "sheet_id": "accessories-and-materials",
+      "cell": {
+        "row": 2,
+        "column": 3
+      },
+      "crop_xyxy": [
+        790,
+        372,
+        1120,
+        682
+      ],
+      "dimensions": [
+        330,
+        310
+      ],
+      "sha256": "d4bb94b2971347bc2785c925f1e2433947b49b4a4acd28c3b399a70da6ed1a05",
+      "intended_label": "blue ear defenders",
+      "owner_approved": true,
+      "live_identity_gate_passed": false,
+      "is_original": false,
+      "background": "opaque white",
+      "framing": "object",
+      "qa_notes": [],
+      "boundary_review_required": false,
+      "extraction_method": "manually reviewed object bounds; objects need not align to nominal cell edges"
+    },
+    {
+      "id": "clear-space-helmet",
+      "group": "accessories",
+      "path": "items/accessories/clear-space-helmet.png",
+      "sheet_id": "accessories-and-materials",
+      "cell": {
+        "row": 2,
+        "column": 4
+      },
+      "crop_xyxy": [
+        1159,
+        344,
+        1520,
+        691
+      ],
+      "dimensions": [
+        361,
+        347
+      ],
+      "sha256": "7f2aca49ec8e6c70335683667f27af13eb84df0b087a9f02e4ee8e0280dd83b0",
+      "intended_label": "clear space helmet",
+      "owner_approved": true,
+      "live_identity_gate_passed": false,
+      "is_original": false,
+      "background": "opaque white",
+      "framing": "object",
+      "qa_notes": [],
+      "boundary_review_required": false,
+      "extraction_method": "manually reviewed object bounds; objects need not align to nominal cell edges"
+    },
+    {
+      "id": "simple-glasses",
+      "group": "accessories",
+      "path": "items/accessories/simple-glasses.png",
+      "sheet_id": "accessories-and-materials",
+      "cell": {
+        "row": 3,
+        "column": 1
+      },
+      "crop_xyxy": [
+        10,
+        760,
+        405,
+        935
+      ],
+      "dimensions": [
+        395,
+        175
+      ],
+      "sha256": "5c51496d09f2a134391574f0a2ef8e1643a2fd9d8d8cd543e05eeacbdfdf845c",
+      "intended_label": "simple glasses",
+      "owner_approved": true,
+      "live_identity_gate_passed": false,
+      "is_original": false,
+      "background": "opaque white",
+      "framing": "object",
+      "qa_notes": [
+        "May cover eye details; future scene must still pass original identity check."
+      ],
+      "boundary_review_required": false,
+      "extraction_method": "manually reviewed object bounds; objects need not align to nominal cell edges"
+    },
+    {
+      "id": "lightning-badge",
+      "group": "accessories",
+      "path": "items/accessories/lightning-badge.png",
+      "sheet_id": "accessories-and-materials",
+      "cell": {
+        "row": 3,
+        "column": 2
+      },
+      "crop_xyxy": [
+        505,
+        720,
+        677,
+        985
+      ],
+      "dimensions": [
+        172,
+        265
+      ],
+      "sha256": "a35582278dee5711729a6434e13eff64b0e90487bcfe0eba697566d38bcd7aca",
+      "intended_label": "lightning badge",
+      "owner_approved": true,
+      "live_identity_gate_passed": false,
+      "is_original": false,
+      "background": "opaque white",
+      "framing": "object",
+      "qa_notes": [
+        "Matches the identifying shirt motif; keep distinct from earned score/reward tokens."
+      ],
+      "boundary_review_required": false,
+      "extraction_method": "manually reviewed object bounds; objects need not align to nominal cell edges"
+    },
+    {
+      "id": "magnifying-glass",
+      "group": "accessories",
+      "path": "items/accessories/magnifying-glass.png",
+      "sheet_id": "accessories-and-materials",
+      "cell": {
+        "row": 3,
+        "column": 3
+      },
+      "crop_xyxy": [
+        786,
+        687,
+        1110,
+        1000
+      ],
+      "dimensions": [
+        324,
+        313
+      ],
+      "sha256": "961b3a86de959d0e368b2a17f2e0e4f0072887f540cf3295bdd7b612cd698bcc",
+      "intended_label": "magnifying glass",
+      "owner_approved": true,
+      "live_identity_gate_passed": false,
+      "is_original": false,
+      "background": "opaque white",
+      "framing": "object",
+      "qa_notes": [],
+      "boundary_review_required": false,
+      "extraction_method": "manually reviewed object bounds; objects need not align to nominal cell edges"
+    },
+    {
+      "id": "explorer-hat",
+      "group": "accessories",
+      "path": "items/accessories/explorer-hat.png",
+      "sheet_id": "accessories-and-materials",
+      "cell": {
+        "row": 3,
+        "column": 4
+      },
+      "crop_xyxy": [
+        1122,
+        727,
+        1525,
+        966
+      ],
+      "dimensions": [
+        403,
+        239
+      ],
+      "sha256": "1e30afc983eef15fea0ecad8577f43ce2033b2f140f9b31daacbc0ec5f6af2c5",
+      "intended_label": "explorer hat",
+      "owner_approved": true,
+      "live_identity_gate_passed": false,
+      "is_original": false,
+      "background": "opaque white",
+      "framing": "object",
+      "qa_notes": [
+        "Can hide characteristic hair; optional only, require explicit owner approval of occlusion."
+      ],
+      "boundary_review_required": false,
+      "extraction_method": "manually reviewed object bounds; objects need not align to nominal cell edges"
+    }
+  ],
+  "limitations": [
+    "All 44 are generated candidates awaiting owner likeness/utility review.",
+    "No OpenRouter/Luna call, calibration, cost or worksheet end-to-end latency measurement was performed here.",
+    "Reference styles/outfits have not demonstrated improved first-pass yield.",
+    "Expressions are intended artistic labels; subtle moods overlap and are not psychologically validated classifications.",
+    "Some poses omit lower body or approximate procedures; inspect per-item QA notes.",
+    "White backgrounds are opaque, not transparent cutouts.",
+    "Accessory options that obscure identity require explicit acceptance and original-reference validation."
+  ],
+  "owner_review": {
+    "reviewer": "Howard",
+    "date": "2026-10-09",
+    "evidence": "these look great; make sure they are in github remote worksheet-builder",
+    "scope": "Visual likeness and reference suitability. Does not establish live gate calibration or first-pass reliability."
+  }
+}

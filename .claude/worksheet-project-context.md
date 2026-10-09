@@ -8,6 +8,44 @@
 
 ## Current State
 
+### Session 78 — 2026-10-09 (approved reference library and conditioning screen)
+
+Howard approves the generated reference library and requests publication plus a
+first-pass consistency comparison. 44 named items / six sheets with source
+originals, prompts and hashed metadata are at
+`assets/characters/rainbow_learning_buddy/reference_library/v1/`.
+Owner approval is visual/reference suitability; live gate flags stay false.
+Original identity authority and production defaults remain unchanged.
+
+Muse implementation `57c1504` is now verified on remote, including worker
+context propagation. Its screen: original/current 0/4, structured 0/4,
+current+crop 1/4, structured+crop 0/4. Howard rejects the shown samples for
+likeness, including the nominal pass; do not promote C from that evidence.
+
+Current handoff: `docs/handoffs/approved-reference-consistency.md`. Experiment
+runner adds an opt-in 2x2 reference design: original vs approved face detail x
+no outfit vs approved astronaut. Current prompt + common role guidance, two
+actions x two repeats, concurrency three. Judge original/rubric immutable,
+identity >=.85. No Codex paid calls or claim of improved reliability. Reconcile
+the existing $5 cap (unmeasured-screen reservation ambiguity) before Muse runs.
+Check new asset hashes/approval, worker-shared limits and zero-cost dry-run.
+Keep main untouched. Live results, phone photo and AirPrint remain pending.
+
+Verification performed during this work: full offline suite 1202 passed /
+27 skipped; ruff clean; strict mypy clean (227 source files). After final
+backend pin/telemetry attribution changes, targeted reference suites 16 passed /
+4 skipped. Private old-package tests account for those four skips; new reference
+and shared-worker-limit tests use synthetic offline fixtures. A later session
+reset removed the installed test tooling, so these are preserved earlier results,
+not a fresh rerun in the reset runtime.
+
+GitHub publication was interrupted while uploading blobs; local files survived.
+No paid artwork run started. User also requests a prompt for an in-chat GPT Image
+first-attempt visual test: `docs/handoffs/gpt-image-first-attempt-visual-test.md`.
+This A/B pilot uses original vs approved references on two actions. It explicitly
+does not claim Luna approval or OpenRouter end-to-end latency.
+
+
 ### Session 77 — 2026-10-09 (character consistency factorial experiment handoff)
 
 **Owner request:** Write, commit and push a runnable experiment plan plus Muse

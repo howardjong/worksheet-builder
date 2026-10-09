@@ -1,5 +1,8 @@
 # Muse: first-pass character consistency experiments
 
+Next live trial: [approved reference consistency screen](approved-reference-consistency.md).
+This supersedes earlier experiment ordering and spend snapshots.
+
 Date: 2026-10-09. Repository: `howardjong/worksheet-builder`.
 Working branch: `codex/on-demand-composed-worksheets`; do not merge into main.
 

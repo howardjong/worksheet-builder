@@ -1,0 +1,272 @@
+{
+  "schema_version": 1,
+  "character_id": "rainbow_learning_buddy",
+  "created_at": "2026-10-09",
+  "identity_authority": "owner-supplied original artwork; generated sheet is NOT an approved replacement",
+  "owner_original_library_ids": [
+    "libfile_d0f4b8d7d1088191a332da4e171618c6",
+    "libfile_7b578024b2a081919ed4876b81a76ef1"
+  ],
+  "source_crops": [
+    {
+      "id": "neutral-full-body",
+      "path": "source-crops/neutral-full-body.png",
+      "source_path": "originals/F0F331A0-D15C-495B-9DBD-15BCDF43CA3F.png",
+      "source_sha256": "94b13e0af1876f3dbcd82cb8e29c427ef9bb4223a957ceed6efe7693b1281eca",
+      "crop_xyxy": [
+        58,
+        160,
+        203,
+        423
+      ],
+      "pixel_coordinates": "left/top inclusive; right/bottom exclusive",
+      "dimensions": [
+        145,
+        263
+      ],
+      "sha256": "411075874590ba3504dc5ac9e5cf6f046bcc684e68e079dd9dd6e32874699208",
+      "expression": "neutral",
+      "role": "full_body",
+      "operations": [
+        {
+          "kind": "background_only_white_corner_patch",
+          "rectangle_in_crop": [
+            0,
+            0,
+            18,
+            24
+          ]
+        },
+        {
+          "kind": "background_only_white_corner_patch",
+          "rectangle_in_crop": [
+            126,
+            0,
+            144,
+            101
+          ]
+        }
+      ],
+      "status": "derived_from_owner_original_not_repainted",
+      "generator_identity_reference": true
+    },
+    {
+      "id": "neutral-face",
+      "path": "source-crops/neutral-face.png",
+      "source_path": "originals/F0F331A0-D15C-495B-9DBD-15BCDF43CA3F.png",
+      "source_sha256": "94b13e0af1876f3dbcd82cb8e29c427ef9bb4223a957ceed6efe7693b1281eca",
+      "crop_xyxy": [
+        86,
+        163,
+        179,
+        270
+      ],
+      "pixel_coordinates": "left/top inclusive; right/bottom exclusive",
+      "dimensions": [
+        93,
+        107
+      ],
+      "sha256": "940e6124bbf21966d0812a8cd06657d8e1bf7eca31b0a3cdc700d9141b2dc561",
+      "expression": "closed_smile",
+      "role": "head",
+      "operations": [],
+      "status": "derived_from_owner_original_not_repainted",
+      "generator_identity_reference": true
+    },
+    {
+      "id": "open-smile-pointing-face",
+      "path": "source-crops/open-smile-pointing-face.png",
+      "source_path": "originals/F0F331A0-D15C-495B-9DBD-15BCDF43CA3F.png",
+      "source_sha256": "94b13e0af1876f3dbcd82cb8e29c427ef9bb4223a957ceed6efe7693b1281eca",
+      "crop_xyxy": [
+        429,
+        214,
+        520,
+        320
+      ],
+      "pixel_coordinates": "left/top inclusive; right/bottom exclusive",
+      "dimensions": [
+        91,
+        106
+      ],
+      "sha256": "269419a3ecea53373a6e125cb5c5c58d83b3f7fa7febf41b51979ed62829accf",
+      "expression": "open_smile",
+      "role": "head",
+      "operations": [],
+      "status": "derived_from_owner_original_not_repainted",
+      "generator_identity_reference": true
+    },
+    {
+      "id": "open-smile-cheering-face",
+      "path": "source-crops/open-smile-cheering-face.png",
+      "source_path": "originals/F0F331A0-D15C-495B-9DBD-15BCDF43CA3F.png",
+      "source_sha256": "94b13e0af1876f3dbcd82cb8e29c427ef9bb4223a957ceed6efe7693b1281eca",
+      "crop_xyxy": [
+        436,
+        774,
+        530,
+        895
+      ],
+      "pixel_coordinates": "left/top inclusive; right/bottom exclusive",
+      "dimensions": [
+        94,
+        121
+      ],
+      "sha256": "5673d89aa1dad6c769eae58803d359f8bca4faf3f77925d82f494406add28544",
+      "expression": "open_smile",
+      "role": "head",
+      "operations": [],
+      "status": "derived_from_owner_original_not_repainted",
+      "generator_identity_reference": true
+    },
+    {
+      "id": "comic-delighted-face",
+      "path": "source-crops/comic-delighted-face.png",
+      "source_path": "originals/B95FCD10-9A1D-4635-B9BF-A43E77198DB3.jpeg",
+      "source_sha256": "a9dff57a162b9743ed4f3d20254a86607279620ec9d62e84e6b1aa9080f18109",
+      "crop_xyxy": [
+        819,
+        359,
+        889,
+        433
+      ],
+      "pixel_coordinates": "left/top inclusive; right/bottom exclusive",
+      "dimensions": [
+        70,
+        74
+      ],
+      "sha256": "6350ecb2b26c27de59340a6890a5a8f552b8718084b04f053da28a8df2005d9c",
+      "expression": "closed_eyes_open_smile",
+      "role": "head",
+      "operations": [],
+      "status": "derived_from_owner_original_not_repainted",
+      "generator_identity_reference": true
+    },
+    {
+      "id": "comic-focused-face",
+      "path": "source-crops/comic-focused-face.png",
+      "source_path": "originals/B95FCD10-9A1D-4635-B9BF-A43E77198DB3.jpeg",
+      "source_sha256": "a9dff57a162b9743ed4f3d20254a86607279620ec9d62e84e6b1aa9080f18109",
+      "crop_xyxy": [
+        482,
+        99,
+        582,
+        168
+      ],
+      "pixel_coordinates": "left/top inclusive; right/bottom exclusive",
+      "dimensions": [
+        100,
+        69
+      ],
+      "sha256": "cc9bc90784d5913274468588a2ddf1586113710ee13a1641af6cc10f01422456",
+      "expression": "concentrating",
+      "role": "face_only_hair_partly_hidden",
+      "operations": [],
+      "status": "derived_from_owner_original_not_repainted",
+      "generator_identity_reference": false
+    }
+  ],
+  "packs": {
+    "P0_original_body": [
+      "source-crops/neutral-full-body.png"
+    ],
+    "P1_original_body_neutral_detail": [
+      "source-crops/neutral-full-body.png",
+      "source-crops/neutral-face.png"
+    ],
+    "P2_original_body_open_smile": [
+      "source-crops/neutral-full-body.png",
+      "source-crops/open-smile-cheering-face.png"
+    ],
+    "P3_original_body_expression_range": [
+      "source-crops/neutral-full-body.png",
+      "source-crops/open-smile-cheering-face.png",
+      "source-crops/comic-delighted-face.png"
+    ]
+  },
+  "expression_examples": {
+    "pointing_open_smile": "source-crops/open-smile-pointing-face.png",
+    "delighted_closed_eyes": "source-crops/comic-delighted-face.png",
+    "focused_face_only": "source-crops/comic-focused-face.png"
+  },
+  "generated_candidate": {
+    "path": "generated-candidate/cleaned-character-sheet.png",
+    "sha256": "94c454950b26779345aab50a00988653d6e78005ad35dbf176b38f86c5e48ef2",
+    "dimensions": [
+      1536,
+      1024
+    ],
+    "status": "GENERATED_CANDIDATE_REQUIRES_OWNER_LIKENESS_APPROVAL",
+    "tool": "built-in image generation; not OpenRouter live validation",
+    "prompt_path": "generated-candidate/prompt.txt",
+    "generation_reference_paths": [
+      "generation-inputs/neutral-full-body.png",
+      "generation-inputs/neutral-face.png",
+      "generation-inputs/open-smile-pointing-face.png",
+      "generation-inputs/open-smile-cheering-face.png"
+    ],
+    "input_crops_preceded_final_source_background_cleanup": true,
+    "subcrops": {
+      "full-body": {
+        "path": "generated-candidate/full-body.png",
+        "crop_xyxy": [
+          196,
+          8,
+          750,
+          979
+        ],
+        "sha256": "a41a53a4a8f2d183f9ad4125db9ed8bbb9c0567abba058016aa6294d134a34db"
+      },
+      "neutral-face": {
+        "path": "generated-candidate/neutral-face.png",
+        "crop_xyxy": [
+          879,
+          12,
+          1240,
+          373
+        ],
+        "sha256": "1aa053d850f6bb66394bb16573e91699b0257acc4e65bb2397fba6a66dad143b"
+      },
+      "open-smile-face": {
+        "path": "generated-candidate/open-smile-face.png",
+        "crop_xyxy": [
+          889,
+          367,
+          1239,
+          697
+        ],
+        "sha256": "5d1d7c39b4c21b7064dc205be97e0e501c9e8879db2e562d32decc561a962d0a"
+      },
+      "delighted-face": {
+        "path": "generated-candidate/delighted-face.png",
+        "crop_xyxy": [
+          888,
+          696,
+          1245,
+          1023
+        ],
+        "sha256": "38f583656eca3ae956f8c53635deb68ac3c78fa2b11367dd507fe35f7e738923"
+      }
+    },
+    "generation_reference_sha256": {
+      "generation-inputs/neutral-full-body.png": "d88dce4ea0e3353ed5a4246d0f27fbe59c8b1a6f6e8ce45027bc57509b203945",
+      "generation-inputs/neutral-face.png": "940e6124bbf21966d0812a8cd06657d8e1bf7eca31b0a3cdc700d9141b2dc561",
+      "generation-inputs/open-smile-pointing-face.png": "269419a3ecea53373a6e125cb5c5c58d83b3f7fa7febf41b51979ed62829accf",
+      "generation-inputs/open-smile-cheering-face.png": "5673d89aa1dad6c769eae58803d359f8bca4faf3f77925d82f494406add28544"
+    }
+  },
+  "evaluation_protocol": {
+    "canonical_reference": "source-crops/neutral-full-body.png",
+    "identity_threshold": 0.85,
+    "expression_requirement": "identity preserved across expressions; expression varies with task",
+    "no_automatic_promotion": true,
+    "generated_candidate_never_substitutes_for_original_judge_reference": true
+  },
+  "limitations": [
+    "Native original crop resolution is small; no invented pixels added to source crops.",
+    "Body crop receives two documented white patches on background-only corners to remove panel number/bubble.",
+    "Comic face examples retain some background; focused face is partly hat-framed and is not a standalone whole-identity reference.",
+    "Source crops and generated candidate have not been evaluated on OpenRouter/Luna.",
+    "Generated candidate awaits owner approval; being included is not an approval."
+  ]
+}

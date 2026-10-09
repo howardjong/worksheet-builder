@@ -1,0 +1,45 @@
+id,group,path,framing,approval_status,notes
+neutral-friendly,expressions,items/expressions/neutral-friendly.png,head_and_hair,owner_review_pending,
+happy-open-smile,expressions,items/expressions/happy-open-smile.png,head_and_hair,owner_review_pending,
+surprised,expressions,items/expressions/surprised.png,head_and_hair,owner_review_pending,
+concentrating,expressions,items/expressions/concentrating.png,head_and_hair,owner_review_pending,"Concentration and determined-persistence have similar brows/smiles. Treat the distinction as an intended label, not validated emotion recognition."
+thinking,expressions,items/expressions/thinking.png,head_and_hair,owner_review_pending,
+determined-persistence,expressions,items/expressions/determined-persistence.png,head_and_hair,owner_review_pending,Visually similar to concentrating; do not infer a learner emotional state from this art.
+puzzled,expressions,items/expressions/puzzled.png,head_and_hair,owner_review_pending,
+curious,expressions,items/expressions/curious.png,head_and_hair,owner_review_pending,
+mild-frustration,expressions,items/expressions/mild-frustration.png,head_and_hair,owner_review_pending,
+relieved,expressions,items/expressions/relieved.png,head_and_hair,owner_review_pending,Reads as broad cheerful delight more than quiet relief; expression suitability needs review.
+proud,expressions,items/expressions/proud.png,head_and_hair,owner_review_pending,
+tired-needs-break,expressions,items/expressions/tired-needs-break.png,head_and_hair,owner_review_pending,
+standing-ready,poses,items/poses/standing-ready.png,full_body,owner_review_pending,
+reading-book,poses,items/poses/reading-book.png,full_body,owner_review_pending,
+writing-on-paper,poses,items/poses/writing-on-paper.png,full_body,owner_review_pending,
+building-with-tiles,poses,items/poses/building-with-tiles.png,upper_body_at_work_surface,owner_review_pending,"Upper-body/work-surface view; lower body not shown. Broad tile-moving gesture, not a validated word-building sequence."
+considering-choices,poses,items/poses/considering-choices.png,upper_body_at_work_surface,owner_review_pending,"Upper-body/work-surface view; lower body not shown. Pencil appears above unmarked cards, no selected answer."
+finger-tracking,poses,items/poses/finger-tracking.png,full_body,owner_review_pending,Points toward a blank page; not a validated finger-in-contact tracking sequence.
+asking-for-help,poses,items/poses/asking-for-help.png,full_body,owner_review_pending,Raised arm may also read as greeting; use the task prompt to specify asking for help.
+thinking-hand-on-chin,poses,items/poses/thinking-hand-on-chin.png,full_body,owner_review_pending,
+try-again-determined,poses,items/poses/try-again-determined.png,full_body,owner_review_pending,
+celebrating-thumbs-up,poses,items/poses/celebrating-thumbs-up.png,full_body,owner_review_pending,
+stretch-break,poses,items/poses/stretch-break.png,full_body,owner_review_pending,
+calm-breath,poses,items/poses/calm-breath.png,full_body,owner_review_pending,
+original-casual,wardrobe,items/wardrobe/original-casual.png,full_body,owner_review_pending,
+astronaut,wardrobe,items/wardrobe/astronaut.png,full_body,owner_review_pending,
+scientist,wardrobe,items/wardrobe/scientist.png,full_body,owner_review_pending,
+explorer,wardrobe,items/wardrobe/explorer.png,full_body,owner_review_pending,
+artist,wardrobe,items/wardrobe/artist.png,full_body,owner_review_pending,
+gardener,wardrobe,items/wardrobe/gardener.png,full_body,owner_review_pending,
+underwater-diver,wardrobe,items/wardrobe/underwater-diver.png,full_body,owner_review_pending,"Stylized fictional clear-dome costume, not realistic diving equipment or safety guidance."
+winter-outdoors,wardrobe,items/wardrobe/winter-outdoors.png,full_body,owner_review_pending,
+yellow-pencil,accessories,items/accessories/yellow-pencil.png,object,owner_review_pending,
+blank-open-notebook,accessories,items/accessories/blank-open-notebook.png,object,owner_review_pending,
+blank-clipboard,accessories,items/accessories/blank-clipboard.png,object,owner_review_pending,
+blank-word-tiles,accessories,items/accessories/blank-word-tiles.png,object,owner_review_pending,
+blank-choice-cards,accessories,items/accessories/blank-choice-cards.png,object,owner_review_pending,
+orange-backpack,accessories,items/accessories/orange-backpack.png,object,owner_review_pending,
+blue-ear-defenders,accessories,items/accessories/blue-ear-defenders.png,object,owner_review_pending,
+clear-space-helmet,accessories,items/accessories/clear-space-helmet.png,object,owner_review_pending,
+simple-glasses,accessories,items/accessories/simple-glasses.png,object,owner_review_pending,May cover eye details; future scene must still pass original identity check.
+lightning-badge,accessories,items/accessories/lightning-badge.png,object,owner_review_pending,Matches the identifying shirt motif; keep distinct from earned score/reward tokens.
+magnifying-glass,accessories,items/accessories/magnifying-glass.png,object,owner_review_pending,
+explorer-hat,accessories,items/accessories/explorer-hat.png,object,owner_review_pending,"Can hide characteristic hair; optional only, require explicit owner approval of occlusion."

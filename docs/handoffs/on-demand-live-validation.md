@@ -1,5 +1,8 @@
 # Muse / Grok: live validation handoff
 
+Next live trial: [approved reference consistency screen](approved-reference-consistency.md).
+This supersedes earlier experiment ordering and spend snapshots.
+
 > **Current experiment handoff (2026-10-09):** Follow
 > [character-consistency-experiments.md](character-consistency-experiments.md)
 > for experiment order, factorial design and current evidence. The trial sequence

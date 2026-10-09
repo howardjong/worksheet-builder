@@ -18,19 +18,19 @@ import random
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from ai import openrouter
 from ai.run_limits import current_limits
-from ai.telemetry import stage, traced_pipeline
+from ai.telemetry import candidate, stage, traced_pipeline
+from experiments.reference_library import approved_supplements
 from render.design_spec import compile_worksheet_design_spec
 from render.live_scene import (
     DECISION_THRESHOLDS,
     SCENE_VERSION,
     derive_face_crop,
-    generation_reference_pack,
     judge_reference,
     judge_scene,
     scene_action,
@@ -145,6 +145,23 @@ class ExperimentManifest(BaseModel):
     repeats: int = Field(ge=1, le=4, default=2)
     arms: list[str] = Field(default_factory=lambda: ["A", "B", "C", "D"])
     trials: list[TrialSpec] = Field(default_factory=list)
+    design: Literal["prompt_reference", "approved_reference"] = "prompt_reference"
+    reference_library: str | None = None
+    expression: str = "neutral-friendly"
+
+    @model_validator(mode="after")
+    def valid_design(self) -> ExperimentManifest:
+        x0, y0, x1, y1 = self.face_crop_rect
+        if not (0 <= x0 < x1 <= 1 and 0 <= y0 < y1 <= 1):
+            raise ValueError("Face crop must be a nonempty fractional image rectangle")
+        if not self.procedures or any(index < 1 for index in self.procedures.values()):
+            raise ValueError("Procedures require positive worksheet indices")
+        if (not self.arms or len(set(self.arms)) != len(self.arms)
+                or any(arm not in {"A", "B", "C", "D"} for arm in self.arms)):
+            raise ValueError("Arms must be nonempty, unique and drawn from A/B/C/D")
+        if self.design == "approved_reference" and set(self.arms) != {"A", "B", "C", "D"}:
+            raise ValueError("Approved-reference screen requires all four factorial arms")
+        return self
 
 
 def build_trials(manifest: ExperimentManifest) -> list[TrialSpec]:
@@ -152,6 +169,18 @@ def build_trials(manifest: ExperimentManifest) -> list[TrialSpec]:
     for arm in manifest.arms:
         for procedure in manifest.procedures:
             for repeat in range(1, manifest.repeats + 1):
+                if manifest.design == "approved_reference":
+                    roles = ["original_full_body"]
+                    roles.append("approved_face" if arm in ("B", "D") else "original_face_crop")
+                    if arm in ("C", "D"):
+                        roles.append("approved_astronaut")
+                    trials.append(TrialSpec(
+                        trial_id=f"{arm}_{procedure}_r{repeat}", arm=arm,
+                        procedure=procedure, worksheet=manifest.procedures[procedure],
+                        repeat=repeat, prompt_version="current_with_reference_roles",
+                        reference_roles=roles,
+                    ))
+                    continue
                 prompt_version = "current" if arm in ("A", "C") else "structured"
                 reference_roles = (
                     ["original_full_body", "original_face_crop"]
@@ -175,6 +204,15 @@ def build_trials(manifest: ExperimentManifest) -> list[TrialSpec]:
 def _prompt_for(
     trial: TrialSpec, spec: Any, theme: ThemeConfig, identity: Any
 ) -> str:
+    if trial.prompt_version == "current_with_reference_roles":
+        # Same procedure prompt in every arm. Only actual conditioning inputs vary.
+        return scene_prompt(spec, theme, identity) + (
+            " Reference roles: Image 1 is the original identity authority. Image 2 "
+            "shows face and hair detail of that same buddy. If present, Image 3 "
+            "shows that buddy's space costume. Preserve Image 1's likeness; use "
+            "supplements for detail and costume only. Show one buddy, not a collage. "
+            "Expression and pose may change to suit the activity."
+        )
     if trial.prompt_version == "current":
         return scene_prompt(spec, theme, identity)
     action = scene_action(spec, theme)
@@ -205,6 +243,25 @@ def run_experiment(
     trials = manifest.trials or build_trials(manifest)
     if len({t.trial_id for t in trials}) != len(trials):
         raise ValueError("Trial IDs must be unique")
+    supplements: dict[str, bytes] = {"original_face_crop": crop_png}
+    if manifest.design == "approved_reference":
+        if package.identity.base_character != "rainbow_roblox" or any(
+            worksheet.theme_id != "space" for worksheet in package.worksheets
+        ):
+            raise ValueError("Approved-reference screen requires rainbow buddy and space theme")
+        if manifest.trials:
+            raise ValueError("Approved-reference design uses generated balanced trials only")
+        if not manifest.reference_library:
+            raise ValueError("Approved-reference design requires a library manifest")
+        library_path = Path(manifest.reference_library)
+        if not library_path.is_absolute():
+            library_path = root / library_path
+        face, outfit = approved_supplements(library_path, manifest.expression)
+        supplements.update(approved_face=face, approved_astronaut=outfit)
+    reference_packs = {
+        trial.trial_id: [original, *(supplements[role] for role in trial.reference_roles[1:])]
+        for trial in trials
+    }
 
     directory = Path(artifacts_dir)
     directory.mkdir(parents=True, exist_ok=True)
@@ -223,6 +280,10 @@ def run_experiment(
             package.profile,
             render_mode="hybrid_shell",
         )
+        if manifest.design == "approved_reference":
+            expected = {"word_building": "build", "blank_choices": "choose"}
+            if scene_action(spec, theme).kind != expected.get(trial.procedure):
+                raise ValueError("Procedure label does not match the frozen worksheet action")
         prompts[trial.trial_id] = _prompt_for(trial, spec, theme, package.identity)
     (directory / "prompts.json").write_text(json.dumps(prompts, indent=1))
     (directory / "face_crop_provenance.json").write_text(json.dumps(crop_prov, indent=1))
@@ -231,6 +292,12 @@ def run_experiment(
     planned_image_calls = len(trials)
     planned_gate_calls = len(trials)
     report: dict[str, Any] = {
+        "design": manifest.design,
+        "expression": manifest.expression if manifest.design == "approved_reference" else None,
+        "reference_hashes": {
+            name: [hashlib.sha256(raw).hexdigest() for raw in pack]
+            for name, pack in reference_packs.items()
+        },
         "mode": "live" if live else "dry_run_no_inference",
         "can_approve_worksheet": False,
         "rubric_version": SCENE_VERSION,
@@ -283,10 +350,7 @@ def run_experiment(
             render_mode="hybrid_shell",
         )
         prompt = prompts[trial.trial_id]
-        refs = generation_reference_pack(
-            package.identity,
-            extra=(crop_png,) if "original_face_crop" in trial.reference_roles else (),
-        )
+        refs = reference_packs[trial.trial_id]
         record: dict[str, Any] = {
             "trial_id": trial.trial_id,
             "arm": trial.arm,
@@ -302,7 +366,7 @@ def run_experiment(
             "background": "opaque",
         }
         gen_start = time.perf_counter()
-        with stage("experiment_image"):
+        with candidate(trial.trial_id), stage("experiment_image"):
             png = openrouter.generate_image(
                 prompt,
                 reference_pngs=refs,
@@ -319,8 +383,8 @@ def run_experiment(
         record["candidate_sha256"] = hashlib.sha256(png).hexdigest()
         (directory / f"{trial.trial_id}.png").write_bytes(png)
         gate_start = time.perf_counter()
-        with stage("experiment_gate"):
-            gate = judge_scene(png, original, spec, theme)
+        with candidate(trial.trial_id), stage("experiment_gate"):
+            gate = judge_scene(png, original, spec, theme, backend="decisions")
         record["gate_elapsed_s"] = round(time.perf_counter() - gate_start, 1)
         record["gate"] = gate.model_dump() if gate else None
         record["approved"] = bool(gate and gate.approved)
