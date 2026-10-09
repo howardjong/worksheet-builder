@@ -8,6 +8,53 @@
 
 ## Current State
 
+### Session 77 — 2026-10-09 (character consistency factorial experiment handoff)
+
+**Owner request:** Write, commit and push a runnable experiment plan plus Muse
+prompt; publish the supplied consolidated report as a reference. Owner also asks
+about concurrency and interaction effects. Scope this commit: documentation only,
+on `codex/on-demand-composed-worksheets`, not main. Baseline remote `a1c76bf`,
+tree `5e2442a639e3b33f4b1dbc1af447dd433b5ed03a`; local equivalent `3a8aa38`.
+
+**Current handoff:** `docs/handoffs/character-consistency-experiments.md` supersedes
+prior next-trial order and spend snapshots. `docs/research/character-consistency-consolidated-report.md` preserves the uploaded Markdown bytes unchanged. The
+older live handoff retains command/security/limit reference material.
+
+**Latest reported evidence:** Full run 111s/no PDF/exit 1; one 47.5s Sol planner,
+14s judge/.89 approve. Luna v5 saved-art 6/6; Haiku 5/6 with a geometry failure.
+Later reference ablation .72 with/.17 without; tested FLUX.3 and Flare inferior;
+prompt rewrite one sample inconclusive. No successful fresh full-pipeline quality
+or latency claim. Private artifact mappings/raw images remain with Muse.
+
+**Owner identity clarification:** Buddy customization is a reward; likeness is
+load-bearing. Keep identity >=.85; the owner agreed with the .83 rejection.
+Prior Codex preview procedure judgments were not identity approvals. Keep the
+seven checks/rubric fixed during generation experiments; owner validation of a
+bar does not establish population-wide gate accuracy.
+
+**Experiment plan:** Offline opt-in runner/transport prerequisites, then a 2x2
+full factorial: current/revised prompt x original/original+face crop, two states
+x two actions x two repeats = 32 images (64 logical image/gate calls). Record
+interaction and case-level results, interleave bounded concurrency 3, reduce
+complete blocks if budget requires. Gate always compares immutable original,
+not generator anchor/crop. Discovery is a shortlist, not statistical promotion.
+Later bounded anchor, quality, composition and model/repair follow-ups; confirm
+on fresh cases and then one fresh full-pipeline trial. Include cold setup cost/
+latency and warm reuse separately; no prebuilt lesson art. Planner optimization
+is a separate experiment, Sol remains medium. Phone photo/AirPrint pending.
+
+**Budget:** Same cumulative $5 cap. The old ~$3.07 remainder predates later paid
+ablations: actual remainder unknown until Muse reconciles. No reset/new allocation,
+no automatic giant matrix. Preserve partial results if the remaining cap does
+not fit. Vault surrogate only; private art/PII/secrets stay out of git.
+
+**Implementation status:** No runtime changes or paid calls in this session.
+Muse must implement multiple refs, independent generator/judge refs, explicit
+quality/background/alpha support and dry-run harness with accounting/provenance
+before live inference. Existing source tests are prior evidence, not newly rerun.
+Publication verification covers doc links, report byte identity, clean diff and
+exact remote commit/file checks. Main is unchanged; no merge/promotion.
+
 ### Session 76 — 2026-10-08 (relevant art rubric, Haiku comparison, reliable failure status)
 
 **Owner authorization:** Implement the assessed plan on the existing test branch:

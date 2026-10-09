@@ -1,5 +1,12 @@
 # Muse / Grok: live validation handoff
 
+> **Current experiment handoff (2026-10-09):** Follow
+> [character-consistency-experiments.md](character-consistency-experiments.md)
+> for experiment order, factorial design and current evidence. The trial sequence
+> and remaining-dollar snapshots below are historical and superseded. Reconcile
+> the same cumulative $5 cap after all later ablations; do not use an old remainder.
+> This document remains the reference for existing commands, privacy and limits.
+
 Implementing branch: `codex/on-demand-composed-worksheets` in
 `howardjong/worksheet-builder`; base `main` at `78b00d5`.
 Fetch the branch, pin and report its exact SHA before testing. Read AGENTS.md,
