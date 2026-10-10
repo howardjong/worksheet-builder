@@ -36,6 +36,33 @@ or `WORKSHEET_OPENROUTER_AUDIO_MODELS`.
 Duplicate entries are removed while preserving order. Empty chains disable that
 role. `OPENROUTER_BASE_URL` defaults to `https://openrouter.ai/api/v1`.
 
+For composed scenes (`hybrid_shell`), `WORKSHEET_IMAGE_QUALITY` controls the
+Images API quality parameter: `auto` (unchanged default), `low`, `medium`, `high`,
+`xhigh`, or `max`. Invalid values fail before image inference. Scene receipts
+record quality, and changing quality invalidates current generation caches.
+Historical approved scenes retain their original prompt and `auto` provenance
+for offline replay.
+
+`WORKSHEET_OPENROUTER_IMAGE_MODELS=openai/gpt-image-2.5-flare` selects Flare
+through the existing image transport. Sunburst remains the default primary.
+The [OpenAI image prompting guide](https://developers.openai.com/api/docs/guides/image-prompting)
+recommends naming fixed identity features and repeating defining character
+details across scenes. Our three-reference prompt fixes the original face,
+hair, proportions and style, the approved expression, and the approved costume;
+only pose/action and scene change.
+
+Use `python -m experiments.image_speed_bench --cases /private/cases.json
+--output /private/bench-dry` for a no-inference preflight of the two saved
+candidate prompts and their original/expression/costume reference packs. The
+script docstring defines the manifest. To compare Sunburst and Flare, set
+`WORKSHEET_OPENROUTER_IMAGE_MODELS=openai/gpt-image-2.5-sunburst,openai/gpt-image-2.5-flare`.
+The benchmark records per-request wall time, copied prompts/references and hashes,
+PNG outputs, and HTTP telemetry. Live generation requires both `--live` and
+`WORKSHEET_IMAGE_SPEED_BENCH_LIVE=1`, a separately authorized key and verified
+USD/call/deadline ceilings. Tests use mocked generation only. Flare and lower
+quality are speed candidates; assess likeness/detail visually before choosing
+them. No speed or quality gain is established by offline verification.
+
 Images use the [dedicated Image API](https://openrouter.ai/docs/guides/overview/multimodal/image-generation),
 `POST /images`, with `input_references`. The same profile reference is sent to
 every fallback model. Default page aspect ratio is `3:4`; asset and buddy requests

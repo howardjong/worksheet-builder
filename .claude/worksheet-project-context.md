@@ -8,6 +8,58 @@
 
 ## Current State
 
+### Session 81 — 2026-10-10 (scene identity constraints and speed benchmark)
+
+**Owner scope:** Optimize scene generation prompting and add speed/quality
+configuration and measurement tooling on `codex/on-demand-composed-worksheets`,
+starting at `9ed4473`. Commit locally; no main merge, push or PR. No paid calls.
+
+**Completed:** `render/live_scene.py:scene_prompt()` repeats the actual rainbow
+buddy's hair, face/eyes, blocky proportions and outline style. Explicit fixed
+identity features include face, skin, eye construction/spacing, hair shape/colors,
+proportions, outlines/shading/style. The three-reference pack and role labels
+remain ordered original/expression/costume; approved expression and costume are
+fixed, allowing only pose/action and scene changes. Original-only prompts still
+specify the action expression and theme clothing. Other characters use their
+resolved character description without inheriting rainbow details. Applied the
+official OpenAI image prompting guide's preservation/repeated-detail patterns.
+
+**Configuration:** Flare already passed through the model-agnostic Images API;
+mocked transport coverage now verifies both Sunburst and Flare with three input
+references and quality. `ai/openrouter.py:image_quality()` reads/validates
+`WORKSHEET_IMAGE_QUALITY`, default `auto`. Composed generation passes it explicitly
+and records it; current cache keys bind quality. Sunburst/default image chain,
+gate rubric/thresholds, and renderer defaults are unchanged. Prompt v3 distinguishes
+the new constraints; old v2 receipts replay their exact original prompt and
+`auto` provenance, alongside existing historical receipt support. Byte equality
+against `9ed4473`'s prompt verified offline across nine action/reference cases.
+
+**Measurement:** `experiments/image_speed_bench.py` accepts a strict private
+two-scene manifest of exact saved prompts and ordered three-reference paths.
+Dry-run is default; paid mode needs both `--live` and
+`WORKSHEET_IMAGE_SPEED_BENCH_LIVE=1`, plus a separately authorized key and verified
+USD/call/deadline ceilings covering possible transport retries. Records wall time,
+input hashes/copies, PNGs and served-model HTTP telemetry; preserves failures and
+partial results. Sequential interleaved model order, no provider fallback, no
+quality regeneration/judge/worksheet approval. Fresh output directory required.
+Docstring and `docs/openrouter.md` describe invocation and expected tradeoffs.
+Tests mock all generation, and test isolation clears the new env settings.
+
+**Validation:** Focused scene/reference/transport/replay/benchmark suite: 75 passed.
+`python -m pytest tests/ -q`: 1131 passed / 23 skipped, one pre-existing Pillow
+deprecation warning, 134.49s. `python -m ruff check .` and strict
+`python -m mypy .`: clean (231 source files). Used `.venv/bin/python` since there
+is no global Python command. Benchmark CLI help smoke check passed. No live
+generation, rejudging, credential changes or measured speed/quality claims.
+
+**Next:** Owner's two candidate prompts/images live privately with Muse, not in
+this worktree. Use their exact prompt/reference packs with the benchmark dry-run,
+then compare Sunburst/Flare and quality settings only under new explicit paid
+authorization and reconciled existing budget. Inspect identity/expression/outfit
+and instructional clarity before changing defaults; no gate relaxations. Live
+likeness, full-pipeline latency, photo intake and physical AirPrint acceptance
+remain pending. Prior Session 79 live scope/budget handoff is not renewed here.
+
 ### Session 80 — 2026-10-09 (three-reference Luna scene gate)
 
 **Owner request:** Fix the generation/judge reference mismatch on

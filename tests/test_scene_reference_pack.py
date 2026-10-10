@@ -14,8 +14,10 @@ from companion.character_identity import resolve_character_identity
 from companion.schema import LearnerProfile
 from render.live_scene import (
     DECISION_THRESHOLDS,
+    PRIOR_PROMPT_VERSION,
     PROMPT_VERSION,
     SceneReferences,
+    _scene_key,
     judge_reference,
     judge_scene,
     load_approved_scene,
@@ -30,6 +32,92 @@ LIBRARY = (
     Path(__file__).resolve().parents[1]
     / "assets/characters/rainbow_learning_buddy/reference_library/v1/manifest.json"
 )
+
+
+def test_scene_quality_changes_request_and_cache_but_not_gate(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from render.live_scene import generate_scene
+
+    current = context(tmp_path, count=1)
+    qualities: list[str] = []
+    monkeypatch.setenv("OPENROUTER_API_KEY", "offline-surrogate")
+    monkeypatch.setenv("WORKSHEET_OPENROUTER_IMAGE_MODELS", "openai/gpt-image-2.5-flare")
+
+    def generate(*args: Any, **kwargs: Any) -> bytes:
+        assert kwargs["model"] == "openai/gpt-image-2.5-flare"
+        qualities.append(kwargs["quality"])
+        return synthetic_image()
+
+    monkeypatch.setattr("ai.openrouter.generate_image", generate)
+    monkeypatch.setattr("render.live_scene.judge_scene", lambda *a, **kw: approved_gate())
+    assert generate_scene(current)
+    assert generate_scene(current)
+    monkeypatch.setenv("WORKSHEET_IMAGE_QUALITY", "medium")
+    assert load_approved_scene(current) is None
+    assert generate_scene(current)
+    assert load_approved_scene(current)
+    assert qualities == ["auto", "medium"]
+    receipt = json.loads((tmp_path / "learning_scene.json").read_text())
+    assert receipt["quality"] == "medium"
+    assert receipt["decision_thresholds"] == DECISION_THRESHOLDS
+    monkeypatch.setenv("WORKSHEET_IMAGE_QUALITY", "typo")
+    with pytest.raises(ValueError, match="WORKSHEET_IMAGE_QUALITY"):
+        generate_scene(current)
+    assert qualities == ["auto", "medium"]
+
+
+def test_previous_identity_prompt_receipt_replays_with_original_auto_quality(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    current = context(tmp_path, count=1)
+    theme = current.theme
+    assert isinstance(theme, ThemeConfig)
+    refs = scene_references(current.design_spec, theme, current.character_identity)
+    old_prompt = scene_prompt(
+        current.design_spec,
+        theme,
+        current.character_identity,
+        prior_identity_prompt=True,
+        reference_roles=tuple(refs.roles),
+    )
+    assert "mouth opening may change naturally" in old_prompt
+    assert "Defining character details" not in old_prompt
+    key = _scene_key(
+        old_prompt,
+        judge_reference(current.character_identity),
+        prompt_version=PRIOR_PROMPT_VERSION,
+        generation_reference_hashes=refs.hashes,
+    )
+    png = synthetic_image()
+    (tmp_path / "learning_scene.png").write_bytes(png)
+    (tmp_path / "learning_scene.json").write_text(
+        json.dumps(
+            {
+                "scene_version": "live_scene_v5_relevant_procedure",
+                "prompt_version": PRIOR_PROMPT_VERSION,
+                "key": key,
+                "status": "approved",
+                "gate": approved_gate().model_dump(),
+                "sha256": hashlib.sha256(png).hexdigest(),
+            }
+        )
+    )
+    monkeypatch.setenv("WORKSHEET_IMAGE_QUALITY", "low")
+    monkeypatch.setattr("ai.openrouter.generate_image", lambda *a, **kw: pytest.fail("inference"))
+    assert load_approved_scene(current)
+
+
+def test_other_character_description_does_not_inherit_rainbow_details(tmp_path: Path) -> None:
+    current = context(tmp_path, count=1)
+    theme = current.theme
+    assert isinstance(theme, ThemeConfig)
+    identity = resolve_character_identity(LearnerProfile(name="Test", grade_level="2"), "space")
+    other = identity.model_copy(update={"base_character": "robot", "character_block": "blue robot"})
+    prompt = scene_prompt(current.design_spec, theme, other)
+    assert "Defining character details: blue robot" in prompt
+    assert "rainbow-haired" not in prompt
+    assert "specified expression and theme clothing" in prompt
 
 
 @pytest.mark.parametrize(
@@ -67,12 +155,17 @@ def test_runtime_selects_approved_expression_and_costume_without_changing_judge(
     assert "Image 1 fixes the original character" in prompt
     assert "Image 2 supplies approved face/hair detail and expression" in prompt
     assert "costume, not its standing pose" in prompt
-    assert "mouth opening may change naturally" in prompt
+    assert "Preserve the exact approved expression from Image 2" in prompt
+    assert "do not invent a different expression" in prompt
+    assert "rainbow-haired Roblox-style buddy" in prompt
+    assert "simple black oval eyes" in prompt
+    assert "Do not change the face shape, facial features" in prompt
+    assert "hair silhouette, hairstyle or individual hair colors" in prompt
+    assert "torso or limb proportions, outline weight, shading or illustration style" in prompt
+    assert "Change only the pose/action and scene" in prompt
     assert "large head" not in prompt and "soft rounded" not in prompt
     assert current.design_spec.sections[0].items[0].content not in prompt
     assert "Activities:" not in prompt and "Learning goal:" not in prompt
-    if expected == "happy-open-smile":
-        assert "cheerful open smile" in prompt
 
 
 def test_full_scene_transport_sends_pack_to_generator_and_judge_and_separates_cache(

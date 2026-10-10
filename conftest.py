@@ -24,6 +24,8 @@ def _isolate_inference_credentials(monkeypatch: pytest.MonkeyPatch) -> None:
         "WORKSHEET_SCENE_GATE_BACKEND",
         "WORKSHEET_OPENROUTER_SCENE_DECISIONS_MODEL",
         "WORKSHEET_OPENROUTER_REASONING_EFFORT",
+        "WORKSHEET_IMAGE_QUALITY",
+        "WORKSHEET_IMAGE_SPEED_BENCH_LIVE",
     ):
         monkeypatch.delenv(name, raising=False)
 

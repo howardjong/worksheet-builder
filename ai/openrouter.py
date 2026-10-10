@@ -378,6 +378,14 @@ def decide_yes_no(
     return result
 
 
+def image_quality() -> str:
+    """Configured composed-scene quality; reject typos before inference or cache reuse."""
+    quality = os.environ.get("WORKSHEET_IMAGE_QUALITY", "auto").strip().lower()
+    if quality not in {"auto", "low", "medium", "high", "xhigh", "max"}:
+        raise ValueError(f"Unsupported WORKSHEET_IMAGE_QUALITY value: {quality!r}")
+    return quality
+
+
 def generate_image(
     prompt: str,
     reference_png: bytes | None = None,

@@ -53,8 +53,10 @@ def _text(value: str) -> httpx.Response:
     return httpx.Response(200, json={"choices": [{"message": {"content": value}}]})
 
 
+@pytest.mark.parametrize("model", ["openai/gpt-image-2.5-sunburst", "openai/gpt-image-2.5-flare"])
 def test_image_api_preserves_reference_and_normalizes_raster(
     monkeypatch: pytest.MonkeyPatch,
+    model: str,
 ) -> None:
     raw = _image("JPEG")
     calls = _responses(
@@ -68,12 +70,22 @@ def test_image_api_preserves_reference_and_normalizes_raster(
             )
         ],
     )
-    result = openrouter.generate_image("worksheet", raw, model="openai/gpt-image-2.5-sunburst")
+    monkeypatch.setenv("WORKSHEET_OPENROUTER_IMAGE_MODELS", model)
+    assert openrouter.models("image") == [model]
+    result = openrouter.generate_image(
+        "worksheet",
+        reference_pngs=[raw, raw, raw],
+        model=model,
+        quality="medium",
+        allow_provider_fallback=False,
+    )
     assert result and result.startswith(b"\x89PNG")
     payload = calls[0]["json"]
     assert calls[0]["url"] == "https://openrouter.ai/api/v1/images"
     assert payload["input_references"][0]["image_url"]["url"].startswith("data:image/jpeg;base64,")
-    assert payload["provider"]["allow_fallbacks"] is True
+    assert len(payload["input_references"]) == 3
+    assert payload["model"] == model and payload["quality"] == "medium"
+    assert payload["provider"]["allow_fallbacks"] is False
     assert payload["aspect_ratio"] == "3:4"
 
 

@@ -23,7 +23,8 @@ from render.strategies import RenderContext
 from theme.schema import ThemeConfig
 
 SCENE_VERSION = "live_scene_v5_relevant_procedure"
-PROMPT_VERSION = "live_scene_prompt_v2_identity_procedure"
+PRIOR_PROMPT_VERSION = "live_scene_prompt_v2_identity_procedure"
+PROMPT_VERSION = "live_scene_prompt_v3_identity_constraints"
 HAIKU_MODEL = "anthropic/claude-haiku-5.5"
 DECISIONS_MODEL = "openai/gpt-6-luna-decisions"
 # Owner-reviewed trial art was relevant at 0.40 task / 0.42 action / 0.90
@@ -339,6 +340,7 @@ def scene_prompt(
     legacy: bool = False,
     prior_rubric: bool = False,
     prior_prompt: bool = False,
+    prior_identity_prompt: bool = False,
     reference_roles: tuple[str, ...] = (),
 ) -> str:
     if not (legacy or prior_rubric or prior_prompt):
@@ -365,6 +367,39 @@ def scene_prompt(
                 "Image 2 supplies approved face/hair detail and expression. "
                 "Image 3 supplies the same buddy's costume, not its standing pose. "
             )
+        character = (
+            "the rainbow-haired Roblox-style buddy with swept, pointed multicolor hair, "
+            "a peach face, simple black oval eyes, blocky torso and limbs, and bold black outlines"
+            if isinstance(identity, CharacterIdentity)
+            and identity.base_character == "rainbow_roblox"
+            else identity.character_block
+            if isinstance(identity, CharacterIdentity)
+            else "a friendly cartoon learning buddy"
+        )
+        constraints = (
+            f"Defining character details: {character}. "
+            "Do not change the face shape, facial features, eye shape or spacing, skin tone, "
+            "hair silhouette, hairstyle or individual hair colors, head-to-body ratio, "
+            "torso or limb proportions, outline weight, shading or illustration style "
+            "from the original identity reference. "
+        )
+        constraints += (
+            "Preserve the exact approved expression from Image 2, including its eyebrows, "
+            "gaze and mouth shape/opening; do not invent a different expression. "
+            "Preserve the approved costume from Image 3 without reshaping the body. "
+            "Change only the pose/action and scene; the character's identity stays identical. "
+            if "expression_detail" in reference_roles
+            else f"Use {mood}, keeping the original facial construction. "
+            "Change only the pose/action, scene, specified expression and theme clothing; "
+            "the character's identity stays identical. "
+        )
+        # Preserve the exact v2 prompt for historical gated-scene replay.
+        if prior_identity_prompt:
+            constraints = (
+                "Expression, eyebrows, gaze and mouth opening may change naturally without "
+                "redesigning the face or changing its proportions. "
+                f"Use {mood}. "
+            )
         costume = (
             "an astronaut spacesuit with a transparent round helmet, with the face and "
             "distinctive hair clearly visible"
@@ -376,9 +411,8 @@ def scene_prompt(
             "Landscape 16:9 with a calm, sparse white background. "
             + roles
             + "All supplied references depict one established buddy; show that buddy once. "
-            "Expression, eyebrows, gaze and mouth opening may change naturally without "
-            "redesigning the face or changing its proportions. "
-            f"Use {mood}. Dress the buddy in {costume}; clothing must not reshape the body. "
+            + constraints
+            + f"Dress the buddy in {costume}; clothing must not reshape the body. "
             f"Focus ONLY on section {action.section_number}. Show the buddy {action.action}. "
             f"Required props: {action.props}. Model this one learning procedure clearly. "
             "Keep the face, hands and materials visible and together dominant in the frame. "
@@ -660,7 +694,9 @@ def _scene_key(
             {
                 "prompt_version": prompt_version,
                 "generation_references": generation_reference_hashes,
-                "quality": "auto",
+                "quality": openrouter.image_quality()
+                if prompt_version == PROMPT_VERSION
+                else "auto",
                 "background": "opaque",
             },
             sort_keys=True,
@@ -712,7 +748,7 @@ def load_approved_scene(context: RenderContext) -> str | None:
     }:
         return None
     prompt_version = report.get("prompt_version")
-    if prompt_version not in {None, PROMPT_VERSION}:
+    if prompt_version not in {None, PRIOR_PROMPT_VERSION, PROMPT_VERSION}:
         return None
     if prompt_version is None and os.environ.get("WORKSHEET_SCENE_REFERENCE_LIBRARY"):
         return None
@@ -728,6 +764,7 @@ def load_approved_scene(context: RenderContext) -> str | None:
         legacy=version == "live_scene_v2_action_contract",
         prior_rubric=version in {"live_scene_v3_decisions", "live_scene_v4_luna_calibrated"},
         prior_prompt=prompt_version is None,
+        prior_identity_prompt=prompt_version == PRIOR_PROMPT_VERSION,
         reference_roles=tuple(references.roles),
     )
     key = _scene_key(
@@ -754,6 +791,7 @@ def generate_scene(context: RenderContext) -> str | None:
     directory = context.artifacts_dir
     directory.mkdir(parents=True, exist_ok=True)
     references = scene_references(spec, theme, context.character_identity)
+    quality = openrouter.image_quality()
     prompt = scene_prompt(
         spec, theme, context.character_identity, reference_roles=tuple(references.roles)
     )
@@ -780,6 +818,8 @@ def generate_scene(context: RenderContext) -> str | None:
                     "key": key,
                     "scene_version": SCENE_VERSION,
                     "prompt_version": PROMPT_VERSION,
+                    "quality": quality,
+                    "background": "opaque",
                     "generation_reference_hashes": references.hashes,
                     "generation_reference_roles": references.roles,
                     "expression": references.expression,
@@ -839,7 +879,7 @@ def generate_scene(context: RenderContext) -> str | None:
                         reference_pngs=references.images or None,
                         model=model,
                         aspect_ratio="16:9",
-                        quality="auto",
+                        quality=quality,
                         background="opaque",
                         allow_provider_fallback=references.library_sha256 is None,
                     )
