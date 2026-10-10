@@ -13,11 +13,15 @@ import pytest
 from companion.character_identity import resolve_character_identity
 from companion.schema import LearnerProfile
 from render.live_scene import (
+    DECISION_THRESHOLDS,
     PROMPT_VERSION,
+    SceneReferences,
     judge_reference,
+    judge_scene,
     load_approved_scene,
     scene_prompt,
     scene_references,
+    scene_rubric,
 )
 from tests.test_live_composition import approved_gate, context, synthetic_image
 from theme.schema import ThemeConfig
@@ -71,7 +75,7 @@ def test_runtime_selects_approved_expression_and_costume_without_changing_judge(
         assert "cheerful open smile" in prompt
 
 
-def test_full_scene_transport_sends_pack_and_original_judge_and_separates_cache(
+def test_full_scene_transport_sends_pack_to_generator_and_judge_and_separates_cache(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     from render.live_scene import generate_scene
@@ -79,7 +83,7 @@ def test_full_scene_transport_sends_pack_and_original_judge_and_separates_cache(
     identity = resolve_character_identity(LearnerProfile(name="Test", grade_level="2"), "space")
     current = replace(context(tmp_path, count=1), character_identity=identity)
     sent: list[list[bytes]] = []
-    judged: list[bytes | None] = []
+    judged: list[SceneReferences] = []
     monkeypatch.setenv("OPENROUTER_API_KEY", "offline-test-surrogate")
     monkeypatch.setenv("WORKSHEET_OPENROUTER_IMAGE_MODELS", "offline-image")
     monkeypatch.setenv("WORKSHEET_SCENE_REFERENCE_LIBRARY", str(LIBRARY))
@@ -90,15 +94,17 @@ def test_full_scene_transport_sends_pack_and_original_judge_and_separates_cache(
         assert kwargs["allow_provider_fallback"] is (len(kwargs["reference_pngs"]) == 1)
         return synthetic_image()
 
-    def judge(png: bytes, reference: bytes | None, *args: Any) -> Any:
-        judged.append(reference)
+    def judge(png: bytes, references: SceneReferences, *args: Any) -> Any:
+        judged.append(references)
         return approved_gate()
 
     monkeypatch.setattr("ai.openrouter.generate_image", generate)
     monkeypatch.setattr("render.live_scene.judge_scene", judge)
     assert generate_scene(current)
     assert len(sent) == 1 and len(sent[0]) == 3
-    assert judged == [judge_reference(identity)]
+    assert judged[0].images == sent[0]
+    assert judged[0].roles == ["original_identity", "expression_detail", "theme_costume"]
+    assert judged[0].images[0] == judge_reference(identity)
     assert load_approved_scene(current)
     assert generate_scene(current)  # same reference hashes: actual cache hit
     assert len(sent) == 1
@@ -111,7 +117,73 @@ def test_full_scene_transport_sends_pack_and_original_judge_and_separates_cache(
     assert load_approved_scene(current) is None  # pack receipt cannot certify original-only request
     assert generate_scene(current)
     assert len(sent) == 2 and len(sent[1]) == 1
-    assert judged == [judge_reference(identity)] * 2
+    assert judged[1].images == sent[1] == [judge_reference(identity)]
+    assert judged[1].roles == ["original_identity"]
+
+
+@pytest.mark.parametrize("supplemented", [False, True])
+@pytest.mark.parametrize("identity_score", [0.84, 0.85])
+def test_luna_gate_sends_ordered_references_and_keeps_identity_cutoff(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    supplemented: bool,
+    identity_score: float,
+) -> None:
+    current = context(tmp_path, count=1)
+    theme = current.theme
+    assert isinstance(theme, ThemeConfig)
+    identity = resolve_character_identity(LearnerProfile(name="Test", grade_level="2"), "space")
+    if supplemented:
+        monkeypatch.setenv("WORKSHEET_SCENE_REFERENCE_LIBRARY", str(LIBRARY))
+    else:
+        monkeypatch.delenv("WORKSHEET_SCENE_REFERENCE_LIBRARY", raising=False)
+    references = scene_references(current.design_spec, theme, identity)
+    png = synthetic_image()
+    calls: list[str] = []
+
+    def decide(state: str, questions: dict[str, str], **kwargs: Any) -> dict[str, float]:
+        calls.append(state)
+        assert kwargs["images"] == [*references.images, png]
+        assert len(kwargs["images"]) == (4 if supplemented else 2)
+        assert (state, questions) == scene_rubric(
+            current.design_spec, theme, reference_roles=tuple(references.roles)
+        )
+        return {name: identity_score if name == "identity_ok" else 0.99 for name in questions}
+
+    monkeypatch.setattr("ai.openrouter.decide_yes_no", decide)
+    gate = judge_scene(png, references, current.design_spec, theme, backend="decisions")
+    assert len(calls) == 1
+    assert gate is not None
+    assert gate.identity_ok is (identity_score >= 0.85)
+    assert gate.approved is (identity_score >= 0.85)
+
+
+@pytest.mark.parametrize("supplemented", [False, True])
+def test_scene_rubric_explains_reference_roles_without_weakening_checks(supplemented: bool) -> None:
+    roles = (
+        ("original_identity", "expression_detail", "theme_costume")
+        if supplemented
+        else ("original_identity",)
+    )
+    state, questions = scene_rubric(context(Path("unused")).design_spec, reference_roles=roles)
+    assert "FIRST image is the neutral identity authority" in state
+    assert "face, hair and proportions" in state
+    assert "LAST image is the candidate" in state
+    assert ("SECOND image is the approved expression for this scene" in state) is supplemented
+    assert ("THIRD image is the approved theme costume" in state) is supplemented
+    assert "FIRST reference's face, hair and proportions" in questions["identity_ok"]
+    if supplemented:
+        assert "approved expression and costume" in questions["identity_ok"]
+    assert set(questions) == {*DECISION_THRESHOLDS, "meaningful_area"}
+    assert DECISION_THRESHOLDS == {
+        "identity_ok": 0.85,
+        "supports_task": 0.35,
+        "action_ok": 0.35,
+        "outfit_ok": 0.85,
+        "child_safe": 0.95,
+        "no_text": 0.95,
+        "answer_free": 0.95,
+    }
 
 
 @pytest.mark.parametrize("invalid", ["missing", "wrong-character", "wrong-theme"])

@@ -268,7 +268,7 @@ def scene_references(
     theme: ThemeConfig,
     identity: object | None,
 ) -> SceneReferences:
-    """Opt-in approved generation supplements; judge authority is never replaced."""
+    """Ordered generation/gate references; original identity authority is never replaced."""
     primary = judge_reference(identity)
     references = SceneReferences(
         images=[primary] if primary else [],
@@ -422,14 +422,28 @@ def scene_prompt(
 
 
 def scene_rubric(
-    spec: WorksheetDesignSpec, theme: ThemeConfig | None = None
+    spec: WorksheetDesignSpec,
+    theme: ThemeConfig | None = None,
+    *,
+    reference_roles: tuple[str, ...] = ("original_identity",),
 ) -> tuple[str, dict[str, str]]:
     """Shared semantic criteria for Luna and the structured vision comparison."""
     action = scene_action(spec, theme)
+    role_guidance = "FIRST image is the neutral identity authority for face, hair and proportions. "
+    if "expression_detail" in reference_roles:
+        role_guidance += "SECOND image is the approved expression for this scene. "
+    if "theme_costume" in reference_roles:
+        role_guidance += "THIRD image is the approved theme costume. "
+    identity_guidance = (
+        "Allow the approved expression and costume from the supplemental references while "
+        "still requiring the face, hair and proportions of the FIRST identity authority."
+        if len(reference_roles) > 1
+        else "Theme clothing may change."
+    )
     questions = {
         "identity_ok": (
             "Does the LAST image preserve the FIRST reference's face, hair and proportions? "
-            "Theme clothing may change."
+            + identity_guidance
         ),
         "supports_task": (
             "Does the LAST image clearly support the declared learning goal and activities "
@@ -459,8 +473,9 @@ def scene_rubric(
         spec.sections[action.section_number - 1].micro_goal if spec.sections else spec.learning_goal
     )
     state = (
-        "Evaluate the LAST image. FIRST image is canonical character reference. "
-        "Uncertainty or inability to verify must count as criterion not satisfied. "
+        "LAST image is the candidate. Evaluate the LAST image. "
+        + role_guidance
+        + "Uncertainty or inability to verify must count as criterion not satisfied. "
         f"Goal: {spec.learning_goal}. Required action: {action.action}. "
         f"Props: {action.props}. Costume: {action.costume}. "
         f"Illustrated section: {section_goal}. "
@@ -472,25 +487,35 @@ def scene_rubric(
 
 def judge_scene(
     png: bytes,
-    reference: bytes | None,
+    reference: SceneReferences | bytes | None,
     spec: WorksheetDesignSpec,
     theme: ThemeConfig | None = None,
     *,
     backend: str | None = None,
     model_ids: list[str] | None = None,
 ) -> SceneGate | None:
+    """Judge against the full approved pack; accept original-only callers as before."""
+    references = (
+        reference
+        if isinstance(reference, SceneReferences)
+        else SceneReferences(
+            images=[reference] if reference else [],
+            roles=["original_identity"] if reference else [],
+        )
+    )
     backend = backend or os.environ.get("WORKSHEET_SCENE_GATE_BACKEND", "decisions")
     gate_models = model_ids if model_ids is not None else _scene_judge_models(backend)
     if backend not in {"decisions", "vision"} or not gate_models:
         raise ValueError("Unknown scene gate backend or empty model list")
     if backend == "decisions" and gate_models != [DECISIONS_MODEL]:
         raise ValueError("Composed Decisions gates require the verified image-capable Luna model")
-    state, questions = scene_rubric(spec, theme)
+    state, questions = scene_rubric(spec, theme, reference_roles=tuple(references.roles))
+    images = [*references.images, png]
     if backend == "decisions":
-        if not reference:
+        if not references.images:
             return None
         probabilities = openrouter.decide_yes_no(
-            state, questions, model=gate_models[0], images=[reference, png]
+            state, questions, model=gate_models[0], images=images
         )
         if probabilities is None or set(probabilities) != set(questions):
             return None
@@ -550,7 +575,7 @@ def judge_scene(
     }
     raw = openrouter.complete_json(
         prompt,
-        images=([reference, png] if reference else [png]),
+        images=images,
         role="vision",
         model_ids=gate_models,
         max_tokens=768,
@@ -562,7 +587,9 @@ def judge_scene(
         ),
     )
     gate = SceneGate.model_validate(raw) if raw is not None else None
-    return gate.model_copy(update={"identity_ok": False}) if gate and not reference else gate
+    return (
+        gate.model_copy(update={"identity_ok": False}) if gate and not references.images else gate
+    )
 
 
 def _scene_judge_models(backend: str | None = None) -> list[str]:
@@ -832,7 +859,7 @@ def generate_scene(context: RenderContext) -> str | None:
                 except Exception:
                     png = None
                 try:
-                    gate = judge_scene(png, reference, spec, theme) if png else None
+                    gate = judge_scene(png, references, spec, theme) if png else None
                 except RunLimitExceededError:
                     attempt["outcome"] = "run_limit_exceeded"
                     save_report("failed", reason="run limits exhausted")

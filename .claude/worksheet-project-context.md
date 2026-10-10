@@ -8,6 +8,38 @@
 
 ## Current State
 
+### Session 80 — 2026-10-09 (three-reference Luna scene gate)
+
+**Owner request:** Fix the generation/judge reference mismatch on
+`codex/on-demand-composed-worksheets`, starting at `d207be1`. Commit locally;
+no main merge or PR.
+
+**Completed:** `render/live_scene.py:generate_scene()` now passes the existing
+ordered `SceneReferences` to `judge_scene()`. Luna receives original identity,
+approved expression, approved costume, then candidate. `scene_rubric()` describes
+FIRST/SECOND/THIRD/LAST roles and explicitly allows the approved expression and
+costume while retaining the original face/hair/proportions authority. The shared
+vision backend uses the same pack and role guidance. Without a library, the gate
+still receives original plus candidate; legacy bytes/None callers remain valid.
+All v5 check names, `DECISION_THRESHOLDS`, and identity >=0.85 are unchanged.
+
+**Regression coverage:** Generation-to-judge pack/role transport, three-reference
+and original-only Decisions payloads, positional rubric guidance, and identity
+0.84 rejection / 0.85 acceptance. New tests reproduced the mismatch before the fix.
+No live inference or rejudging of the owner's two candidates was performed.
+
+**Validation:** `python -m pytest tests/ -q`: 1123 passed / 23 skipped, one
+pre-existing Pillow deprecation warning. `python -m ruff check .`: clean.
+`python -m mypy .`: clean, 229 source files. Commands used `.venv/bin` on PATH
+because the shell has no global `python` command. Focused reference/composition
+suite: 54 passed; final reference tests: 13 passed.
+
+**Next:** Live validation of `render/live_scene.py:judge_scene()` on the saved
+owner-accepted candidates and fresh pipeline remains pending. Follow the live
+scope and reconciled budget policy in
+`docs/handoffs/expressive-reference-end-to-end.md`. Offline transport/cutoff tests
+do not establish live likeness accuracy. Main and renderer defaults stay unchanged.
+
 ### Session 79 — 2026-10-09 (expressive references in fresh full pipeline)
 
 **Owner request:** Publish the targeted generator changes and provide Muse a fresh
